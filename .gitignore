@@ -1,0 +1,22 @@
+# Secrets — never commit these
+client_secret*.json
+client_secrets*.json
+token.json
+*.token.json
+.env
+.env.local
+
+# Claude Code local-only state
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# OPML output (in case anyone runs from repo root)
+*.opml
