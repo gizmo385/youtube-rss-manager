@@ -290,6 +290,14 @@
   min-width: 5.5rem;
 }
 
+/* --- Nav username (non-interactive) --- */
+
+.nav-username {
+  color: var(--pico-muted-color) !important;
+  opacity: 0.7;
+  cursor: default;
+}
+
 /* --- Responsive table wrapper --- */
 
 .overflow-auto { overflow-x: auto; }

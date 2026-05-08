@@ -29,7 +29,7 @@
       {% if user %}
         <li><a href="/channels">Channels</a></li>
         <li><a href="/settings">Settings</a></li>
-        <li>{{ user.display_name or user.email }}</li>
+        <li class="nav-username">{{ user.display_name or user.email }}</li>
         <li><a href="/auth/logout">Log out</a></li>
       {% else %}
         <li><a href="/auth/login">Log in</a></li>
