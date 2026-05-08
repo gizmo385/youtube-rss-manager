@@ -16,32 +16,34 @@
   <form id="channel-form">
     <div class="toolbar sticky-toolbar">
       <input type="search" id="channel-search" placeholder="Search channels..." oninput="filterChannels(this.value)">
-      <select id="toolbar-category-select" name="category_id" form="channel-form">
-        <option value="">— category —</option>
-        {% for cat in categories %}
-        <option value="{{ cat.id }}">{{ cat.name }}</option>
-        {% endfor %}
-      </select>
-      <div class="toolbar-actions" role="group">
-        <button type="button" class="outline"
-                hx-post="/channels/assign"
-                hx-include="#channel-form"
-                hx-target="#channel-list"
-                hx-swap="innerHTML">Assign</button>
-        <button type="button" class="outline"
-                hx-post="/channels/unassign"
-                hx-include="#channel-form"
-                hx-target="#channel-list"
-                hx-swap="innerHTML">Unassign</button>
-      </div>
-      <span id="selection-count"></span>
     </div>
 
     <div id="channel-list">
       {% include "partials/channel_list.html" %}
     </div>
   </form>
+
+  <div id="bulk-action-bar" class="bulk-action-bar hidden">
+    <span id="selection-count">0 selected</span>
+    <div class="bulk-actions">
+      <div class="bulk-assign-wrapper">
+        <button type="button" class="outline" onclick="toggleBulkPicker('assign')">Add to category</button>
+        <div id="bulk-assign-picker" class="bulk-picker hidden"></div>
+      </div>
+      <div class="bulk-assign-wrapper">
+        <button type="button" class="outline secondary" onclick="toggleBulkPicker('unassign')">Remove from category</button>
+        <div id="bulk-unassign-picker" class="bulk-picker hidden"></div>
+      </div>
+    </div>
+  </div>
 </div>
+
+<select id="toolbar-category-select" name="category_id" style="display:none">
+  <option value="">— category —</option>
+  {% for cat in categories %}
+  <option value="{{ cat.id }}">{{ cat.name }}</option>
+  {% endfor %}
+</select>
 
 <div id="tab-categories" class="tab-panel{% if active_tab != 'categories' %} hidden{% endif %}" role="tabpanel">
   <form hx-post="/categories" hx-target="#category-list" hx-swap="innerHTML" class="toolbar"
@@ -69,12 +71,57 @@ function switchTab(tab) {
 }
 
 function filterChannels(query) {
-  const q = query.toLowerCase();
-  document.querySelectorAll('.channel-row').forEach(row => {
-    const title = row.getAttribute('data-title') || '';
-    const topics = row.querySelector('.topics')?.textContent.toLowerCase() || '';
-    row.style.display = (title.includes(q) || topics.includes(q)) ? '' : 'none';
+  var q = query.toLowerCase();
+  document.querySelectorAll('.channel-row').forEach(function(row) {
+    var title = row.getAttribute('data-title') || '';
+    var topics = row.querySelector('.topics');
+    var topicText = topics ? topics.textContent.toLowerCase() : '';
+    row.style.display = (title.includes(q) || topicText.includes(q)) ? '' : 'none';
   });
+}
+
+function toggleBulkPicker(type) {
+  var picker = document.getElementById('bulk-' + type + '-picker');
+  var other = document.getElementById('bulk-' + (type === 'assign' ? 'unassign' : 'assign') + '-picker');
+  other.classList.add('hidden');
+
+  // Populate picker from the OOB-updated category select
+  var cats = document.getElementById('toolbar-category-select');
+  picker.innerHTML = '';
+  Array.from(cats.options).forEach(function(opt) {
+    if (!opt.value) return;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'outline small-btn' + (type === 'unassign' ? ' secondary' : '');
+    btn.textContent = opt.textContent;
+    btn.onclick = function() { bulkAction(type, opt.value); };
+    picker.appendChild(btn);
+  });
+
+  picker.classList.toggle('hidden');
+}
+
+function bulkAction(type, categoryId) {
+  var url = type === 'assign' ? '/channels/assign' : '/channels/unassign';
+  var checked = document.querySelectorAll('#channel-form input[name=channel_ids]:checked');
+  if (!checked.length) return;
+
+  var formData = new FormData();
+  formData.append('category_id', categoryId);
+  checked.forEach(function(cb) { formData.append('channel_ids', cb.value); });
+
+  fetch(url, {method: 'POST', body: formData, headers: {'HX-Request': 'true'}})
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      document.getElementById('channel-list').innerHTML = html;
+      htmx.process(document.getElementById('channel-list'));
+      closeBulkPickers();
+      updateSelection();
+    });
+}
+
+function closeBulkPickers() {
+  document.querySelectorAll('.bulk-picker').forEach(function(p) { p.classList.add('hidden'); });
 }
 </script>
 {% endblock %}

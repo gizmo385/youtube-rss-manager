@@ -41,11 +41,73 @@
   border-bottom: 1px solid var(--pico-muted-border-color);
 }
 
-#selection-count {
+/* --- Floating bulk action bar --- */
+
+.bulk-action-bar {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.5rem;
+  padding: 0.6rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  z-index: 100;
+}
+
+.bulk-action-bar.hidden { display: none; }
+
+.bulk-action-bar #selection-count {
   font-size: 0.85em;
   color: var(--pico-primary);
   font-weight: 600;
-  margin-left: auto;
+  white-space: nowrap;
+}
+
+.bulk-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.bulk-actions button {
+  margin-bottom: 0;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.bulk-assign-wrapper {
+  position: relative;
+}
+
+.bulk-picker {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 0.4rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.4rem;
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  min-width: 10rem;
+  max-height: 15rem;
+  overflow-y: auto;
+}
+
+.bulk-picker.hidden { display: none; }
+
+.bulk-picker button {
+  text-align: left;
+  width: 100%;
 }
 
 /* --- Inline forms (settings, category actions) --- */

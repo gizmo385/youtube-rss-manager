@@ -81,19 +81,22 @@ function toggleAll(source) {
 }
 
 function updateSelection() {
-  const checked = document.querySelectorAll('#channel-list input[name="channel_ids"]:checked');
-  const counter = document.getElementById('selection-count');
-  if (counter) {
+  var checked = document.querySelectorAll('#channel-list input[name="channel_ids"]:checked');
+  var bar = document.getElementById('bulk-action-bar');
+  var counter = document.getElementById('selection-count');
+
+  if (bar) {
     if (checked.length > 0) {
+      bar.classList.remove('hidden');
       counter.textContent = checked.length + ' selected';
-      counter.classList.add('has-selection');
     } else {
-      counter.textContent = '';
-      counter.classList.remove('has-selection');
+      bar.classList.add('hidden');
+      document.querySelectorAll('.bulk-picker').forEach(function(p) { p.classList.add('hidden'); });
     }
   }
-  document.querySelectorAll('#channel-list .channel-row').forEach(row => {
-    const cb = row.querySelector('input[name="channel_ids"]');
+
+  document.querySelectorAll('#channel-list .channel-row').forEach(function(row) {
+    var cb = row.querySelector('input[name="channel_ids"]');
     row.classList.toggle('selected', cb && cb.checked);
   });
 }
