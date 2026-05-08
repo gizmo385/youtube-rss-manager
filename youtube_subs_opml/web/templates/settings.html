@@ -55,10 +55,20 @@
   <h2>OPML Feed Token</h2>
   {% if opml_token %}
   <p>Your OPML feed URLs:</p>
-  <ul>
-    <li><code>{{ base_url }}/opml/{{ opml_token.token }}/all.opml</code></li>
+  <ul class="opml-url-list">
+    <li>
+      <code>{{ base_url }}/opml/{{ opml_token.token }}/all.opml</code>
+      <button type="button" class="outline small-btn copy-btn"
+              onclick="copyUrl(this, '{{ base_url }}/opml/{{ opml_token.token }}/all.opml')">Copy</button>
+      <span class="opml-label">All channels</span>
+    </li>
     {% for cat in categories %}
-    <li><code>{{ base_url }}/opml/{{ opml_token.token }}/{{ cat.slug }}.opml</code></li>
+    <li>
+      <code>{{ base_url }}/opml/{{ opml_token.token }}/{{ cat.slug }}.opml</code>
+      <button type="button" class="outline small-btn copy-btn"
+              onclick="copyUrl(this, '{{ base_url }}/opml/{{ opml_token.token }}/{{ cat.slug }}.opml')">Copy</button>
+      <span class="opml-label">{{ cat.name }}</span>
+    </li>
     {% endfor %}
   </ul>
   <form method="post" action="/settings/opml-token/rotate" class="inline-form">
@@ -71,4 +81,14 @@
   </form>
   {% endif %}
 </section>
+
+<script>
+function copyUrl(btn, url) {
+  navigator.clipboard.writeText(url).then(function() {
+    var orig = btn.textContent;
+    btn.textContent = 'Copied';
+    setTimeout(function() { btn.textContent = orig; }, 1500);
+  });
+}
+</script>
 {% endblock %}

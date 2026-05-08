@@ -290,6 +290,36 @@
   min-width: 5.5rem;
 }
 
+/* --- OPML URL list --- */
+
+.opml-url-list {
+  list-style: none;
+  padding: 0;
+}
+
+.opml-url-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  flex-wrap: wrap;
+}
+
+.opml-url-list code {
+  font-size: 0.85em;
+  word-break: break-all;
+}
+
+.opml-label {
+  color: var(--pico-muted-color);
+  font-size: 0.85em;
+}
+
+.copy-btn {
+  flex-shrink: 0;
+  min-width: 4rem;
+}
+
 /* --- Nav username (non-interactive) --- */
 
 .nav-username {
