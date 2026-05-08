@@ -2,7 +2,7 @@
   <td>
     <input type="checkbox" name="channel_ids" value="{{ ch.channel_id }}" onchange="updateSelection()">
   </td>
-  <td>{{ ch.title }}</td>
+  <td><a href="https://www.youtube.com/channel/{{ ch.channel_id }}" target="_blank" rel="noopener" class="channel-link">{{ ch.title }}</a></td>
   <td class="channel-categories">
     {% for cat in ch.categories %}
       <span class="category-chip"
