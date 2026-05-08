@@ -256,6 +256,7 @@ async def add_channel_to_category(
     category = _get_owned_category(category_id, user, db)
     form = await request.form()
     channel_id = form.get("channel_id")
+    search = form.get("search", "")
     if not channel_id:
         raise HTTPException(status_code=400)
 
@@ -278,5 +279,5 @@ async def add_channel_to_category(
     return templates.TemplateResponse(
         request,
         "partials/category_add_channels.html",
-        context={"channels": channels, "category": category},
+        context={"channels": channels, "category": category, "search": search},
     )

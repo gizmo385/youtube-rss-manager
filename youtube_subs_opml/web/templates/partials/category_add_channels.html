@@ -1,5 +1,5 @@
 <div class="add-channels-picker">
-  <input type="text" placeholder="Filter channels..." oninput="filterPicker(this)" class="picker-search">
+  <input type="text" name="search" value="{{ search|default('') }}" placeholder="Filter channels..." oninput="filterPicker(this)" class="picker-search">
   {% if channels %}
   <ul class="picker-list">
     {% for ch in channels %}
@@ -8,6 +8,7 @@
       <button class="picker-add-btn"
               hx-post="/categories/{{ category.id }}/add-channel"
               hx-vals='{"channel_id": "{{ ch.channel_id }}"}'
+              hx-include="closest .add-channels-picker input[name='search']"
               hx-target="#cat-detail-{{ category.id }}"
               hx-swap="innerHTML">+</button>
     </li>
@@ -20,12 +21,16 @@
 
 <script>
 function filterPicker(input) {
-  const q = input.value.toLowerCase();
-  const list = input.closest('.add-channels-picker').querySelector('.picker-list');
+  var q = input.value.toLowerCase();
+  var list = input.closest('.add-channels-picker').querySelector('.picker-list');
   if (!list) return;
-  list.querySelectorAll('li').forEach(li => {
-    const title = li.getAttribute('data-title') || '';
+  list.querySelectorAll('li').forEach(function(li) {
+    var title = li.getAttribute('data-title') || '';
     li.style.display = title.includes(q) ? '' : 'none';
   });
 }
+(function() {
+  var picker = document.querySelector('#cat-detail-{{ category.id }} .picker-search');
+  if (picker && picker.value) filterPicker(picker);
+})();
 </script>
