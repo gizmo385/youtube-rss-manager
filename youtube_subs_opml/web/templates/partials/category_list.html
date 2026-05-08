@@ -79,3 +79,10 @@ function showCatDetail(catId) {
 {% else %}
 <p><em>No categories yet. Create one above.</em></p>
 {% endif %}
+
+<select id="toolbar-category-select" name="category_id" hx-swap-oob="true">
+  <option value="">— category —</option>
+  {% for item in categories_with_counts %}
+  <option value="{{ item.category.id }}">{{ item.category.name }}</option>
+  {% endfor %}
+</select>

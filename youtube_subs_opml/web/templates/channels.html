@@ -16,7 +16,7 @@
   <form id="channel-form">
     <div class="toolbar sticky-toolbar">
       <input type="search" id="channel-search" placeholder="Search channels..." oninput="filterChannels(this.value)">
-      <select name="category_id" form="channel-form">
+      <select id="toolbar-category-select" name="category_id" form="channel-form">
         <option value="">— category —</option>
         {% for cat in categories %}
         <option value="{{ cat.id }}">{{ cat.name }}</option>
@@ -62,6 +62,10 @@ function switchTab(tab) {
   document.getElementById('tab-' + tab).classList.remove('hidden');
   event.target.classList.add('active');
   history.replaceState(null, '', '/channels?tab=' + tab);
+
+  if (tab === 'channels') {
+    htmx.ajax('GET', '/channels', {target: '#channel-list', swap: 'innerHTML'});
+  }
 }
 
 function filterChannels(query) {
