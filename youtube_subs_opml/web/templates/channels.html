@@ -44,7 +44,8 @@
 </div>
 
 <div id="tab-categories" class="tab-panel{% if active_tab != 'categories' %} hidden{% endif %}" role="tabpanel">
-  <form hx-post="/categories" hx-target="#category-list" hx-swap="innerHTML" class="toolbar">
+  <form hx-post="/categories" hx-target="#category-list" hx-swap="innerHTML" class="toolbar"
+        hx-on::after-request="if(event.detail.successful) this.reset()">
     <input type="text" name="name" placeholder="New category name" required>
     <button type="submit">Create</button>
   </form>
