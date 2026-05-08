@@ -7,8 +7,9 @@
     {% for cat in ch.categories %}
       <span class="category-chip"
             hx-post="/channels/unassign"
+            hx-include="this"
             hx-target="#channel-list"
-            hx-swap="innerHTML"
+            hx-swap="innerHTML show:none"
             hx-vals='{"channel_ids": "{{ ch.channel_id }}", "category_id": "{{ cat.id }}"}'>
         {{ cat.name }} <span class="chip-x">&times;</span>
       </span>
@@ -17,8 +18,9 @@
     <select class="inline-assign"
             name="category_id"
             hx-post="/channels/assign"
+            hx-include="this"
             hx-target="#channel-list"
-            hx-swap="innerHTML"
+            hx-swap="innerHTML show:none"
             hx-vals='{"channel_ids": "{{ ch.channel_id }}"}'>
       <option value="" disabled selected>+</option>
       {% for cat in categories %}
@@ -33,16 +35,18 @@
     <input type="checkbox"
            {% if ch.ignored %}checked{% endif %}
            hx-post="/channels/ignore"
+           hx-include="this"
            hx-target="#channel-list"
-           hx-swap="innerHTML"
+           hx-swap="innerHTML show:none"
            hx-vals='{"channel_ids": "{{ ch.channel_id }}", "ignored": "{{ 'false' if ch.ignored else 'true' }}"}'>
   </td>
   <td>
     <select class="shorts-select"
             name="include_shorts"
             hx-post="/channels/include-shorts"
+            hx-include="this"
             hx-target="#channel-list"
-            hx-swap="innerHTML"
+            hx-swap="innerHTML show:none"
             hx-vals='{"channel_ids": "{{ ch.channel_id }}"}'>
       <option value="inherit"{% if ch.include_shorts is none %} selected{% endif %}>Inherit</option>
       <option value="true"{% if ch.include_shorts == true %} selected{% endif %}>Include</option>
