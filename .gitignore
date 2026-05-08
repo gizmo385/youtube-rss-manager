@@ -6,8 +6,9 @@ token.json
 .env
 .env.local
 
-# Claude Code local-only state
+# Claude Code settings and state
 .claude/settings.local.json
+.claude/
 
 # Python
 __pycache__/

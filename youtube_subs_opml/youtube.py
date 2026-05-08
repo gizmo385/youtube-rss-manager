@@ -11,6 +11,33 @@ class Subscription:
     channel_id: str
     title: str
     description: str
+    include_shorts: bool = True
+
+
+def fetch_channel_topics(
+    creds: Credentials, channel_ids: list[str]
+) -> dict[str, list[str]]:
+    """Fetch topic categories for channels. Returns {channel_id: [topic_name, ...]}."""
+    youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
+    result: dict[str, list[str]] = {}
+
+    # API allows up to 50 IDs per request
+    for i in range(0, len(channel_ids), 50):
+        batch = channel_ids[i : i + 50]
+        response = (
+            youtube.channels()
+            .list(part="topicDetails", id=",".join(batch))
+            .execute()
+        )
+        for item in response.get("items", []):
+            topic_details = item.get("topicDetails", {})
+            categories = topic_details.get("topicCategories", [])
+            # URLs like "https://en.wikipedia.org/wiki/Music" -> "Music"
+            topics = [url.rsplit("/", 1)[-1].replace("_", " ") for url in categories]
+            if topics:
+                result[item["id"]] = topics
+
+    return result
 
 
 def fetch_subscriptions(creds: Credentials) -> list[Subscription]:

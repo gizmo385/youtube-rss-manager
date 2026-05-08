@@ -1,0 +1,100 @@
+{% if uncategorized %}
+<h3>Uncategorized ({{ uncategorized|length }})</h3>
+<div class="overflow-auto">
+  <table class="striped">
+    <thead>
+      <tr>
+        <th><input type="checkbox" onclick="toggleAll(this)"></th>
+        <th>Channel</th>
+        <th>Categories</th>
+        <th>Ignored</th>
+        <th>Shorts</th>
+        <th>YouTube Topics</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ch in uncategorized %}
+      {% include "partials/channel_row.html" %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if categorized %}
+<h3>Categorized ({{ categorized|length }})</h3>
+<div class="overflow-auto">
+  <table class="striped">
+    <thead>
+      <tr>
+        <th><input type="checkbox" onclick="toggleAll(this)"></th>
+        <th>Channel</th>
+        <th>Categories</th>
+        <th>Ignored</th>
+        <th>Shorts</th>
+        <th>YouTube Topics</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ch in categorized %}
+      {% include "partials/channel_row.html" %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if ignored %}
+<h3>Ignored ({{ ignored|length }})</h3>
+<div class="overflow-auto">
+  <table class="striped">
+    <thead>
+      <tr>
+        <th><input type="checkbox" onclick="toggleAll(this)"></th>
+        <th>Channel</th>
+        <th>Categories</th>
+        <th>Ignored</th>
+        <th>Shorts</th>
+        <th>YouTube Topics</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ch in ignored %}
+      {% include "partials/channel_row.html" %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if not channels %}
+<p><em>No channels synced yet. Connect a YouTube account and sync to get started.</em></p>
+{% endif %}
+
+<script>
+function toggleAll(source) {
+  const table = source.closest('table');
+  table.querySelectorAll('input[name="channel_ids"]').forEach(cb => {
+    cb.checked = source.checked;
+  });
+  updateSelection();
+}
+
+function updateSelection() {
+  const checked = document.querySelectorAll('#channel-list input[name="channel_ids"]:checked');
+  const counter = document.getElementById('selection-count');
+  if (counter) {
+    if (checked.length > 0) {
+      counter.textContent = checked.length + ' selected';
+      counter.classList.add('has-selection');
+    } else {
+      counter.textContent = '';
+      counter.classList.remove('has-selection');
+    }
+  }
+  document.querySelectorAll('#channel-list .channel-row').forEach(row => {
+    const cb = row.querySelector('input[name="channel_ids"]');
+    row.classList.toggle('selected', cb && cb.checked);
+  });
+}
+</script>

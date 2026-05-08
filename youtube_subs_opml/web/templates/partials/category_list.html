@@ -1,0 +1,81 @@
+{% if categories_with_counts %}
+<div class="overflow-auto">
+  <table class="striped">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Slug</th>
+        <th>Channels</th>
+        <th>Shorts</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in categories_with_counts %}
+      {% set cat = item.category %}
+      <tr id="category-{{ cat.id }}">
+        <td>
+          <input type="text" name="name" value="{{ cat.name }}" form="edit-{{ cat.id }}">
+        </td>
+        <td><code>{{ cat.slug }}</code></td>
+        <td>
+          <a href="#" class="link-btn"
+              hx-get="/categories/{{ cat.id }}/channels"
+              hx-target="#cat-detail-{{ cat.id }}"
+              hx-swap="innerHTML"
+              onclick="toggleCatDetail({{ cat.id }}); return false;">
+            {{ item.channel_count }}
+          </a>
+        </td>
+        <td>
+          <select class="shorts-select"
+                  name="include_shorts"
+                  hx-patch="/categories/{{ cat.id }}/include-shorts"
+                  hx-target="#category-list"
+                  hx-swap="innerHTML">
+            <option value="inherit"{% if cat.include_shorts is none %} selected{% endif %}>Inherit</option>
+            <option value="true"{% if cat.include_shorts == true %} selected{% endif %}>Include</option>
+            <option value="false"{% if cat.include_shorts == false %} selected{% endif %}>Exclude</option>
+          </select>
+        </td>
+        <td>
+          <div class="cat-actions" role="group">
+            <form id="edit-{{ cat.id }}"
+                  hx-put="/categories/{{ cat.id }}"
+                  hx-target="#category-list"
+                  hx-swap="innerHTML"
+                  class="inline-form">
+              <button type="submit" class="outline small-btn">Save</button>
+            </form>
+            <button class="outline secondary small-btn"
+                    hx-delete="/categories/{{ cat.id }}"
+                    hx-target="#category-list"
+                    hx-swap="innerHTML"
+                    hx-confirm="Delete '{{ cat.name }}'?">Delete</button>
+            <button class="outline contrast small-btn add-channels-btn"
+                    hx-get="/categories/{{ cat.id }}/available-channels"
+                    hx-target="#cat-detail-{{ cat.id }}"
+                    hx-swap="innerHTML"
+                    onclick="showCatDetail({{ cat.id }})">+ Add</button>
+          </div>
+        </td>
+      </tr>
+      <tr class="hidden cat-detail-row" id="cat-detail-row-{{ cat.id }}">
+        <td colspan="5" id="cat-detail-{{ cat.id }}"></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+function toggleCatDetail(catId) {
+  document.getElementById('cat-detail-row-' + catId).classList.toggle('hidden');
+}
+function showCatDetail(catId) {
+  document.getElementById('cat-detail-row-' + catId).classList.remove('hidden');
+}
+</script>
+{% else %}
+<p><em>No categories yet. Create one above.</em></p>
+{% endif %}

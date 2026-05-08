@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Channels — YouTube Subs OPML{% endblock %}
+
+{% block content %}
+<div class="tabs" role="tablist">
+  <button class="tab{% if active_tab == 'channels' %} active{% endif %}" role="tab" onclick="switchTab('channels')">
+    Channels ({{ total }})
+  </button>
+  <button class="tab{% if active_tab == 'categories' %} active{% endif %}" role="tab" onclick="switchTab('categories')">
+    Categories ({{ categories_with_counts|length }})
+  </button>
+</div>
+
+<div id="tab-channels" class="tab-panel{% if active_tab != 'channels' %} hidden{% endif %}" role="tabpanel">
+  <form id="channel-form">
+    <div class="toolbar sticky-toolbar">
+      <input type="search" id="channel-search" placeholder="Search channels..." oninput="filterChannels(this.value)">
+      <select name="category_id" form="channel-form">
+        <option value="">— category —</option>
+        {% for cat in categories %}
+        <option value="{{ cat.id }}">{{ cat.name }}</option>
+        {% endfor %}
+      </select>
+      <div class="toolbar-actions" role="group">
+        <button type="button" class="outline"
+                hx-post="/channels/assign"
+                hx-include="#channel-form"
+                hx-target="#channel-list"
+                hx-swap="innerHTML">Assign</button>
+        <button type="button" class="outline"
+                hx-post="/channels/unassign"
+                hx-include="#channel-form"
+                hx-target="#channel-list"
+                hx-swap="innerHTML">Unassign</button>
+      </div>
+      <span id="selection-count"></span>
+    </div>
+
+    <div id="channel-list">
+      {% include "partials/channel_list.html" %}
+    </div>
+  </form>
+</div>
+
+<div id="tab-categories" class="tab-panel{% if active_tab != 'categories' %} hidden{% endif %}" role="tabpanel">
+  <form hx-post="/categories" hx-target="#category-list" hx-swap="innerHTML" class="toolbar">
+    <input type="text" name="name" placeholder="New category name" required>
+    <button type="submit">Create</button>
+  </form>
+
+  <div id="category-list">
+    {% include "partials/category_list.html" %}
+  </div>
+</div>
+
+<script>
+function switchTab(tab) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.remove('hidden');
+  event.target.classList.add('active');
+  history.replaceState(null, '', '/channels?tab=' + tab);
+}
+
+function filterChannels(query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('.channel-row').forEach(row => {
+    const title = row.getAttribute('data-title') || '';
+    const topics = row.querySelector('.topics')?.textContent.toLowerCase() || '';
+    row.style.display = (title.includes(q) || topics.includes(q)) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

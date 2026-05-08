@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Settings — YouTube Subs OPML{% endblock %}
+
+{% block content %}
+<h1>Settings</h1>
+
+<section>
+  <h2>Defaults</h2>
+  <form method="post" action="/settings/include-shorts">
+    <label>
+      <input type="checkbox" name="include_shorts" value="true"
+             {% if user.include_shorts %}checked{% endif %}>
+      Include Shorts in RSS feeds
+    </label>
+    <button type="submit" class="outline">Save</button>
+  </form>
+</section>
+
+<section>
+  <h2>YouTube Accounts</h2>
+  {% if accounts %}
+  <div class="overflow-auto">
+    <table class="striped">
+      <thead>
+        <tr>
+          <th>Channel</th>
+          <th>Last Synced</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for acct in accounts %}
+        <tr>
+          <td>{{ acct.channel_title or acct.channel_id }}</td>
+          <td>{{ acct.last_synced_at.strftime('%Y-%m-%d %H:%M') if acct.last_synced_at else 'Never' }}</td>
+          <td>
+            <form method="post" action="/sync/{{ acct.id }}" class="inline-form">
+              <button type="submit" class="outline">Sync now</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p><em>No YouTube accounts connected.</em></p>
+  {% endif %}
+
+  <a href="/auth/youtube/connect" role="button" class="outline">Connect YouTube account</a>
+</section>
+
+<section>
+  <h2>OPML Feed Token</h2>
+  {% if opml_token %}
+  <p>Your OPML feed URLs:</p>
+  <ul>
+    <li><code>{{ base_url }}/opml/{{ opml_token.token }}/all.opml</code></li>
+    {% for cat in categories %}
+    <li><code>{{ base_url }}/opml/{{ opml_token.token }}/{{ cat.slug }}.opml</code></li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/settings/opml-token/rotate" class="inline-form">
+    <button type="submit" class="outline secondary" onclick="return confirm('Rotate token? Old URLs will stop working.')">Rotate token</button>
+  </form>
+  {% else %}
+  <p>No OPML token generated yet.</p>
+  <form method="post" action="/settings/opml-token/rotate" class="inline-form">
+    <button type="submit">Generate OPML token</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,57 @@
+<tr class="channel-row{% if ch.ignored %} ignored{% endif %}" data-title="{{ ch.title|lower }}">
+  <td>
+    <input type="checkbox" name="channel_ids" value="{{ ch.channel_id }}" onchange="updateSelection()">
+  </td>
+  <td>{{ ch.title }}</td>
+  <td class="channel-categories">
+    {% for cat in ch.categories %}
+      <span class="category-chip"
+            hx-post="/channels/unassign"
+            hx-target="#channel-list"
+            hx-swap="innerHTML"
+            hx-vals='{"channel_ids": "{{ ch.channel_id }}", "category_id": "{{ cat.id }}"}'>
+        {{ cat.name }} <span class="chip-x">&times;</span>
+      </span>
+    {% endfor %}
+    {% if not ch.ignored %}
+    <select class="inline-assign"
+            name="category_id"
+            hx-post="/channels/assign"
+            hx-target="#channel-list"
+            hx-swap="innerHTML"
+            hx-vals='{"channel_ids": "{{ ch.channel_id }}"}'>
+      <option value="" disabled selected>+</option>
+      {% for cat in categories %}
+        {% if cat.id not in ch.assigned_category_ids %}
+        <option value="{{ cat.id }}">{{ cat.name }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+    {% endif %}
+  </td>
+  <td>
+    <input type="checkbox"
+           {% if ch.ignored %}checked{% endif %}
+           hx-post="/channels/ignore"
+           hx-target="#channel-list"
+           hx-swap="innerHTML"
+           hx-vals='{"channel_ids": "{{ ch.channel_id }}", "ignored": "{{ 'false' if ch.ignored else 'true' }}"}'>
+  </td>
+  <td>
+    <select class="shorts-select"
+            name="include_shorts"
+            hx-post="/channels/include-shorts"
+            hx-target="#channel-list"
+            hx-swap="innerHTML"
+            hx-vals='{"channel_ids": "{{ ch.channel_id }}"}'>
+      <option value="inherit"{% if ch.include_shorts is none %} selected{% endif %}>Inherit</option>
+      <option value="true"{% if ch.include_shorts == true %} selected{% endif %}>Include</option>
+      <option value="false"{% if ch.include_shorts == false %} selected{% endif %}>Exclude</option>
+    </select>
+  </td>
+  <td class="topics">
+    {% for topic in ch.youtube_topics %}
+      <span class="topic">{{ topic }}</span>{% if not loop.last %}, {% endif %}
+    {% endfor %}
+  </td>
+</tr>

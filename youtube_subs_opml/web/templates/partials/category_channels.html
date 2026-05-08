@@ -1,0 +1,9 @@
+{% if channels %}
+<ul class="category-channel-list">
+  {% for ch in channels %}
+  <li>{{ ch.title }}</li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">No channels in this category.</p>
+{% endif %}

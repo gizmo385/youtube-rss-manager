@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}Categories — YouTube Subs OPML{% endblock %}
+
+{% block content %}
+<h1>Categories</h1>
+
+<form hx-post="/categories" hx-target="#category-list" hx-swap="innerHTML">
+  <input type="text" name="name" placeholder="New category name" required>
+  <button type="submit">Create</button>
+</form>
+
+<div id="category-list">
+  {% include "partials/category_list.html" %}
+</div>
+{% endblock %}

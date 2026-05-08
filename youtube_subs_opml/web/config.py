@@ -18,9 +18,9 @@ class Settings(BaseSettings):
     session_secret: str = Field(...)
     fernet_key: str = Field(...)
 
-    keycloak_issuer: str = Field("")
-    keycloak_client_id: str = Field("")
-    keycloak_client_secret: str = Field("")
+    oidc_issuer: str = Field("")
+    oidc_client_id: str = Field("")
+    oidc_client_secret: str = Field("")
 
     youtube_client_id: str = Field("")
     youtube_client_secret: str = Field("")

@@ -1,0 +1,295 @@
+/* ===================================
+   App overrides on top of Pico CSS
+   =================================== */
+
+/* --- Toolbar (compact inline forms) --- */
+
+.toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+/* Pico adds large margins to form elements — suppress in toolbars */
+.toolbar input,
+.toolbar select,
+.toolbar button {
+  margin-bottom: 0;
+  width: auto;
+  padding: 0.4rem 0.7rem;
+  height: auto;
+}
+
+.toolbar input[type="text"],
+.toolbar input[type="search"] {
+  max-width: 16rem;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.sticky-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--pico-background-color);
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+#selection-count {
+  font-size: 0.85em;
+  color: var(--pico-primary);
+  font-weight: 600;
+  margin-left: auto;
+}
+
+/* --- Inline forms (settings, category actions) --- */
+
+.inline-form {
+  display: inline;
+  margin: 0;
+}
+
+.inline-form button {
+  margin-bottom: 0;
+}
+
+/* --- Tabs --- */
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--pico-muted-border-color);
+  margin-bottom: 1.5rem;
+}
+
+.tab {
+  padding: 0.5rem 1.2rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--pico-muted-color);
+  font-size: 1rem;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+}
+
+.tab.active {
+  color: var(--pico-color);
+  border-bottom-color: var(--pico-primary);
+  font-weight: 600;
+}
+
+.tab:hover { color: var(--pico-color); }
+
+.tab-panel.hidden { display: none; }
+.hidden { display: none; }
+
+/* --- Channel rows --- */
+
+.channel-row.ignored { opacity: 0.45; }
+
+.channel-row.selected {
+  background: color-mix(in srgb, var(--pico-primary) 8%, transparent) !important;
+}
+
+/* Tighten up table cell padding */
+.channel-row td { padding: 0.4rem 0.6rem; }
+
+/* --- Inline category chips + assign --- */
+
+.channel-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.category-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: color-mix(in srgb, var(--pico-primary) 15%, transparent);
+  color: var(--pico-primary);
+  padding: 0.15rem 0.5rem;
+  border-radius: 1rem;
+  font-size: 0.8em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.category-chip:hover {
+  background: color-mix(in srgb, var(--pico-primary) 25%, transparent);
+}
+
+.chip-x {
+  font-size: 1.1em;
+  opacity: 0.4;
+  line-height: 1;
+}
+
+.category-chip:hover .chip-x { opacity: 1; }
+
+.inline-assign {
+  font-size: 0.8em;
+  padding: 0.1rem 0.3rem;
+  width: 2.5rem;
+  margin-bottom: 0;
+  height: auto;
+  border-style: dashed;
+  background: transparent;
+  cursor: pointer;
+}
+
+.inline-assign:focus {
+  width: auto;
+  min-width: 8rem;
+  border-style: solid;
+}
+
+/* --- Topics --- */
+
+.topics {
+  font-size: 0.82em;
+  color: var(--pico-muted-color);
+}
+
+.topic {
+  background: var(--pico-muted-border-color);
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.2rem;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+/* --- Category management --- */
+
+.cat-actions {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.small-btn {
+  font-size: 0.8em !important;
+  padding: 0.25rem 0.6rem !important;
+  margin-bottom: 0 !important;
+}
+
+/* Category table: compact inputs */
+#category-list input[type="text"] {
+  margin-bottom: 0;
+  padding: 0.3rem 0.5rem;
+  height: auto;
+}
+
+.link-btn {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.cat-detail-row td {
+  background: var(--pico-card-background-color);
+  padding: 0.6rem 1rem;
+}
+
+.category-channel-list {
+  margin: 0.3rem 0;
+  padding-left: 1.2rem;
+  columns: 2;
+  column-gap: 2rem;
+}
+
+.category-channel-list li {
+  padding: 0.1rem 0;
+  font-size: 0.9em;
+}
+
+/* --- Add channels picker --- */
+
+.add-channels-picker {
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.picker-search {
+  margin-bottom: 0.5rem !important;
+  padding: 0.4rem 0.6rem !important;
+  height: auto !important;
+}
+
+.picker-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  columns: 2;
+  column-gap: 1rem;
+}
+
+.picker-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.25rem;
+  break-inside: avoid;
+  font-size: 0.9em;
+}
+
+.picker-list li:hover {
+  background: color-mix(in srgb, var(--pico-primary) 8%, transparent);
+}
+
+.picker-add-btn {
+  font-size: 0.9em;
+  padding: 0 0.5rem;
+  margin-bottom: 0;
+  height: auto;
+  line-height: 1.6;
+  flex-shrink: 0;
+}
+
+/* --- Login card --- */
+
+.login-card {
+  max-width: 28rem;
+  margin: 4rem auto;
+  text-align: center;
+}
+
+.login-card a[role="button"] {
+  width: 100%;
+}
+
+/* --- Theme toggle --- */
+
+.theme-toggle {
+  font-size: 1.2rem;
+  text-decoration: none !important;
+}
+
+.theme-icon-dark { display: none; }
+[data-theme="dark"] .theme-icon-light { display: none; }
+[data-theme="dark"] .theme-icon-dark { display: inline; }
+
+/* --- Shorts preference select --- */
+
+.shorts-select {
+  font-size: 0.8em;
+  padding: 0.15rem 0.4rem;
+  margin-bottom: 0;
+  height: auto;
+  width: auto;
+  min-width: 5.5rem;
+}
+
+/* --- Responsive table wrapper --- */
+
+.overflow-auto { overflow-x: auto; }

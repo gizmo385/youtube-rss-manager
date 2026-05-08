@@ -1,0 +1,31 @@
+<div class="add-channels-picker">
+  <input type="text" placeholder="Filter channels..." oninput="filterPicker(this)" class="picker-search">
+  {% if channels %}
+  <ul class="picker-list">
+    {% for ch in channels %}
+    <li data-title="{{ ch.title|lower }}">
+      <span>{{ ch.title }}</span>
+      <button class="picker-add-btn"
+              hx-post="/categories/{{ category.id }}/add-channel"
+              hx-vals='{"channel_id": "{{ ch.channel_id }}"}'
+              hx-target="#cat-detail-{{ category.id }}"
+              hx-swap="innerHTML">+</button>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">All channels are already in this category.</p>
+  {% endif %}
+</div>
+
+<script>
+function filterPicker(input) {
+  const q = input.value.toLowerCase();
+  const list = input.closest('.add-channels-picker').querySelector('.picker-list');
+  if (!list) return;
+  list.querySelectorAll('li').forEach(li => {
+    const title = li.getAttribute('data-title') || '';
+    li.style.display = title.includes(q) ? '' : 'none';
+  });
+}
+</script>

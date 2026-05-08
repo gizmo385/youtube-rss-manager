@@ -15,6 +15,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -24,9 +25,12 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    keycloak_sub: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    oidc_sub: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(255), server_default="")
+    include_shorts: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -68,6 +72,9 @@ class Channel(Base):
     channel_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     title: Mapped[str] = mapped_column(String(255), server_default="")
     description: Mapped[str] = mapped_column(Text, server_default="")
+    youtube_topics: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String), nullable=True
+    )
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -90,6 +97,7 @@ class Subscription(Base):
     ignored: Mapped[bool] = mapped_column(
         Boolean, server_default=text("false"), default=False
     )
+    include_shorts: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -107,6 +115,7 @@ class Category(Base):
     )
     name: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str] = mapped_column(String(255))
+    include_shorts: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

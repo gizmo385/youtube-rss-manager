@@ -23,6 +23,7 @@ web = [
     "httpx>=0.27",
     "cryptography>=42",
     "python-multipart>=0.0.9",
+    "apscheduler>=3.10,<4",
 ]
 
 [project.scripts]
