@@ -17,10 +17,6 @@ A standalone CLI tool is also included for single-user, one-shot OPML export.
 - Dark mode toggle
 - Channel search and YouTube topic metadata display
 
-## Stack
-
-FastAPI, Jinja2, HTMX, Pico CSS, SQLAlchemy 2.0 (sync), PostgreSQL 16, Alembic, Authlib, APScheduler, Docker Compose.
-
 ## Prerequisites
 
 - Docker and Docker Compose
