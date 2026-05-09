@@ -71,33 +71,3 @@
 <p><em>No channels synced yet. Connect a YouTube account and sync to get started.</em></p>
 {% endif %}
 
-<script>
-function toggleAll(source) {
-  const table = source.closest('table');
-  table.querySelectorAll('input[name="channel_ids"]').forEach(cb => {
-    cb.checked = source.checked;
-  });
-  updateSelection();
-}
-
-function updateSelection() {
-  var checked = document.querySelectorAll('#channel-list input[name="channel_ids"]:checked');
-  var bar = document.getElementById('bulk-action-bar');
-  var counter = document.getElementById('selection-count');
-
-  if (bar) {
-    if (checked.length > 0) {
-      bar.classList.remove('hidden');
-      counter.textContent = checked.length + ' selected';
-    } else {
-      bar.classList.add('hidden');
-      document.querySelectorAll('.bulk-picker').forEach(function(p) { p.classList.add('hidden'); });
-    }
-  }
-
-  document.querySelectorAll('#channel-list .channel-row').forEach(function(row) {
-    var cb = row.querySelector('input[name="channel_ids"]');
-    row.classList.toggle('selected', cb && cb.checked);
-  });
-}
-</script>
