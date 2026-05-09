@@ -1,0 +1,24 @@
+<div class="board-toolbar sticky-toolbar">
+  <input type="search" id="board-search" placeholder="Search channels..." oninput="filterBoard(this.value)">
+</div>
+
+<div class="kanban-columns">
+  {% for col in columns %}
+  <div class="kanban-column" data-category-id="{{ col.id or '' }}">
+    <div class="kanban-column-header">
+      <strong>{{ col.name }}</strong>
+      <span class="kanban-count">{{ col.channels|length }}</span>
+    </div>
+    <div class="kanban-cards" data-category-id="{{ col.id or '' }}">
+      {% for ch in col.channels %}
+      <div class="kanban-card" data-channel-id="{{ ch.channel_id }}" data-title="{{ ch.title|lower }}">
+        <span class="kanban-card-title">{{ ch.title }}</span>
+        {% if ch.other_category_count > 0 %}
+        <span class="kanban-card-badge" title="Also in {{ ch.other_category_count }} other category{{ 's' if ch.other_category_count > 1 }}">+{{ ch.other_category_count }}</span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>

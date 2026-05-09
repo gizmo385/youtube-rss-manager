@@ -3,12 +3,17 @@
 {% block title %}Channels — YouTube Subs OPML{% endblock %}
 
 {% block content %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+
 <div class="tabs" role="tablist">
   <button class="tab{% if active_tab == 'channels' %} active{% endif %}" role="tab" onclick="switchTab('channels')">
     Channels ({{ total }})
   </button>
   <button class="tab{% if active_tab == 'categories' %} active{% endif %}" role="tab" onclick="switchTab('categories')">
     Categories ({{ categories_with_counts|length }})
+  </button>
+  <button class="tab{% if active_tab == 'board' %} active{% endif %}" role="tab" onclick="switchTab('board')">
+    Board
   </button>
 </div>
 
@@ -35,6 +40,14 @@
         <div id="bulk-unassign-picker" class="bulk-picker hidden"></div>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="tab-board" class="tab-panel{% if active_tab != 'board' %} hidden{% endif %}" role="tabpanel">
+  <div id="kanban-board">
+    {% if active_tab == 'board' %}
+      {% include "partials/kanban_board.html" %}
+    {% endif %}
   </div>
 </div>
 
@@ -67,6 +80,11 @@ function switchTab(tab) {
 
   if (tab === 'channels') {
     htmx.ajax('GET', '/channels', {target: '#channel-list', swap: 'innerHTML'});
+  } else if (tab === 'board') {
+    // Skip re-fetch if board is already loaded
+    if (!document.querySelector('#kanban-board .kanban-columns')) {
+      htmx.ajax('GET', '/channels/board', {target: '#kanban-board', swap: 'innerHTML'});
+    }
   }
 }
 
@@ -145,7 +163,68 @@ function reapplySearch() {
 // Re-apply search filter after any HTMX swap of the channel list
 document.body.addEventListener('htmx:afterSwap', function(evt) {
   if (evt.detail.target.id === 'channel-list') reapplySearch();
+  if (evt.detail.target.id === 'kanban-board') initBoard();
 });
+
+function initBoard() {
+  document.querySelectorAll('.kanban-cards').forEach(function(container) {
+    new Sortable(container, {
+      group: 'kanban',
+      animation: 150,
+      ghostClass: 'kanban-ghost',
+      chosenClass: 'kanban-chosen',
+      dragClass: 'kanban-drag',
+      scrollSensitivity: 60,
+      scrollSpeed: 10,
+      onEnd: function(evt) {
+        var channelId = evt.item.getAttribute('data-channel-id');
+        var fromCategoryId = evt.from.getAttribute('data-category-id');
+        var toCategoryId = evt.to.getAttribute('data-category-id');
+
+        if (fromCategoryId === toCategoryId) return;
+
+        var formData = new FormData();
+        formData.append('channel_id', channelId);
+        formData.append('from_category_id', fromCategoryId);
+        formData.append('to_category_id', toCategoryId);
+
+        fetch('/channels/move', {
+          method: 'POST',
+          body: formData,
+          headers: {'HX-Request': 'true'}
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+          document.getElementById('kanban-board').innerHTML = html;
+          htmx.process(document.getElementById('kanban-board'));
+          initBoard();
+          reapplyBoardSearch();
+        });
+      }
+    });
+  });
+}
+
+function filterBoard(query) {
+  var q = query.toLowerCase();
+  document.querySelectorAll('.kanban-card').forEach(function(card) {
+    var title = card.getAttribute('data-title') || '';
+    card.style.display = title.includes(q) ? '' : 'none';
+  });
+  document.querySelectorAll('.kanban-column').forEach(function(col) {
+    var visible = col.querySelectorAll('.kanban-card:not([style*="display: none"])').length;
+    var counter = col.querySelector('.kanban-count');
+    if (counter) counter.textContent = visible;
+  });
+}
+
+function reapplyBoardSearch() {
+  var search = document.getElementById('board-search');
+  if (search && search.value) filterBoard(search.value);
+}
+
+// Initialize board if it's already rendered on page load
+if (document.querySelector('#kanban-board .kanban-columns')) initBoard();
 
 function toggleAll(source) {
   var table = source.closest('table');

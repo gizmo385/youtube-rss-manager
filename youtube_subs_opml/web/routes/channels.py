@@ -77,6 +77,37 @@ def _build_channel_context(user: User, db: Session) -> dict:
     }
 
 
+def _build_board_context(user: User, db: Session) -> dict:
+    """Build template context for the kanban board view."""
+    ctx = _build_channel_context(user, db)
+    categories = ctx["categories"]
+    channels = ctx["channels"]
+
+    # Build columns: uncategorized + one per category
+    cat_channels: dict[int, list] = {cat.id: [] for cat in categories}
+    uncategorized: list[dict] = []
+
+    for ch in channels:
+        if ch["ignored"]:
+            continue
+        if not ch["categories"]:
+            uncategorized.append({**ch, "other_category_count": 0})
+        else:
+            for cat in ch["categories"]:
+                other_count = len(ch["categories"]) - 1
+                cat_channels[cat.id].append({**ch, "other_category_count": other_count})
+
+    columns = [{"id": None, "name": "Uncategorized", "channels": uncategorized}]
+    for cat in categories:
+        columns.append({
+            "id": cat.id,
+            "name": cat.name,
+            "channels": cat_channels.get(cat.id, []),
+        })
+
+    return {"columns": columns, "categories": categories}
+
+
 @router.get("")
 def list_channels(
     request: Request,
@@ -89,9 +120,78 @@ def list_channels(
     ctx["active_tab"] = tab
     ctx["categories_with_counts"] = _categories_with_counts(user, db)
 
+    if tab == "board":
+        board_ctx = _build_board_context(user, db)
+        ctx["columns"] = board_ctx["columns"]
+
     if _is_htmx(request):
         return templates.TemplateResponse(request, "partials/channel_list.html", context=ctx)
     return templates.TemplateResponse(request, "channels.html", context=ctx)
+
+
+@router.get("/board")
+def get_board(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    ctx = _build_board_context(user, db)
+    ctx["user"] = user
+    return templates.TemplateResponse(request, "partials/kanban_board.html", context=ctx)
+
+
+@router.post("/move")
+async def move_channel(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    form = await request.form()
+    channel_id = form.get("channel_id")
+    from_category_id = form.get("from_category_id", "")
+    to_category_id = form.get("to_category_id", "")
+
+    if not channel_id:
+        raise HTTPException(status_code=400, detail="channel_id required")
+
+    # Remove from source category
+    if from_category_id:
+        from_id = int(from_category_id)
+        row = db.execute(
+            select(ChannelCategory).where(
+                ChannelCategory.user_id == user.id,
+                ChannelCategory.channel_id == str(channel_id),
+                ChannelCategory.category_id == from_id,
+            )
+        ).scalar_one_or_none()
+        if row is not None:
+            db.delete(row)
+
+    # Add to target category
+    if to_category_id:
+        to_id = int(to_category_id)
+        category = db.get(Category, to_id)
+        if category is None or category.user_id != user.id:
+            raise HTTPException(status_code=404, detail="Category not found")
+        existing = db.execute(
+            select(ChannelCategory).where(
+                ChannelCategory.user_id == user.id,
+                ChannelCategory.channel_id == str(channel_id),
+                ChannelCategory.category_id == to_id,
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(ChannelCategory(
+                user_id=user.id,
+                channel_id=str(channel_id),
+                category_id=to_id,
+            ))
+
+    db.commit()
+
+    ctx = _build_board_context(user, db)
+    ctx["user"] = user
+    return templates.TemplateResponse(request, "partials/kanban_board.html", context=ctx)
 
 
 @router.post("/assign")
