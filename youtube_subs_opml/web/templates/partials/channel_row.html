@@ -42,12 +42,7 @@
   </td>
   <td>
     <select class="shorts-select"
-            name="include_shorts"
-            hx-post="/channels/include-shorts"
-            hx-include="this"
-            hx-target="#channel-list"
-            hx-swap="innerHTML show:none"
-            hx-vals='{"channel_ids": "{{ ch.channel_id }}"}'>
+            onchange="postChannelUpdate('/channels/include-shorts', {'channel_ids': '{{ ch.channel_id }}', 'include_shorts': this.value})">
       <option value="inherit"{% if ch.include_shorts is none %} selected{% endif %}>Inherit</option>
       <option value="true"{% if ch.include_shorts == true %} selected{% endif %}>Include</option>
       <option value="false"{% if ch.include_shorts == false %} selected{% endif %}>Exclude</option>

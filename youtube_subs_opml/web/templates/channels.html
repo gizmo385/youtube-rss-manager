@@ -117,12 +117,35 @@ function bulkAction(type, categoryId) {
       htmx.process(document.getElementById('channel-list'));
       closeBulkPickers();
       updateSelection();
+      reapplySearch();
     });
 }
 
 function closeBulkPickers() {
   document.querySelectorAll('.bulk-picker').forEach(function(p) { p.classList.add('hidden'); });
 }
+
+function postChannelUpdate(url, params) {
+  var formData = new FormData();
+  for (var key in params) { formData.append(key, params[key]); }
+  fetch(url, {method: 'POST', body: formData, headers: {'HX-Request': 'true'}})
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      document.getElementById('channel-list').innerHTML = html;
+      htmx.process(document.getElementById('channel-list'));
+      reapplySearch();
+    });
+}
+
+function reapplySearch() {
+  var search = document.getElementById('channel-search');
+  if (search && search.value) filterChannels(search.value);
+}
+
+// Re-apply search filter after any HTMX swap of the channel list
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+  if (evt.detail.target.id === 'channel-list') reapplySearch();
+});
 
 function toggleAll(source) {
   var table = source.closest('table');
