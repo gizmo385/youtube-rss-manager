@@ -205,8 +205,8 @@
   min-width: 2.5rem;
   margin-bottom: 0;
   height: auto;
-  border-style: dashed;
-  background: transparent;
+  border: 1px dashed var(--pico-muted-border-color);
+  background-color: transparent !important;
   cursor: pointer;
 }
 
