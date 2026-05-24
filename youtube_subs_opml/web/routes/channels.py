@@ -1,17 +1,25 @@
 from __future__ import annotations
 
-from typing import Annotated
+import logging
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, update
+from google.auth.exceptions import RefreshError
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from youtube_subs_opml.youtube import ChannelLookupError, resolve_channel
+
+from ..config import get_settings
 from ..db import get_db
 from ..deps import get_current_user
-from ..models import Category, Channel, ChannelCategory, Subscription, User
+from ..models import Category, Channel, ChannelCategory, Subscription, User, YoutubeAccount
+from ..services.crypto import decrypt_token
+from ..services.sync import build_google_credentials
 from ..templating import templates
 from .categories import _categories_with_counts
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -57,6 +65,7 @@ def _build_channel_context(user: User, db: Session) -> dict:
             "title": ch.title,
             "ignored": sub.ignored,
             "include_shorts": sub.include_shorts,
+            "is_manual": sub.account_id is None,
             "categories": sorted(assigned, key=lambda c: c.name),
             "assigned_category_ids": {c.id for c in assigned},
             "youtube_topics": ch.youtube_topics or [],
@@ -327,6 +336,113 @@ async def ignore_channels(
         )
         .values(ignored=ignored)
     )
+    db.commit()
+
+    ctx = _build_channel_context(user, db)
+    ctx["user"] = user
+    return templates.TemplateResponse(request, "partials/channel_list.html", context=ctx)
+
+
+@router.post("/add")
+async def add_manual_channel(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    form = await request.form()
+    raw = str(form.get("channel_input", "")).strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Enter a channel URL, handle, or ID")
+
+    account = db.execute(
+        select(YoutubeAccount).where(YoutubeAccount.user_id == user.id).limit(1)
+    ).scalar_one_or_none()
+    if account is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Connect a YouTube account in Settings before adding channels.",
+        )
+
+    creds = build_google_credentials(
+        decrypt_token(account.refresh_token_encrypted), get_settings()
+    )
+
+    try:
+        resolved = resolve_channel(creds, raw)
+    except ChannelLookupError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RefreshError:
+        logger.error("Refresh token revoked for account %s", account.id)
+        raise HTTPException(
+            status_code=400,
+            detail="YouTube account needs to be re-connected in Settings.",
+        )
+
+    channel = db.get(Channel, resolved.channel_id)
+    if channel is None:
+        db.add(
+            Channel(
+                channel_id=resolved.channel_id,
+                title=resolved.title,
+                description=resolved.description,
+                youtube_topics=resolved.topics,
+            )
+        )
+    else:
+        channel.title = resolved.title
+        channel.description = resolved.description
+        channel.youtube_topics = resolved.topics
+        channel.last_seen_at = func.now()
+
+    existing = db.execute(
+        select(Subscription).where(
+            Subscription.user_id == user.id,
+            Subscription.channel_id == resolved.channel_id,
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        db.add(
+            Subscription(
+                user_id=user.id,
+                channel_id=resolved.channel_id,
+                account_id=None,
+            )
+        )
+
+    db.commit()
+
+    ctx = _build_channel_context(user, db)
+    ctx["user"] = user
+    return templates.TemplateResponse(request, "partials/channel_list.html", context=ctx)
+
+
+@router.post("/remove")
+async def remove_manual_channel(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    form = await request.form()
+    channel_id = form.get("channel_id")
+    if not channel_id:
+        raise HTTPException(status_code=400, detail="channel_id required")
+
+    sub = db.execute(
+        select(Subscription).where(
+            Subscription.user_id == user.id,
+            Subscription.channel_id == str(channel_id),
+        )
+    ).scalar_one_or_none()
+
+    if sub is None:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    if sub.account_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot remove a synced subscription. Unsubscribe on YouTube instead.",
+        )
+
+    db.delete(sub)
     db.commit()
 
     ctx = _build_channel_context(user, db)

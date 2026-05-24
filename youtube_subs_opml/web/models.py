@@ -91,8 +91,8 @@ class Subscription(Base):
         ForeignKey("channels.channel_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    account_id: Mapped[int] = mapped_column(
-        ForeignKey("youtube_accounts.id", ondelete="CASCADE")
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("youtube_accounts.id", ondelete="CASCADE"), nullable=True
     )
     ignored: Mapped[bool] = mapped_column(
         Boolean, server_default=text("false"), default=False
