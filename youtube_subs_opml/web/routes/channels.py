@@ -67,6 +67,7 @@ def _build_channel_context(user: User, db: Session) -> dict:
             "title": ch.title,
             "ignored": sub.ignored,
             "include_shorts": sub.include_shorts,
+            "include_live": sub.include_live,
             "is_manual": sub.account_id is None,
             "categories": sorted(assigned, key=lambda c: c.name),
             "assigned_category_ids": {c.id for c in assigned},
@@ -309,6 +310,41 @@ async def set_include_shorts(
             Subscription.channel_id.in_([str(c) for c in channel_ids]),
         )
         .values(include_shorts=shorts_val)
+    )
+    db.commit()
+
+    ctx = _build_channel_context(user, db)
+    ctx["user"] = user
+    return templates.TemplateResponse(request, "partials/channel_list.html", context=ctx)
+
+
+@router.post("/include-live")
+async def set_include_live(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    form = await request.form()
+    channel_ids = form.getlist("channel_ids")
+    value = form.get("include_live", "inherit")
+
+    if not channel_ids:
+        raise HTTPException(status_code=400, detail="Select at least one channel")
+
+    if value == "true":
+        live_val = True
+    elif value == "false":
+        live_val = False
+    else:
+        live_val = None
+
+    db.execute(
+        update(Subscription)
+        .where(
+            Subscription.user_id == user.id,
+            Subscription.channel_id.in_([str(c) for c in channel_ids]),
+        )
+        .values(include_live=live_val)
     )
     db.commit()
 

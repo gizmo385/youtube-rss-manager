@@ -16,6 +16,7 @@ from youtube_subs_opml.web.models import (
     OpmlToken,
     Subscription,
     User,
+    VideoLiveStatus,
     VideoShort,
 )
 from youtube_subs_opml.web.routes import feed
@@ -43,17 +44,25 @@ def client(monkeypatch):
         engine,
         tables=[
             t.__table__
-            for t in (User, Subscription, Category, OpmlToken, VideoShort)
+            for t in (
+                User, Subscription, Category, OpmlToken,
+                VideoShort, VideoLiveStatus,
+            )
         ],
     )
     TestingSession = sessionmaker(bind=engine)
 
     with TestingSession() as seed:
-        user = User(id=1, oidc_sub="s", email="e", include_shorts=True)
+        user = User(
+            id=1, oidc_sub="s", email="e", include_shorts=True, include_live=True
+        )
         seed.add(user)
         seed.add(OpmlToken(user_id=1, token=TOKEN))
         seed.add(Subscription(user_id=1, channel_id=CID, include_shorts=None))
         seed.add(Category(id=1, user_id=1, name="Tech", slug="tech", include_shorts=False))
+        seed.add(Category(
+            id=2, user_id=1, name="Live", slug="live", include_live=False
+        ))
         seed.commit()
 
     def override_db():
@@ -74,10 +83,14 @@ def client(monkeypatch):
         )
 
     monkeypatch.setattr(feed.httpx, "get", fake_get)
-    # Deterministic Shorts classification (no real probing).
+    # Deterministic classification (no real probing).
     monkeypatch.setattr(
         feed, "classify_videos",
         lambda ids, db: {"shortone111": True, "realvideo22": False},
+    )
+    monkeypatch.setattr(
+        feed, "classify_live",
+        lambda ids, db: {"shortone111": "upcoming", "realvideo22": "none"},
     )
 
     return TestClient(app)
@@ -97,6 +110,14 @@ def test_category_excludes_shorts(client):
     assert resp.status_code == 200
     assert b"shortone111" not in resp.content
     assert b"realvideo22" in resp.content
+
+
+def test_category_excludes_live(client):
+    """Category 'live' sets include_live=False -> upcoming/live dropped, Shorts kept."""
+    resp = client.get(f"/feed/{TOKEN}/live/{CID}.xml")
+    assert resp.status_code == 200
+    assert b"shortone111" not in resp.content  # 'upcoming' dropped
+    assert b"realvideo22" in resp.content       # 'none' kept (Shorts not filtered here)
 
 
 def test_unknown_token_404(client):

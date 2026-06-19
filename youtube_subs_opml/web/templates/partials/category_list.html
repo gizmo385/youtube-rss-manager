@@ -7,6 +7,7 @@
         <th>Slug</th>
         <th>Channels</th>
         <th>Shorts</th>
+        <th>Live</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -39,6 +40,17 @@
           </select>
         </td>
         <td>
+          <select class="shorts-select"
+                  name="include_live"
+                  hx-patch="/categories/{{ cat.id }}/include-live"
+                  hx-target="#category-list"
+                  hx-swap="innerHTML">
+            <option value="inherit"{% if cat.include_live is none %} selected{% endif %}>Inherit</option>
+            <option value="true"{% if cat.include_live == true %} selected{% endif %}>Include</option>
+            <option value="false"{% if cat.include_live == false %} selected{% endif %}>Exclude</option>
+          </select>
+        </td>
+        <td>
           <div class="cat-actions" role="group">
             <form id="edit-{{ cat.id }}"
                   hx-put="/categories/{{ cat.id }}"
@@ -61,7 +73,7 @@
         </td>
       </tr>
       <tr class="hidden cat-detail-row" id="cat-detail-row-{{ cat.id }}">
-        <td colspan="5" id="cat-detail-{{ cat.id }}"></td>
+        <td colspan="6" id="cat-detail-{{ cat.id }}"></td>
       </tr>
       {% endfor %}
     </tbody>

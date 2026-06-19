@@ -5,6 +5,10 @@ import httpx
 
 from youtube_subs_opml.opml import build_opml
 from youtube_subs_opml.web.routes import feed
+from youtube_subs_opml.web.services.live import (
+    _probe_live_status,
+    resolve_include_live,
+)
 from youtube_subs_opml.web.services.shorts import (
     _probe_is_short,
     resolve_include_shorts,
@@ -65,7 +69,9 @@ def test_filter_drops_shorts(monkeypatch):
         feed, "classify_videos",
         lambda ids, db: {"shortone111": True, "realvideo22": False},
     )
-    out = feed._filter_shorts(SAMPLE_FEED, db=None).decode()
+    out = feed._filter_feed(
+        SAMPLE_FEED, db=None, drop_shorts=True, drop_live=False
+    ).decode()
     assert "realvideo22" in out
     assert "shortone111" not in out
 
@@ -73,8 +79,53 @@ def test_filter_drops_shorts(monkeypatch):
 def test_filter_keeps_unknown(monkeypatch):
     """Fail open: a video with no verdict stays in the feed."""
     monkeypatch.setattr(feed, "classify_videos", lambda ids, db: {})
-    out = feed._filter_shorts(SAMPLE_FEED, db=None).decode()
+    out = feed._filter_feed(
+        SAMPLE_FEED, db=None, drop_shorts=True, drop_live=False
+    ).decode()
     assert "shortone111" in out and "realvideo22" in out
+
+
+def test_filter_drops_live_and_upcoming(monkeypatch):
+    monkeypatch.setattr(
+        feed, "classify_live",
+        lambda ids, db: {"shortone111": "upcoming", "realvideo22": "none"},
+    )
+    out = feed._filter_feed(
+        SAMPLE_FEED, db=None, drop_shorts=False, drop_live=True
+    ).decode()
+    assert "realvideo22" in out      # status 'none' stays
+    assert "shortone111" not in out  # 'upcoming' is dropped
+
+
+# --- live cascade + probe ------------------------------------------------
+
+def test_live_cascade_precedence():
+    assert resolve_include_live(False, True, True) is False    # subscription wins
+    assert resolve_include_live(None, False, True) is False    # category wins
+    assert resolve_include_live(None, None, True) is True      # user default
+    assert resolve_include_live(None, None, False) is False
+
+
+class _FakeLiveResp:
+    def __init__(self, text: str):
+        self.text = text
+
+    def raise_for_status(self):
+        return None
+
+
+class _FakeLiveClient:
+    def __init__(self, text):
+        self._text = text
+
+    def get(self, url, **kwargs):
+        return _FakeLiveResp(self._text)
+
+
+def test_probe_live_status_classifies():
+    assert _probe_live_status("x", _FakeLiveClient('"isUpcoming":true')) == "upcoming"
+    assert _probe_live_status("x", _FakeLiveClient('"isLiveNow":true')) == "live"
+    assert _probe_live_status("x", _FakeLiveClient('"isLiveContent":false')) == "none"
 
 
 # --- probe ---------------------------------------------------------------

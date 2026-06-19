@@ -185,6 +185,27 @@ async def update_category_shorts(
     return _category_list_response(request, user, db)
 
 
+@router.patch("/{category_id}/include-live")
+async def update_category_live(
+    category_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    category = _get_owned_category(category_id, user, db)
+    form = await request.form()
+    value = form.get("include_live", "inherit")
+    if value == "true":
+        category.include_live = True
+    elif value == "false":
+        category.include_live = False
+    else:
+        category.include_live = None
+    db.commit()
+
+    return _category_list_response(request, user, db)
+
+
 @router.get("/{category_id}/channels")
 def category_channels(
     category_id: int,

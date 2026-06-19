@@ -7,11 +7,16 @@
 
 <section>
   <h2>Defaults</h2>
-  <form method="post" action="/settings/include-shorts">
+  <form method="post" action="/settings/defaults">
     <label>
       <input type="checkbox" name="include_shorts" value="true"
              {% if user.include_shorts %}checked{% endif %}>
       Include Shorts in RSS feeds
+    </label>
+    <label>
+      <input type="checkbox" name="include_live" value="true"
+             {% if user.include_live %}checked{% endif %}>
+      Include premieres &amp; livestreams in RSS feeds
     </label>
     <button type="submit" class="outline">Save</button>
   </form>

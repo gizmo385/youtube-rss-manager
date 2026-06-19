@@ -54,6 +54,14 @@
       <option value="false"{% if ch.include_shorts == false %} selected{% endif %}>Exclude</option>
     </select>
   </td>
+  <td>
+    <select class="shorts-select"
+            onchange="postChannelUpdate('/channels/include-live', {'channel_ids': '{{ ch.channel_id }}', 'include_live': this.value})">
+      <option value="inherit"{% if ch.include_live is none %} selected{% endif %}>Inherit</option>
+      <option value="true"{% if ch.include_live == true %} selected{% endif %}>Include</option>
+      <option value="false"{% if ch.include_live == false %} selected{% endif %}>Exclude</option>
+    </select>
+  </td>
   <td class="topics">
     {% for topic in ch.youtube_topics %}
       <span class="topic">{{ topic }}</span>{% if not loop.last %}, {% endif %}

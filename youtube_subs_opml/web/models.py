@@ -32,6 +32,9 @@ class User(Base):
     include_shorts: Mapped[bool] = mapped_column(
         Boolean, server_default=text("true"), default=True
     )
+    include_live: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), default=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -100,6 +103,7 @@ class Subscription(Base):
         Boolean, server_default=text("false"), default=False
     )
     include_shorts: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    include_live: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -118,6 +122,7 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str] = mapped_column(String(255))
     include_shorts: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    include_live: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -157,6 +162,23 @@ class VideoShort(Base):
 
     video_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     is_short: Mapped[bool] = mapped_column(Boolean)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class VideoLiveStatus(Base):
+    """Cache of a video's live/premiere status: 'none' | 'upcoming' | 'live'.
+
+    Only partly immutable: 'none' (a regular upload or an aired stream/premiere)
+    is terminal and cached permanently, while 'upcoming'/'live' are transient
+    and re-probed after a short TTL (see services.live).
+    """
+
+    __tablename__ = "video_live_status"
+
+    video_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16))
     checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -71,14 +71,15 @@ def trigger_sync(
     return RedirectResponse("/settings", status_code=303)
 
 
-@router.post("/settings/include-shorts")
-async def update_include_shorts(
+@router.post("/settings/defaults")
+async def update_defaults(
     request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     form = await request.form()
     user.include_shorts = "include_shorts" in form
+    user.include_live = "include_live" in form
     db.commit()
     return RedirectResponse("/settings", status_code=303)
 

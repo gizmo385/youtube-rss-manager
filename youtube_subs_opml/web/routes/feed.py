@@ -12,6 +12,7 @@ from youtube_subs_opml.opml import FEED_URL
 
 from ..db import get_db
 from ..models import Category, OpmlToken, Subscription, User
+from ..services.live import classify_live, resolve_include_live
 from ..services.shorts import classify_videos, resolve_include_shorts
 
 router = APIRouter(prefix="/feed", tags=["feed"])
@@ -27,8 +28,18 @@ ET.register_namespace("yt", _YT)
 ET.register_namespace("media", _MEDIA)
 
 
-def _filter_shorts(xml_bytes: bytes, db: Session) -> bytes:
-    """Drop ``<entry>`` elements whose video is a Short, then re-serialize."""
+def _filter_feed(
+    xml_bytes: bytes,
+    db: Session,
+    *,
+    drop_shorts: bool,
+    drop_live: bool,
+) -> bytes:
+    """Drop unwanted ``<entry>`` elements, then re-serialize.
+
+    Removes Shorts (when ``drop_shorts``) and currently upcoming/live videos
+    (when ``drop_live``). Classification is fetched only for what's needed.
+    """
     root = ET.fromstring(xml_bytes)
     entries = root.findall(f"{{{_ATOM}}}entry")
 
@@ -38,12 +49,18 @@ def _filter_shorts(xml_bytes: bytes, db: Session) -> bytes:
         if vid_el is not None and vid_el.text:
             ids.append(vid_el.text)
 
-    verdicts = classify_videos(ids, db)
+    shorts = classify_videos(ids, db) if drop_shorts else {}
+    live = classify_live(ids, db) if drop_live else {}
 
     for entry in entries:
         vid_el = entry.find(f"{{{_YT}}}videoId")
         vid = vid_el.text if vid_el is not None else None
-        if vid and verdicts.get(vid):  # True == Short -> remove
+        if not vid:
+            continue
+        if drop_shorts and shorts.get(vid):  # True == Short
+            root.remove(entry)
+            continue
+        if drop_live and live.get(vid) in ("upcoming", "live"):
             root.remove(entry)
 
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
@@ -79,7 +96,8 @@ def _serve_feed(
     if sub is None:
         raise HTTPException(status_code=404)
 
-    cat_pref: bool | None = None
+    cat_shorts_pref: bool | None = None
+    cat_live_pref: bool | None = None
     if slug is not None:
         category = db.execute(
             select(Category).where(
@@ -89,12 +107,18 @@ def _serve_feed(
         ).scalar_one_or_none()
         if category is None:
             raise HTTPException(status_code=404)
-        cat_pref = category.include_shorts
+        cat_shorts_pref = category.include_shorts
+        cat_live_pref = category.include_live
 
     user = db.get(User, user_id)
     include_shorts = resolve_include_shorts(
-        sub.include_shorts, cat_pref, user.include_shorts
+        sub.include_shorts, cat_shorts_pref, user.include_shorts
     )
+    include_live = resolve_include_live(
+        sub.include_live, cat_live_pref, user.include_live
+    )
+    drop_shorts = not include_shorts
+    drop_live = not include_live
 
     try:
         upstream = httpx.get(
@@ -106,11 +130,13 @@ def _serve_feed(
     except httpx.HTTPError:
         raise HTTPException(status_code=502, detail="Upstream feed fetch failed")
 
-    if include_shorts:
-        # Cheap passthrough — no probing needed when Shorts are kept.
+    if not drop_shorts and not drop_live:
+        # Cheap passthrough — nothing to filter.
         return Response(content=upstream.content, media_type="application/xml")
 
-    filtered = _filter_shorts(upstream.content, db)
+    filtered = _filter_feed(
+        upstream.content, db, drop_shorts=drop_shorts, drop_live=drop_live
+    )
     return Response(content=filtered, media_type="application/xml")
 
 
