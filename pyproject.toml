@@ -25,6 +25,9 @@ web = [
     "python-multipart>=0.0.9",
     "apscheduler>=3.10,<4",
 ]
+test = [
+    "pytest>=8",
+]
 
 [project.scripts]
 youtube-subs-opml = "youtube_subs_opml.cli:main"

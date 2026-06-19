@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -72,8 +73,9 @@ class Channel(Base):
     channel_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     title: Mapped[str] = mapped_column(String(255), server_default="")
     description: Mapped[str] = mapped_column(Text, server_default="")
+    # Native array on Postgres; JSON on SQLite (for local/dev use).
     youtube_topics: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String), nullable=True
+        ARRAY(String).with_variant(JSON, "sqlite"), nullable=True
     )
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -140,6 +142,22 @@ class ChannelCategory(Base):
         ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True
     )
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class VideoShort(Base):
+    """Permanent cache of whether a video id is a YouTube Short.
+
+    A video's Short-ness never changes, so rows are written once and never
+    expire. Populated lazily by the feed proxy when filtering Shorts.
+    """
+
+    __tablename__ = "video_shorts"
+
+    video_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    is_short: Mapped[bool] = mapped_column(Boolean)
+    checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 

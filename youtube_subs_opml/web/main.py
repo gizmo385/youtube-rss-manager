@@ -16,6 +16,7 @@ from .models import User
 from .templating import templates
 from .routes.categories import router as categories_router
 from .routes.channels import router as channels_router
+from .routes.feed import router as feed_router
 from .routes.opml import router as opml_router
 from .routes.settings import router as settings_router
 from .services.scheduler import start_scheduler, stop_scheduler
@@ -24,7 +25,13 @@ from .services.scheduler import start_scheduler, stop_scheduler
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    register_oauth_clients(settings)
+    if settings.local_mode:
+        # No Keycloak/Postgres locally: build the schema and skip OIDC setup.
+        from .db import init_local_schema
+
+        init_local_schema()
+    else:
+        register_oauth_clients(settings)
     start_scheduler()
     yield
     stop_scheduler()
@@ -43,6 +50,7 @@ app.mount(
 app.include_router(auth_router)
 app.include_router(categories_router)
 app.include_router(channels_router)
+app.include_router(feed_router)
 app.include_router(opml_router)
 app.include_router(settings_router)
 

@@ -16,7 +16,23 @@ class Base(DeclarativeBase):
 
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
-    return create_engine(get_settings().database_url, pool_pre_ping=True)
+    url = get_settings().database_url
+    connect_args = {}
+    if url.startswith("sqlite"):
+        # uvicorn serves sync routes across a threadpool.
+        connect_args["check_same_thread"] = False
+    return create_engine(url, pool_pre_ping=True, connect_args=connect_args)
+
+
+def init_local_schema() -> None:
+    """Create all tables directly (local mode only).
+
+    Local SQLite skips the Alembic chain, which contains Postgres-specific
+    migrations. Importing models registers them on Base.metadata.
+    """
+    from . import models  # noqa: F401  (registers tables on Base.metadata)
+
+    Base.metadata.create_all(get_engine())
 
 
 @lru_cache(maxsize=1)

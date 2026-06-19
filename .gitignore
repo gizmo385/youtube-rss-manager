@@ -21,3 +21,6 @@ dist/
 
 # OPML output (in case anyone runs from repo root)
 *.opml
+
+# Local-mode SQLite database
+*.db

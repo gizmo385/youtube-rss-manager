@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from google.auth.exceptions import RefreshError
@@ -15,6 +16,7 @@ from ..db import get_db
 from ..deps import get_current_user
 from ..models import Category, Channel, ChannelCategory, Subscription, User, YoutubeAccount
 from ..services.crypto import decrypt_token
+from ..services.resolve import resolve_channel_public
 from ..services.sync import build_google_credentials
 from ..templating import templates
 from .categories import _categories_with_counts
@@ -357,18 +359,17 @@ async def add_manual_channel(
     account = db.execute(
         select(YoutubeAccount).where(YoutubeAccount.user_id == user.id).limit(1)
     ).scalar_one_or_none()
-    if account is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Connect a YouTube account in Settings before adding channels.",
-        )
-
-    creds = build_google_credentials(
-        decrypt_token(account.refresh_token_encrypted), get_settings()
-    )
 
     try:
-        resolved = resolve_channel(creds, raw)
+        if account is not None:
+            # Use the connected account's API credentials (richer metadata).
+            creds = build_google_credentials(
+                decrypt_token(account.refresh_token_encrypted), get_settings()
+            )
+            resolved = resolve_channel(creds, raw)
+        else:
+            # No account connected: resolve from public HTTP (no auth needed).
+            resolved = resolve_channel_public(raw)
     except ChannelLookupError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RefreshError:
@@ -376,6 +377,11 @@ async def add_manual_channel(
         raise HTTPException(
             status_code=400,
             detail="YouTube account needs to be re-connected in Settings.",
+        )
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not reach YouTube to look up that channel.",
         )
 
     channel = db.get(Channel, resolved.channel_id)

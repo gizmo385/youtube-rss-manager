@@ -8,23 +8,11 @@ from sqlalchemy.orm import Session
 from youtube_subs_opml.opml import build_opml
 from youtube_subs_opml.youtube import Subscription as SubData
 
+from ..config import get_settings
 from ..db import get_db
-from ..models import Category, Channel, ChannelCategory, OpmlToken, Subscription, User
+from ..models import Category, Channel, ChannelCategory, OpmlToken, Subscription
 
 router = APIRouter(prefix="/opml", tags=["opml"])
-
-
-def _resolve_include_shorts(
-    sub_pref: bool | None,
-    cat_pref: bool | None,
-    user_pref: bool,
-) -> bool:
-    """Cascade: subscription > category > user. NULL means inherit."""
-    if sub_pref is not None:
-        return sub_pref
-    if cat_pref is not None:
-        return cat_pref
-    return user_pref
 
 
 def _validate_token(token: str, db: Session) -> OpmlToken:
@@ -43,30 +31,28 @@ def opml_all(
 ) -> Response:
     opml_token = _validate_token(token, db)
 
-    user = db.get(User, opml_token.user_id)
-
-    rows = db.execute(
-        select(Channel, Subscription)
+    # Every channel routes through the feed proxy, which resolves the Shorts
+    # cascade at request time — so the OPML only needs the channel list here.
+    channels = db.execute(
+        select(Channel)
         .join(Subscription, Subscription.channel_id == Channel.channel_id)
         .where(
             Subscription.user_id == opml_token.user_id,
             Subscription.ignored == False,  # noqa: E712
         )
         .order_by(Channel.title)
-    ).all()
+    ).scalars().all()
 
     subs = [
-        SubData(
-            channel_id=ch.channel_id,
-            title=ch.title,
-            description=ch.description,
-            include_shorts=_resolve_include_shorts(
-                sub.include_shorts, None, user.include_shorts
-            ),
-        )
-        for ch, sub in rows
+        SubData(channel_id=ch.channel_id, title=ch.title, description=ch.description)
+        for ch in channels
     ]
-    xml = build_opml(subs, title="All Subscriptions")
+    xml = build_opml(
+        subs,
+        title="All Subscriptions",
+        proxy_base_url=get_settings().base_url,
+        opml_token=token,
+    )
     return Response(content=xml, media_type="application/xml")
 
 
@@ -78,8 +64,6 @@ def opml_by_category(
 ) -> Response:
     opml_token = _validate_token(token, db)
 
-    user = db.get(User, opml_token.user_id)
-
     category = db.execute(
         select(Category).where(
             Category.user_id == opml_token.user_id,
@@ -89,8 +73,8 @@ def opml_by_category(
     if category is None:
         raise HTTPException(status_code=404)
 
-    rows = db.execute(
-        select(Channel, Subscription)
+    channels = db.execute(
+        select(Channel)
         .join(
             ChannelCategory,
             ChannelCategory.channel_id == Channel.channel_id,
@@ -108,18 +92,17 @@ def opml_by_category(
             Subscription.ignored == False,  # noqa: E712
         )
         .order_by(Channel.title)
-    ).all()
+    ).scalars().all()
 
     subs = [
-        SubData(
-            channel_id=ch.channel_id,
-            title=ch.title,
-            description=ch.description,
-            include_shorts=_resolve_include_shorts(
-                sub.include_shorts, category.include_shorts, user.include_shorts
-            ),
-        )
-        for ch, sub in rows
+        SubData(channel_id=ch.channel_id, title=ch.title, description=ch.description)
+        for ch in channels
     ]
-    xml = build_opml(subs, title=category.name)
+    xml = build_opml(
+        subs,
+        title=category.name,
+        proxy_base_url=get_settings().base_url,
+        opml_token=token,
+        category_slug=slug,
+    )
     return Response(content=xml, media_type="application/xml")
