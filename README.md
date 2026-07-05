@@ -13,7 +13,8 @@ A multi-user web app that syncs YouTube subscriptions via the YouTube Data API a
 - Per-channel, per-category, and per-user shorts filtering (cascading preference: subscription > category > user)
 - Token-authenticated OPML endpoints for RSS readers (`/opml/<token>/all.opml`, `/opml/<token>/<category-slug>.opml`)
 
-![Channel list](./images/opml_channels_list.png.png)
+![Channel list](./images/opml_channels_list.png)
+
 ![Category management](./images/opml_categories_view.png)
 
 ## Prerequisites
