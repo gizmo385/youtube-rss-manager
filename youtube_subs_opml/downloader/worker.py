@@ -336,6 +336,54 @@ def run_prune(db: Session) -> int:
     return pruned
 
 
+def backfill_audio(db: Session, settings) -> int:
+    """Extract audio for completed downloads that should have a podcast but don't.
+
+    So enabling ``generate_podcast`` on an already-archived channel produces
+    audio without re-downloading the video: on each idle pass we look for
+    ``complete`` downloads whose resolved intent now wants a podcast but which
+    have no ``audio_path`` yet, and extract audio from YouTube for them. A
+    failure (e.g. throttling) is non-fatal and simply retried on a later pass,
+    since ``audio_path`` stays NULL.
+
+    Returns the number of downloads given audio this pass.
+    """
+    intents = channel_intents(db)
+    rows = db.execute(
+        select(Download).where(
+            Download.status == "complete",
+            Download.audio_path.is_(None),
+            Download.file_path.is_not(None),
+        )
+    ).scalars().all()
+
+    done = 0
+    for download in rows:
+        video = db.get(Video, download.video_id)
+        if video is None:
+            continue
+        intent = intents.get(video.channel_id)
+        if intent is None or not intent.generate_podcast:
+            continue
+        output = Path(download.file_path).with_suffix("")
+        try:
+            audio = ytdlp.extract_audio(
+                download.video_id,
+                output,
+                sleep_interval=settings.ytdlp_sleep_interval,
+            )
+        except ytdlp.DownloadError as exc:
+            logger.warning("Audio backfill failed for %s: %s", download.video_id, exc)
+            continue
+        download.audio_path = str(audio)
+        download.audio_size_bytes = audio.stat().st_size
+        db.commit()
+        done += 1
+    if done:
+        logger.info("Backfilled audio for %d downloads", done)
+    return done
+
+
 def run_forever() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -377,8 +425,10 @@ def run_forever() -> None:
             row = claim_one(db)
             if row is None:
                 # Idle: reconcile per-user libraries against current
-                # subscriptions and prune anything no user retains.
+                # subscriptions, backfill podcast audio for channels newly
+                # opted in, and prune anything no user retains.
                 reconcile_links(db, media_root)
+                backfill_audio(db, settings)
                 run_prune(db)
                 db.close()
                 time.sleep(_IDLE_SLEEP)

@@ -14,8 +14,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from youtube_subs_opml.downloader import naming
-from youtube_subs_opml.downloader.worker import reconcile_links, run_prune
+from types import SimpleNamespace
+
+from youtube_subs_opml.downloader import naming, worker
+from youtube_subs_opml.downloader.worker import backfill_audio, reconcile_links, run_prune
 from youtube_subs_opml.web.db import Base
 from youtube_subs_opml.web.models import (
     Category,
@@ -339,3 +341,64 @@ def test_episode_files_matches_sidecars_not_prefix_siblings(tmp_path):
         "Chan - S2026E07 - Title.nfo",
         "Chan - S2026E07 - Title-thumb.jpg",
     }
+
+
+# --- podcast audio backfill ----------------------------------------------
+
+def _fake_extract_audio(video_id, output_path, *, sleep_interval=5, timeout=3600):
+    """Stand-in for ytdlp.extract_audio: writes a .m4a next to output_path."""
+    p = Path(str(output_path)).with_suffix(".m4a")
+    p.write_bytes(b"audio-bytes-1234")
+    return p
+
+
+def test_backfill_audio_extracts_for_podcast_channels(db, tmp_path, monkeypatch):
+    media_root = str(tmp_path)
+    add_user(db, 1, download_enabled=True, generate_podcast=True)
+    add_sub(db, 1)
+    ids = add_videos(db, 2)
+    complete_download(db, media_root, ids[0], 1)
+    complete_download(db, media_root, ids[1], 2)
+    monkeypatch.setattr(worker.ytdlp, "extract_audio", _fake_extract_audio)
+
+    n = backfill_audio(db, SimpleNamespace(ytdlp_sleep_interval=0))
+
+    assert n == 2
+    d0 = db.get(Download, ids[0])
+    assert d0.audio_path.endswith(".m4a")
+    assert d0.audio_size_bytes == len(b"audio-bytes-1234")
+    # Idempotent: a second pass finds nothing left to do.
+    assert backfill_audio(db, SimpleNamespace(ytdlp_sleep_interval=0)) == 0
+
+
+def test_backfill_audio_skips_non_podcast_channels(db, tmp_path, monkeypatch):
+    media_root = str(tmp_path)
+    add_user(db, 1, download_enabled=True, generate_podcast=False)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    complete_download(db, media_root, ids[0], 1)
+    called = []
+    monkeypatch.setattr(
+        worker.ytdlp, "extract_audio", lambda *a, **k: called.append(1)
+    )
+
+    assert backfill_audio(db, SimpleNamespace(ytdlp_sleep_interval=0)) == 0
+    assert not called
+    assert db.get(Download, ids[0]).audio_path is None
+
+
+def test_backfill_audio_failure_is_nonfatal(db, tmp_path, monkeypatch):
+    from youtube_subs_opml.downloader import ytdlp
+
+    media_root = str(tmp_path)
+    add_user(db, 1, download_enabled=True, generate_podcast=True)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    complete_download(db, media_root, ids[0], 1)
+
+    def boom(*a, **k):
+        raise ytdlp.DownloadError("throttled")
+    monkeypatch.setattr(worker.ytdlp, "extract_audio", boom)
+
+    assert backfill_audio(db, SimpleNamespace(ytdlp_sleep_interval=0)) == 0
+    assert db.get(Download, ids[0]).audio_path is None  # left for a later pass
