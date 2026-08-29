@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     # the ~15 most recent entries, so this bounds what can be captured for
     # prolific channels — 6 hours would silently lose videos.
     poll_interval_minutes: int = Field(20)
+    # Politeness for the poller's per-channel fetches. Polling every subscribed
+    # channel back-to-back looks like a burst and YouTube soft-throttles the IP
+    # (intermittent 404/429/500). A small delay between channels plus a couple of
+    # backoff retries keeps a sweep under the radar. Base delay also seeds the
+    # retry backoff. Set to 0 to disable spacing (e.g. in tests).
+    poll_channel_delay_seconds: float = Field(2.0)
+    poll_max_retries: int = Field(2)
     # Keep this at 1. Concurrent downloads from one IP are the fastest route to
     # "Sign in to confirm you're not a bot".
     download_concurrency: int = Field(1)
