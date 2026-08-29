@@ -143,6 +143,21 @@ def test_feed_item_shape(client):
     assert it.find(f"{{{ITUNES}}}duration").text == "1:01:01"  # 3661s
     assert it.find("guid").get("isPermaLink") == "false"
     assert it.find("pubDate") is not None
+    # Per-episode art points at YouTube's stable thumbnail CDN.
+    img = it.find(f"{{{ITUNES}}}image")
+    assert img is not None
+    assert img.get("href") == "https://i.ytimg.com/vi/withaudio001/hqdefault.jpg"
+
+
+def test_channel_cover_falls_back_to_newest_episode(client):
+    # podcast_cover_url is unset in local mode, so the show cover should be the
+    # newest episode's thumbnail rather than blank.
+    resp = client.get(f"/podcast/{TOKEN}/all.xml")
+    channel = ET.fromstring(resp.content).find("channel")
+    cover = channel.find(f"{{{ITUNES}}}image")
+    assert cover is not None
+    assert cover.get("href").startswith("https://i.ytimg.com/vi/")
+    assert cover.get("href").endswith("/hqdefault.jpg")
 
 
 def test_category_feed_scopes_to_category(client):

@@ -44,6 +44,72 @@ class VideoMetadata:
     thumbnail_url: str | None
 
 
+@dataclass(frozen=True)
+class ChannelArt:
+    avatar_url: str | None
+    banner_url: str | None
+
+
+def _pick_thumbnail(thumbnails: list[dict], keyword: str) -> str | None:
+    """Highest-resolution thumbnail whose id/url mentions ``keyword``.
+
+    yt-dlp tags a channel's images by role — ``avatar_uncropped``,
+    ``banner_uncropped`` — so we match on the keyword and then prefer the
+    largest by pixel area (``preference``/``height`` aren't always present).
+    """
+    matches = [
+        t for t in thumbnails
+        if keyword in str(t.get("id", "")).lower()
+        or keyword in str(t.get("url", "")).lower()
+    ]
+    if not matches:
+        return None
+    best = max(matches, key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))
+    return best.get("url")
+
+
+def probe_channel(channel_id: str, *, timeout: int = 60) -> ChannelArt:
+    """Fetch a channel's avatar and banner URLs without a full video listing.
+
+    The channel-level ``thumbnails`` we want live on the playlist object, so
+    ``--flat-playlist --playlist-items 1`` grabs them while stopping after the
+    first entry rather than paginating the whole channel — a single cheap
+    request. The one listed entry is ignored.
+    """
+    cmd = [
+        "yt-dlp",
+        "--dump-single-json",
+        "--flat-playlist",
+        "--playlist-items", "1",
+        "--no-warnings",
+        f"https://www.youtube.com/channel/{channel_id}",
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ProbeError(f"channel probe timed out for {channel_id}") from exc
+
+    if result.returncode != 0:
+        raise ProbeError(
+            result.stderr.strip()[:2000] or f"channel probe failed for {channel_id}"
+        )
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ProbeError(f"unparseable channel probe for {channel_id}") from exc
+
+    thumbnails = data.get("thumbnails") or []
+    avatar = _pick_thumbnail(thumbnails, "avatar")
+    banner = _pick_thumbnail(thumbnails, "banner")
+    # Fall back to the plain ``thumbnail`` field if the roles weren't tagged.
+    if avatar is None:
+        avatar = data.get("thumbnail")
+    return ChannelArt(avatar_url=avatar, banner_url=banner)
+
+
 def probe(video_id: str, *, timeout: int = 120) -> VideoMetadata:
     """Fetch metadata without downloading media."""
     cmd = [
@@ -105,7 +171,15 @@ def download(
         "-o", str(output_path.with_suffix(".%(ext)s")),
     ]
     if write_thumbnail:
-        cmd += ["--write-thumbnail", "--convert-thumbnails", "jpg"]
+        # Jellyfin only recognises an episode image named ``<video>-thumb.jpg``;
+        # the default template would write ``<video>.jpg``, which it ignores. A
+        # per-type output template (``thumbnail:``) names it correctly without
+        # touching the media file's own template above.
+        cmd += [
+            "--write-thumbnail",
+            "--convert-thumbnails", "jpg",
+            "-o", f"thumbnail:{output_path}-thumb.%(ext)s",
+        ]
     cmd.append(WATCH_URL.format(video_id=video_id))
 
     try:

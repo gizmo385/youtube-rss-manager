@@ -26,6 +26,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -303,10 +304,11 @@ def _unlink_all(mkv_path: Path) -> None:
     season_dir = mkv_path.parent
     channel_dir = season_dir.parent
     for d in (season_dir, channel_dir):
-        try:
-            d.rmdir()
-        except OSError:
-            break  # not empty (or already gone) — stop climbing
+        # Art-aware: a dir left holding only poster/backdrop sidecars is
+        # logically empty and should go, so a fully-pruned channel doesn't
+        # linger as an empty series in Jellyfin.
+        if not naming.rmdir_if_stripped(d):
+            break  # still holds episodes (or couldn't be removed) — stop climbing
 
 
 def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
@@ -497,6 +499,155 @@ def backfill_shorts(db: Session, *, limit: int = 15) -> int:
     return found
 
 
+# YouTube serves avatars/banners more reliably to a browser-like UA, same as
+# the poller's feed fetches.
+_ART_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
+
+def _fetch_image(url: str, dest: Path) -> bool:
+    """Download ``url`` to ``dest`` atomically. Returns success.
+
+    Non-fatal on failure — artwork is a nicety, and a later idle pass retries
+    since the destination file stays absent.
+    """
+    try:
+        with httpx.Client(
+            timeout=30.0, follow_redirects=True, headers={"User-Agent": _ART_UA}
+        ) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            data = resp.content
+    except httpx.HTTPError as exc:
+        logger.warning("Artwork fetch failed for %s: %s", url, exc)
+        return False
+    if not data:
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(dest)
+    return True
+
+
+def backfill_channel_art(db: Session, *, limit: int = 5) -> int:
+    """Fetch avatar/banner URLs for archived channels that lack them.
+
+    Only channels with at least one completed download are probed, so we never
+    hit YouTube for a channel we don't archive. Bounded per pass to keep these
+    extra requests gentle. A successful probe with no images still records an
+    empty ``thumbnail_url`` sentinel so the channel isn't re-probed forever;
+    genuine failures leave it NULL to retry later.
+
+    Returns the number of channels newly given art this pass.
+    """
+    archived = (
+        select(Video.channel_id)
+        .join(Download, Download.video_id == Video.video_id)
+        .where(Download.status == "complete")
+        .distinct()
+    )
+    channels = db.execute(
+        select(Channel).where(
+            Channel.channel_id.in_(archived),
+            Channel.thumbnail_url.is_(None),
+        )
+    ).scalars().all()[:limit]
+
+    done = 0
+    for channel in channels:
+        try:
+            art = ytdlp.probe_channel(channel.channel_id)
+        except ytdlp.ProbeError as exc:
+            logger.warning("Channel art probe failed for %s: %s",
+                           channel.channel_id, exc)
+            continue
+        # "" is the "probed, none found" sentinel; a real URL is truthy.
+        channel.thumbnail_url = art.avatar_url or ""
+        channel.banner_url = art.banner_url
+        db.commit()
+        done += 1
+    if done:
+        logger.info("Fetched channel art for %d channels", done)
+    return done
+
+
+def _ensure_art_link(src: Path, dst: Path) -> bool:
+    """Hardlink ``src`` to ``dst`` if ``src`` exists and ``dst`` doesn't."""
+    if src.exists() and not dst.exists():
+        naming.hardlink(src, dst)
+        return True
+    return False
+
+
+def sync_library_art(db: Session, media_root: str) -> int:
+    """Materialise channel/season posters into each user's library. Idempotent.
+
+    Two steps: (1) fetch each archived channel's avatar/banner into a single
+    canonical ``poster.jpg``/``backdrop.jpg`` under ``.canonical/{Channel}``,
+    then (2) hardlink those into every subscriber's ``{Channel}/`` (series art)
+    and ``{Channel}/Season {YYYY}/`` (season art) folders, sharing one inode the
+    same way episodes do. Season posters reuse the channel avatar so seasons
+    aren't blank tiles. Returns the number of art hardlinks created this pass.
+    """
+    channels = {c.channel_id: c for c in db.execute(select(Channel)).scalars().all()}
+    videos = {v.video_id: v for v in db.execute(select(Video)).scalars().all()}
+    links = [
+        link
+        for link in db.execute(select(DownloadLink)).scalars().all()
+        if link.link_path
+    ]
+
+    def channel_for(video_id: str) -> Channel | None:
+        video = videos.get(video_id)
+        channel = channels.get(video.channel_id) if video else None
+        # A blank thumbnail_url means "probed, no art" — nothing to place.
+        return channel if channel and channel.thumbnail_url else None
+
+    # Step 1: ensure the canonical art files exist for every linked channel.
+    for cid in {
+        video.channel_id
+        for link in links
+        if (video := videos.get(link.video_id))
+    }:
+        channel = channels.get(cid)
+        if channel is None or not channel.thumbnail_url:
+            continue
+        cdir = naming.canonical_channel_dir(media_root, channel.title)
+        poster = cdir / naming.POSTER_NAME
+        if not poster.exists():
+            _fetch_image(channel.thumbnail_url, poster)
+        if channel.banner_url:
+            backdrop = cdir / naming.BACKDROP_NAME
+            if not backdrop.exists():
+                _fetch_image(channel.banner_url, backdrop)
+
+    # Step 2: hardlink canonical art into each user's channel + season dirs.
+    created = 0
+    for link in links:
+        channel = channel_for(link.video_id)
+        if channel is None:
+            continue
+        cdir = naming.canonical_channel_dir(media_root, channel.title)
+        canon_poster = cdir / naming.POSTER_NAME
+        canon_backdrop = cdir / naming.BACKDROP_NAME
+        season_dir = Path(link.link_path).parent
+        user_channel_dir = season_dir.parent
+        try:
+            created += _ensure_art_link(canon_poster, user_channel_dir / naming.POSTER_NAME)
+            created += _ensure_art_link(canon_poster, season_dir / naming.POSTER_NAME)
+            created += _ensure_art_link(
+                canon_backdrop, user_channel_dir / naming.BACKDROP_NAME
+            )
+        except OSError as exc:
+            logger.warning("Art hardlink failed for %s: %s", link.link_path, exc)
+    if created:
+        logger.info("Linked %d library art files", created)
+    return created
+
+
 def run_forever() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -545,6 +696,11 @@ def run_forever() -> None:
                 backfill_shorts(db)
                 reconcile_links(db, media_root)
                 backfill_audio(db, settings)
+                # Give channels their avatars/banners, then materialise
+                # series/season posters into each user's library so Jellyfin
+                # views don't blend together.
+                backfill_channel_art(db)
+                sync_library_art(db, media_root)
                 run_prune(db)
                 db.close()
                 time.sleep(_IDLE_SLEEP)

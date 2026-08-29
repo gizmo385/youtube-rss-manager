@@ -44,6 +44,14 @@ from xml.etree import ElementTree as ET
 CANONICAL_SUBDIR = ".canonical"
 LIBRARIES_SUBDIR = "libraries"
 
+# Jellyfin series/season artwork filenames. The series poster and backdrop live
+# in the channel folder; each season folder gets its own poster (reusing the
+# channel avatar) so seasons don't render as blank tiles. Kept as a set so
+# directory teardown can tell "only artwork left" from "still holding episodes".
+POSTER_NAME = "poster.jpg"
+BACKDROP_NAME = "backdrop.jpg"
+ARTWORK_NAMES = frozenset({POSTER_NAME, BACKDROP_NAME})
+
 # Windows-hostile characters plus anything that upsets path handling. Kept
 # conservative because these files may be served over SMB.
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -73,6 +81,15 @@ def episode_basename(
 def _season_subpath(channel_title: str, published_at: datetime | None) -> Path:
     year = published_at.year if published_at else 1970
     return Path(sanitize(channel_title)) / f"Season {year:04d}"
+
+
+def canonical_channel_dir(media_root: str, channel_title: str) -> Path:
+    """The channel (series) dir under the un-scanned ``.canonical`` tree.
+
+    Holds the canonical ``poster.jpg``/``backdrop.jpg`` that every user's
+    library hardlinks in, mirroring how episode files are shared by inode.
+    """
+    return Path(media_root) / CANONICAL_SUBDIR / sanitize(channel_title)
 
 
 def canonical_episode_dir(
@@ -130,6 +147,30 @@ def episode_files(mkv_path: Path) -> list[Path]:
         if rest == "" or rest[0] in ".-":
             out.append(p)
     return out
+
+
+def rmdir_if_stripped(d: Path) -> bool:
+    """Remove ``d`` if it holds nothing but artwork sidecars (or is empty).
+
+    A season/channel folder whose last episode was pruned still contains the
+    ``poster.jpg``/``backdrop.jpg`` we dropped in, so a plain ``rmdir`` would
+    fail and leave Jellyfin showing an empty series. This deletes those stray
+    art files first, then removes the dir. Returns True if the dir is now gone,
+    False if it still holds real content (episodes) and must be kept.
+    """
+    try:
+        entries = list(d.iterdir())
+    except FileNotFoundError:
+        return True  # already gone — treat as removed so the climb continues
+    if any(e.name not in ARTWORK_NAMES for e in entries):
+        return False
+    for e in entries:
+        e.unlink()
+    try:
+        d.rmdir()
+    except OSError:
+        return False
+    return True
 
 
 def hardlink(src: Path, dst: Path) -> None:

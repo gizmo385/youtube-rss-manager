@@ -44,6 +44,16 @@ ET.register_namespace("itunes", _ITUNES)
 _AUDIO_MIME = "audio/x-m4a"
 
 
+def episode_image_url(video_id: str) -> str:
+    """YouTube's stable public thumbnail URL for a video.
+
+    ``hqdefault`` (480x360) always exists for any public video, unlike
+    ``maxresdefault``, and needs no auth or storage on our side — so podcast
+    clients can render per-episode art without us serving anything.
+    """
+    return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+
+
 def _validate_token(token: str, db: Session) -> OpmlToken:
     opml_token = db.execute(
         select(OpmlToken).where(OpmlToken.token == token)
@@ -112,6 +122,11 @@ def build_podcast_feed(
         duration = _fmt_duration(item["duration_seconds"])
         if duration:
             _sub(it, _itunes("duration"), duration)
+        # Per-episode art so each entry is visually attributable to its video.
+        # Apple ignores item-level <itunes:image>, but Overcast/Pocket Casts
+        # honour it, which is exactly where the "who is this from?" gap showed.
+        if item.get("image_url"):
+            _sub(it, _itunes("image"), href=item["image_url"])
 
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
 
@@ -163,9 +178,23 @@ def _podcast_items(
                 "duration_seconds": video.duration_seconds,
                 "length": download.audio_size_bytes or 0,
                 "enclosure_url": f"{base_url.rstrip('/')}/media/{token}/{video.video_id}.m4a",
+                "image_url": episode_image_url(video.video_id),
             }
         )
     return items
+
+
+def _cover_url(settings, items: list[dict]) -> str:
+    """Channel artwork for the feed.
+
+    A configured ``podcast_cover_url`` wins (e.g. a submission-ready square
+    image). Otherwise fall back to the newest episode's thumbnail so the show
+    still has *some* art rather than a blank tile — items are ordered
+    newest-first, so ``items[0]`` is the most recent.
+    """
+    if settings.podcast_cover_url:
+        return settings.podcast_cover_url
+    return items[0]["image_url"] if items else ""
 
 
 @router.get("/podcast/{token}/all.xml")
@@ -182,7 +211,7 @@ def podcast_all(token: str, db: Session = Depends(get_db)) -> Response:
         site_link=settings.base_url,
         author=user.display_name or "YouTube Archive",
         language=settings.podcast_language,
-        cover_url=settings.podcast_cover_url,
+        cover_url=_cover_url(settings, items),
         items=items,
     )
     return Response(content=xml, media_type="application/rss+xml")
@@ -213,7 +242,7 @@ def podcast_by_category(
         site_link=settings.base_url,
         author=user.display_name or "YouTube Archive",
         language=settings.podcast_language,
-        cover_url=settings.podcast_cover_url,
+        cover_url=_cover_url(settings, items),
         items=items,
     )
     return Response(content=xml, media_type="application/rss+xml")

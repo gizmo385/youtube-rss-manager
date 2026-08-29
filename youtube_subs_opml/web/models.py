@@ -99,6 +99,12 @@ class Channel(Base):
     channel_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     title: Mapped[str] = mapped_column(String(255), server_default="")
     description: Mapped[str] = mapped_column(Text, server_default="")
+    # Channel avatar and banner URLs, used as Jellyfin series/season posters and
+    # backdrops. NULL until the downloader probes the channel (see
+    # downloader.worker.backfill_channel_art); YouTube's RSS feed doesn't carry
+    # them, so they're fetched separately and cached here.
+    thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    banner_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Native array on Postgres; JSON on SQLite (for local/dev use).
     youtube_topics: Mapped[list[str] | None] = mapped_column(
         ARRAY(String).with_variant(JSON, "sqlite"), nullable=True
