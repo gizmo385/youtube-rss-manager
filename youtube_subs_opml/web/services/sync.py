@@ -71,31 +71,40 @@ def sync_account(account: YoutubeAccount, db: Session, settings: Settings) -> in
             channel.youtube_topics = topics
             channel.last_seen_at = func.now()
 
-    # Reconcile subscriptions
+    # Reconcile subscriptions. The primary key is (user_id, channel_id) — a
+    # channel is subscribed at most once per user, regardless of which account
+    # surfaced it — so match on that, not on account_id. Scoping to account_id
+    # made re-syncing after a reconnect (the subscription rows still carry the
+    # previous account's id, or NULL for a manually-added channel) try to INSERT
+    # a row that already exists and collide on the PK.
     fetched_ids = {s.channel_id for s in fetched}
 
     existing = db.execute(
-        select(Subscription).where(
-            Subscription.user_id == account.user_id,
-            Subscription.account_id == account.id,
-        )
+        select(Subscription).where(Subscription.user_id == account.user_id)
     ).scalars().all()
-    existing_ids = {s.channel_id for s in existing}
+    existing_by_id = {s.channel_id: s for s in existing}
 
-    # Add new subscriptions
+    # Upsert subscriptions, adopting any existing row (old account, or a manual
+    # add) into this account. The dict is updated as we insert so a channel
+    # appearing twice in one fetch doesn't collide either.
     for sub in fetched:
-        if sub.channel_id not in existing_ids:
-            db.add(
-                Subscription(
-                    user_id=account.user_id,
-                    channel_id=sub.channel_id,
-                    account_id=account.id,
-                )
+        current = existing_by_id.get(sub.channel_id)
+        if current is None:
+            new_sub = Subscription(
+                user_id=account.user_id,
+                channel_id=sub.channel_id,
+                account_id=account.id,
             )
+            db.add(new_sub)
+            existing_by_id[sub.channel_id] = new_sub
+        else:
+            current.account_id = account.id
 
-    # Remove stale subscriptions (unsubscribed on YouTube)
+    # Remove stale subscriptions this account previously owned but the user has
+    # since unsubscribed from on YouTube. Manual subs (account_id is None) and
+    # channels owned by another connected account are left untouched.
     for s in existing:
-        if s.channel_id not in fetched_ids:
+        if s.account_id == account.id and s.channel_id not in fetched_ids:
             db.delete(s)
 
     account.last_synced_at = func.now()
