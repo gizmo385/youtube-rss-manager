@@ -31,13 +31,14 @@ from sqlalchemy.orm import Session
 
 from ..web.config import get_settings
 from ..web.db import get_session_factory
-from ..web.models import Channel, Download, DownloadLink, Video
+from ..web.models import Channel, Download, DownloadLink, Video, VideoShort
 from ..web.services.archive import (
     channel_intents,
     prune_candidates,
     user_retained_video_ids,
 )
 from ..web.services.prefs import is_within_duration_limit
+from ..web.services.shorts import classify_videos
 from . import naming, ytdlp
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,17 @@ def process(row: Download, db: Session) -> None:
         )
         row.status = "skipped"
         row.skip_reason = "too_long"
+        db.commit()
+        return
+
+    # No subscriber who archives this channel wants its Shorts: probe (result is
+    # cached, so per-user retention/library reconcile can read it) and skip if it
+    # is one. The probe lives here rather than in the poller so it stays on the
+    # rate-limited downloader path, one video at a time.
+    if not intent.include_shorts and classify_videos([row.video_id], db).get(row.video_id):
+        logger.info("Skipping %s: Short excluded for its channel", row.video_id)
+        row.status = "skipped"
+        row.skip_reason = "short"
         db.commit()
         return
 
@@ -401,6 +413,43 @@ def backfill_audio(db: Session, settings) -> int:
     return done
 
 
+def backfill_shorts(db: Session, *, limit: int = 15) -> int:
+    """Classify already-archived videos on Shorts-excluded channels for pruning.
+
+    Shorts filtering only started gating the download path recently, so channels
+    that exclude Shorts may already hold some on disk. This probes a bounded
+    batch of their still-unclassified completed downloads each idle pass (each
+    video probed at most once — ``classify_videos`` caches the verdict), so
+    ``run_prune`` running right after can drop the ones found to be Shorts.
+
+    Kept small per pass so the ``/shorts`` probes stay gentle; the rest are
+    picked up on later passes. Returns the number newly identified as Shorts.
+    """
+    intents = channel_intents(db)
+    excluded = {
+        cid for cid, intent in intents.items()
+        if intent.download and not intent.include_shorts
+    }
+    if not excluded:
+        return 0
+
+    classified = set(db.execute(select(VideoShort.video_id)).scalars().all())
+    candidates = db.execute(
+        select(Download.video_id)
+        .join(Video, Video.video_id == Download.video_id)
+        .where(Download.status == "complete", Video.channel_id.in_(excluded))
+    ).scalars().all()
+    todo = [v for v in candidates if v not in classified][:limit]
+    if not todo:
+        return 0
+
+    verdicts = classify_videos(todo, db)
+    found = sum(1 for v in todo if verdicts.get(v))
+    if found:
+        logger.info("Backfill classified %d archived Shorts for pruning", found)
+    return found
+
+
 def run_forever() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -441,9 +490,12 @@ def run_forever() -> None:
             reap_stale(db)
             row = claim_one(db)
             if row is None:
-                # Idle: reconcile per-user libraries against current
+                # Idle: classify any archived Shorts on channels that now
+                # exclude them, reconcile per-user libraries against current
                 # subscriptions, backfill podcast audio for channels newly
-                # opted in, and prune anything no user retains.
+                # opted in, and prune anything no user retains (including those
+                # freshly-identified Shorts).
+                backfill_shorts(db)
                 reconcile_links(db, media_root)
                 backfill_audio(db, settings)
                 run_prune(db)

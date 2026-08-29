@@ -28,8 +28,10 @@ from youtube_subs_opml.web.models import (
     Subscription,
     User,
     Video,
+    VideoShort,
 )
 from youtube_subs_opml.web.services.archive import (
+    channel_intents,
     retained_video_ids,
     user_retained_video_ids,
 )
@@ -170,6 +172,114 @@ def test_subscription_overrides_category(db):
     add_videos(db, 3)
 
     assert user_retained_video_ids(db) == {}  # subscription wins → off
+
+
+# --- Shorts are excluded from the archive when the channel excludes them ----
+
+def _mark_short(db, vid):
+    db.add(VideoShort(video_id=vid, is_short=True))
+    db.commit()
+
+
+def test_retention_excludes_known_shorts_when_shorts_off(db):
+    add_user(db, 1, download_enabled=True, keep_last_n=0, include_shorts=False)
+    add_sub(db, 1)
+    ids = add_videos(db, 3)
+    _mark_short(db, ids[1])
+
+    assert user_retained_video_ids(db) == {1: {ids[0], ids[2]}}  # the Short dropped
+
+
+def test_retention_keeps_shorts_when_shorts_on(db):
+    add_user(db, 1, download_enabled=True, keep_last_n=0, include_shorts=True)
+    add_sub(db, 1)
+    ids = add_videos(db, 3)
+    _mark_short(db, ids[1])
+
+    assert user_retained_video_ids(db) == {1: set(ids)}  # kept — user wants Shorts
+
+
+def test_shorts_do_not_consume_keep_slots(db):
+    add_user(db, 1, download_enabled=True, keep_last_n=2, include_shorts=False)
+    add_sub(db, 1)
+    ids = add_videos(db, 4)  # ids[3] newest
+    _mark_short(db, ids[3])  # newest is a Short
+
+    # Without excluding first, the top-2 would be {short, ids[2]} → {ids[2]}.
+    # Excluding first keeps the two most recent *regular* uploads.
+    assert user_retained_video_ids(db) == {1: {ids[2], ids[1]}}
+
+
+def test_channel_intent_include_shorts_is_a_union(db):
+    add_user(db, 1, download_enabled=True, include_shorts=False)
+    add_user(db, 2, download_enabled=True, include_shorts=True)
+    add_sub(db, 1)
+    add_sub(db, 2)
+    add_videos(db, 1)
+
+    assert channel_intents(db)[CHAN].include_shorts is True  # user 2 wants them
+
+
+def test_channel_intent_shorts_false_when_no_downloader_wants_them(db):
+    add_user(db, 1, download_enabled=True, include_shorts=False)
+    add_user(db, 2, download_enabled=False, include_shorts=True)  # wants shorts but no download
+    add_sub(db, 1)
+    add_sub(db, 2)
+    add_videos(db, 1)
+
+    assert channel_intents(db)[CHAN].include_shorts is False
+
+
+def test_worker_skips_short_when_channel_excludes_shorts(db, monkeypatch):
+    add_user(db, 1, download_enabled=True, include_shorts=False)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    row = Download(video_id=ids[0], status="downloading")
+    db.add(row)
+    db.commit()
+
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        worker.ytdlp, "probe",
+        lambda vid: SimpleNamespace(duration_seconds=30, title="t", description="d"),
+    )
+    monkeypatch.setattr(worker, "classify_videos", lambda video_ids, db: {video_ids[0]: True})
+
+    def _no_download(*a, **k):
+        raise AssertionError("must not download a Short the channel excludes")
+
+    monkeypatch.setattr(worker.ytdlp, "download", _no_download)
+
+    worker.process(row, db)
+
+    assert row.status == "skipped"
+    assert row.skip_reason == "short"
+
+
+def test_backfill_classifies_and_prunes_archived_shorts(db, tmp_path, monkeypatch):
+    from youtube_subs_opml.web.services import shorts
+
+    media = str(tmp_path)
+    add_user(db, 1, download_enabled=True, keep_last_n=0, include_shorts=False)
+    add_sub(db, 1)
+    ids = add_videos(db, 2)
+    canon = [complete_download(db, media, v, i + 1) for i, v in enumerate(ids)]
+    reconcile_links(db, media)  # both linked — not yet known to be Shorts
+
+    # ids[0] is really a Short; drive classify_videos via a mocked probe so the
+    # real caching path runs (a verdict row is written for each).
+    monkeypatch.setattr(shorts, "_probe_is_short", lambda vid, client: vid == ids[0])
+
+    assert worker.backfill_shorts(db) == 1
+    assert db.get(VideoShort, ids[0]).is_short is True
+    assert db.get(VideoShort, ids[1]).is_short is False
+
+    # The now-known Short falls out of retention: its link is removed and its
+    # canonical file pruned; the regular upload stays.
+    reconcile_links(db, media)
+    assert run_prune(db) == 1
+    assert not canon[0].exists()
+    assert canon[1].exists()
 
 
 # --- reconcile: hardlink fan-out ----------------------------------------

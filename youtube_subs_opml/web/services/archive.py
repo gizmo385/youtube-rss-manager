@@ -31,6 +31,7 @@ from ..models import (
     Subscription,
     User,
     Video,
+    VideoShort,
 )
 from .prefs import resolve
 
@@ -50,6 +51,22 @@ class ChannelIntent:
     max_duration_seconds: int
     #: True if at least one subscriber wants a podcast feed for it.
     generate_podcast: bool
+    #: True if at least one *downloading* subscriber wants Shorts. When False,
+    #: the channel excludes Shorts for everyone, so the worker skips them.
+    include_shorts: bool
+
+
+def _known_shorts(db: Session, video_ids: list[str]) -> set[str]:
+    """The subset of ``video_ids`` cached as Shorts. Read-only — an unclassified
+    video is treated as non-Short (fail open), so nothing regular is dropped."""
+    if not video_ids:
+        return set()
+    rows = db.execute(
+        select(VideoShort.video_id).where(
+            VideoShort.video_id.in_(video_ids), VideoShort.is_short.is_(True)
+        )
+    ).scalars().all()
+    return set(rows)
 
 
 def _most_permissive_int(values: list[int | None]) -> int | None:
@@ -64,7 +81,7 @@ def _most_permissive_int(values: list[int | None]) -> int | None:
 
 def _category_prefs(
     db: Session, user_id: int, channel_id: str
-) -> tuple[bool | None, int | None, int | None, bool | None]:
+) -> tuple[bool | None, int | None, int | None, bool | None, bool | None]:
     """Most permissive preference across every category this channel is in."""
     categories = db.execute(
         select(Category)
@@ -75,15 +92,17 @@ def _category_prefs(
         )
     ).scalars().all()
     if not categories:
-        return None, None, None, None
+        return None, None, None, None, None
 
     downloads = [c.download_enabled for c in categories if c.download_enabled is not None]
     podcasts = [c.generate_podcast for c in categories if c.generate_podcast is not None]
+    shorts = [c.include_shorts for c in categories if c.include_shorts is not None]
     return (
         (True if any(downloads) else False) if downloads else None,
         _most_permissive_int([c.keep_last_n for c in categories]),
         _most_permissive_int([c.max_duration_seconds for c in categories]),
         (True if any(podcasts) else False) if podcasts else None,
+        (True if any(shorts) else False) if shorts else None,
     )
 
 
@@ -101,7 +120,7 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
         if user is None:
             continue
 
-        cat_download, cat_keep, cat_max, cat_podcast = _category_prefs(
+        cat_download, cat_keep, cat_max, cat_podcast, cat_shorts = _category_prefs(
             db, sub.user_id, sub.channel_id
         )
 
@@ -111,6 +130,11 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
             sub.max_duration_seconds, cat_max, user.max_duration_seconds
         )
         podcast = resolve(sub.generate_podcast, cat_podcast, user.generate_podcast)
+        # Only a subscriber who actually downloads this channel gets a say in
+        # whether its Shorts are wanted on disk.
+        wants_shorts = download and resolve(
+            sub.include_shorts, cat_shorts, user.include_shorts
+        )
 
         existing = intents.get(sub.channel_id)
         if existing is None:
@@ -120,6 +144,7 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
                 keep_last_n=keep,
                 max_duration_seconds=max_dur,
                 generate_podcast=podcast,
+                include_shorts=wants_shorts,
             )
             continue
 
@@ -133,6 +158,7 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
             )
             or 0,
             generate_podcast=existing.generate_podcast or podcast,
+            include_shorts=existing.include_shorts or wants_shorts,
         )
 
     return intents
@@ -163,24 +189,35 @@ def user_retained_video_ids(db: Session) -> dict[int, set[str]]:
         if user is None:
             continue
 
-        cat_download, cat_keep, _cat_max, _cat_podcast = _category_prefs(
+        cat_download, cat_keep, _cat_max, _cat_podcast, cat_shorts = _category_prefs(
             db, sub.user_id, sub.channel_id
         )
         download = resolve(sub.download_enabled, cat_download, user.download_enabled)
         if not download:
             continue
         keep = resolve(sub.keep_last_n, cat_keep, user.keep_last_n)
+        include_shorts = resolve(sub.include_shorts, cat_shorts, user.include_shorts)
 
         stmt = (
             select(Video.video_id)
             .where(Video.channel_id == sub.channel_id)
             .order_by(Video.published_at.desc().nullslast())
         )
-        if keep > 0:
-            stmt = stmt.limit(keep)
-        retained.setdefault(sub.user_id, set()).update(
-            db.execute(stmt).scalars().all()
-        )
+        if include_shorts:
+            # No Shorts filtering, so the DB can apply the keep window directly.
+            if keep > 0:
+                stmt = stmt.limit(keep)
+            vids = list(db.execute(stmt).scalars().all())
+        else:
+            # Drop known Shorts before applying keep, so a burst of Shorts can't
+            # push the wanted regular uploads out of the retention window.
+            candidates = list(db.execute(stmt).scalars().all())
+            shorts = _known_shorts(db, candidates)
+            vids = [v for v in candidates if v not in shorts]
+            if keep > 0:
+                vids = vids[:keep]
+
+        retained.setdefault(sub.user_id, set()).update(vids)
     return retained
 
 
