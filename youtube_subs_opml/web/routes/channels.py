@@ -14,12 +14,49 @@ from youtube_subs_opml.youtube import ChannelLookupError, resolve_channel
 from ..config import get_settings
 from ..db import get_db
 from ..deps import get_current_user
-from ..models import Category, Channel, ChannelCategory, Subscription, User, YoutubeAccount
+from ..models import (
+    Category,
+    Channel,
+    ChannelCategory,
+    Download,
+    Subscription,
+    User,
+    Video,
+    YoutubeAccount,
+)
 from ..services.crypto import decrypt_token
+from ..services.prefs import (
+    LINK_TARGETS,
+    parse_inherit_int,
+    parse_link_target,
+    parse_tristate_bool,
+    minutes_to_seconds,
+)
 from ..services.resolve import resolve_channel_public
 from ..services.sync import build_google_credentials
 from ..templating import templates
 from .categories import _categories_with_counts
+
+# Archive prefs editable per subscription, and how each form value is parsed.
+# "minutes" fields arrive from the UI in minutes and are stored as seconds.
+_ARCHIVE_FIELD_KINDS = {
+    "download_enabled": "bool",
+    "generate_podcast": "bool",
+    "keep_last_n": "int",
+    "max_duration_seconds": "minutes",
+    "link_target": "link",
+}
+
+
+def _parse_archive_value(field: str, value: str | None):
+    kind = _ARCHIVE_FIELD_KINDS[field]
+    if kind == "bool":
+        return parse_tristate_bool(value)
+    if kind == "int":
+        return parse_inherit_int(value)
+    if kind == "minutes":
+        return minutes_to_seconds(value)
+    return parse_link_target(value, allow_inherit=True)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +105,15 @@ def _build_channel_context(user: User, db: Session) -> dict:
             "ignored": sub.ignored,
             "include_shorts": sub.include_shorts,
             "include_live": sub.include_live,
+            "download_enabled": sub.download_enabled,
+            "keep_last_n": sub.keep_last_n,
+            "max_duration_minutes": (
+                sub.max_duration_seconds // 60
+                if sub.max_duration_seconds is not None
+                else None
+            ),
+            "generate_podcast": sub.generate_podcast,
+            "link_target": sub.link_target,
             "is_manual": sub.account_id is None,
             "categories": sorted(assigned, key=lambda c: c.name),
             "assigned_category_ids": {c.id for c in assigned},
@@ -85,6 +131,7 @@ def _build_channel_context(user: User, db: Session) -> dict:
         "categorized": categorized,
         "ignored": ignored,
         "categories": categories,
+        "link_targets": LINK_TARGETS,
         "total": len(channels),
     }
 
@@ -120,6 +167,28 @@ def _build_board_context(user: User, db: Session) -> dict:
     return {"columns": columns, "categories": categories}
 
 
+def _archive_stats(user: User, db: Session) -> dict:
+    """Failed/skipped download counts across the user's channels.
+
+    Surfaced on the channels page so yt-dlp breakage (which otherwise rots the
+    archive silently in container logs) is visible. ``failed`` is the real alarm;
+    ``skipped`` is mostly intentional (too long, no subscribers) but shown too.
+    """
+    rows = db.execute(
+        select(Download.status, func.count())
+        .select_from(Download)
+        .join(Video, Video.video_id == Download.video_id)
+        .join(Subscription, Subscription.channel_id == Video.channel_id)
+        .where(Subscription.user_id == user.id)
+        .group_by(Download.status)
+    ).all()
+    by_status = {status: count for status, count in rows}
+    return {
+        "failed": by_status.get("failed", 0),
+        "skipped": by_status.get("skipped", 0),
+    }
+
+
 @router.get("")
 def list_channels(
     request: Request,
@@ -131,6 +200,7 @@ def list_channels(
     ctx["user"] = user
     ctx["active_tab"] = tab
     ctx["categories_with_counts"] = _categories_with_counts(user, db)
+    ctx["archive_stats"] = _archive_stats(user, db)
 
     if tab == "board":
         board_ctx = _build_board_context(user, db)
@@ -345,6 +415,42 @@ async def set_include_live(
             Subscription.channel_id.in_([str(c) for c in channel_ids]),
         )
         .values(include_live=live_val)
+    )
+    db.commit()
+
+    ctx = _build_channel_context(user, db)
+    ctx["user"] = user
+    return templates.TemplateResponse(request, "partials/channel_list.html", context=ctx)
+
+
+@router.post("/archive-pref")
+async def set_archive_pref(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Set one archive preference on one or more subscriptions.
+
+    Generic over the field (validated against an allowlist) rather than one
+    endpoint per pref, since there are five of them. NULL means inherit from the
+    channel's categories, then the user default.
+    """
+    form = await request.form()
+    channel_ids = form.getlist("channel_ids")
+    field = form.get("field", "")
+    if not channel_ids:
+        raise HTTPException(status_code=400, detail="Select at least one channel")
+    if field not in _ARCHIVE_FIELD_KINDS:
+        raise HTTPException(status_code=400, detail="Unknown preference")
+
+    parsed = _parse_archive_value(field, form.get("value"))
+    db.execute(
+        update(Subscription)
+        .where(
+            Subscription.user_id == user.id,
+            Subscription.channel_id.in_([str(c) for c in channel_ids]),
+        )
+        .values(**{field: parsed})
     )
     db.commit()
 

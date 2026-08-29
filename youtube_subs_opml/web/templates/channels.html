@@ -26,6 +26,17 @@
     </div>
     <div id="add-channel-error" class="add-channel-error hidden" role="alert"></div>
 
+    {% if archive_stats and (archive_stats.failed or archive_stats.skipped) %}
+    <div class="archive-stats" role="status">
+      {% if archive_stats.failed %}
+      <span class="archive-failed">⚠ {{ archive_stats.failed }} download{{ 's' if archive_stats.failed != 1 }} failed</span>
+      {% endif %}
+      {% if archive_stats.skipped %}
+      <span class="archive-skipped">{{ archive_stats.skipped }} skipped</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <div id="channel-list">
       {% include "partials/channel_list.html" %}
     </div>

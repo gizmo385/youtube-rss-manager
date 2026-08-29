@@ -32,6 +32,24 @@ services:
       caddy.@youtube-rss.host: "youtube-rss.acbc.house"
       caddy.reverse_proxy: "@youtube-rss {{upstreams http 8000}}"
 
+  downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile.downloader
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-yts}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-yts}
+      MEDIA_ROOT: /media/youtube
+    volumes:
+      # Must be the same host path Jellyfin has mounted, or it will never see
+      # the files. Jellyfin needs it read-only; this container needs write.
+      - ${MEDIA_HOST_PATH:?MEDIA_HOST_PATH must be set}:/media/youtube
+
 networks:
   caddy:
     external: true

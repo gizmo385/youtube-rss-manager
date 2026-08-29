@@ -1,15 +1,20 @@
 {% if uncategorized %}
 <h3>Uncategorized ({{ uncategorized|length }})</h3>
 <div class="overflow-auto">
-  <table class="striped">
+  <table class="striped cards-on-mobile">
     <thead>
       <tr>
-        <th><input type="checkbox" onclick="toggleAll(this)"></th>
+        <th class="col-select"><input type="checkbox" onclick="toggleAll(this)"></th>
         <th>Channel</th>
         <th>Categories</th>
         <th>Ignored</th>
         <th>Shorts</th>
         <th>Live</th>
+        <th title="Download videos into Jellyfin">Archive</th>
+        <th title="Keep last N per channel (blank = inherit, 0 = all)">Keep</th>
+        <th title="Max duration in minutes (blank = inherit, 0 = no limit)">Max&nbsp;min</th>
+        <th title="Generate podcast audio">Podcast</th>
+        <th title="What a feed entry links to once archived">Link</th>
         <th>YouTube Topics</th>
       </tr>
     </thead>
@@ -25,15 +30,20 @@
 {% if categorized %}
 <h3>Categorized ({{ categorized|length }})</h3>
 <div class="overflow-auto">
-  <table class="striped">
+  <table class="striped cards-on-mobile">
     <thead>
       <tr>
-        <th><input type="checkbox" onclick="toggleAll(this)"></th>
+        <th class="col-select"><input type="checkbox" onclick="toggleAll(this)"></th>
         <th>Channel</th>
         <th>Categories</th>
         <th>Ignored</th>
         <th>Shorts</th>
         <th>Live</th>
+        <th title="Download videos into Jellyfin">Archive</th>
+        <th title="Keep last N per channel (blank = inherit, 0 = all)">Keep</th>
+        <th title="Max duration in minutes (blank = inherit, 0 = no limit)">Max&nbsp;min</th>
+        <th title="Generate podcast audio">Podcast</th>
+        <th title="What a feed entry links to once archived">Link</th>
         <th>YouTube Topics</th>
       </tr>
     </thead>
@@ -49,15 +59,20 @@
 {% if ignored %}
 <h3>Ignored ({{ ignored|length }})</h3>
 <div class="overflow-auto">
-  <table class="striped">
+  <table class="striped cards-on-mobile">
     <thead>
       <tr>
-        <th><input type="checkbox" onclick="toggleAll(this)"></th>
+        <th class="col-select"><input type="checkbox" onclick="toggleAll(this)"></th>
         <th>Channel</th>
         <th>Categories</th>
         <th>Ignored</th>
         <th>Shorts</th>
         <th>Live</th>
+        <th title="Download videos into Jellyfin">Archive</th>
+        <th title="Keep last N per channel (blank = inherit, 0 = all)">Keep</th>
+        <th title="Max duration in minutes (blank = inherit, 0 = no limit)">Max&nbsp;min</th>
+        <th title="Generate podcast audio">Podcast</th>
+        <th title="What a feed entry links to once archived">Link</th>
         <th>YouTube Topics</th>
       </tr>
     </thead>

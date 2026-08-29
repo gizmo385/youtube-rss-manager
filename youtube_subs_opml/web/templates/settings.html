@@ -18,15 +18,120 @@
              {% if user.include_live %}checked{% endif %}>
       Include premieres &amp; livestreams in RSS feeds
     </label>
+
+    <h3>Video archive</h3>
+    <p><small>Defaults for downloading subscribed videos into Jellyfin. Categories
+      and individual channels can override these.</small></p>
+    <label>
+      <input type="checkbox" name="download_enabled" value="true"
+             {% if user.download_enabled %}checked{% endif %}>
+      Archive videos by default
+    </label>
+    <small class="field-hint">Off by default; enabling globally on a large
+      subscription list will pull hundreds of GB.</small>
+    <div class="grid">
+      <label>
+        Keep last N per channel
+        <input type="number" name="keep_last_n" min="0" step="1"
+               value="{{ user.keep_last_n }}">
+        <small>0 = keep everything</small>
+      </label>
+      <label>
+        Max duration (minutes)
+        <input type="number" name="max_duration_minutes" min="0" step="1"
+               value="{{ max_duration_minutes }}">
+        <small>0 = no limit; excludes e.g. six-hour streams</small>
+      </label>
+      <label>
+        Feed link target
+        <select name="link_target">
+          {% for lt in link_targets %}
+          <option value="{{ lt }}"{% if user.link_target == lt %} selected{% endif %}>{{ lt }}</option>
+          {% endfor %}
+        </select>
+        <small>where a feed entry links once archived</small>
+      </label>
+    </div>
+    <label>
+      <input type="checkbox" name="generate_podcast" value="true"
+             {% if user.generate_podcast %}checked{% endif %}>
+      Generate podcast feeds (extract audio)
+    </label>
+
     <button type="submit" class="outline">Save</button>
   </form>
+</section>
+
+<section>
+  <h2>Jellyfin</h2>
+  {% if jellyfin_test == 'ok' %}
+  <p class="jellyfin-status ok" role="status">✓ Connection succeeded.</p>
+  {% elif jellyfin_test == 'fail' %}
+  <p class="jellyfin-status fail" role="alert">✗ Connection failed — check the URL and API key.</p>
+  {% elif jellyfin_test == 'missing' %}
+  <p class="jellyfin-status fail" role="alert">Save your Jellyfin connection first.</p>
+  {% endif %}
+
+  <form method="post" action="/settings/jellyfin">
+    <label>
+      Base URL
+      <input type="url" name="base_url" placeholder="https://jellyfin.example.com"
+             value="{{ jellyfin.base_url if jellyfin else '' }}" required>
+    </label>
+    <label>
+      API key
+      <input type="password" name="api_key" autocomplete="off"
+             placeholder="{% if jellyfin %}•••••• (leave blank to keep current){% else %}Dashboard → API Keys{% endif %}"
+             {% if not jellyfin %}required{% endif %}>
+    </label>
+    <label>
+      Jellyfin user GUID
+      <input type="text" name="jellyfin_user_id" autocomplete="off"
+             placeholder="the user playlists belong to"
+             value="{{ jellyfin.jellyfin_user_id if jellyfin else '' }}">
+    </label>
+    <div class="cat-actions" role="group">
+      <button type="submit" class="outline">Save connection</button>
+    </div>
+  </form>
+  {% if jellyfin %}
+  <p><small>
+    {% if jellyfin.last_verified_at %}
+      Last verified {{ jellyfin.last_verified_at.strftime('%Y-%m-%d %H:%M') }}.
+    {% else %}
+      Not yet verified.
+    {% endif %}
+  </small></p>
+  <form method="post" action="/settings/jellyfin/test" class="inline-form">
+    <button type="submit" class="outline secondary">Test connection</button>
+  </form>
+  {% endif %}
+
+  <h3>Your library folder</h3>
+  <p>You choose where videos are stored. The archive writes to its media root —
+     <code>{{ media_root }}</code> inside the container, which you bind-mount from
+     <em>any</em> location on your host (the same one you mount into Jellyfin), or
+     change with the <code>MEDIA_ROOT</code> env var. The only structure the app
+     imposes is a per-user subfolder, so each person gets an isolated library:</p>
+  <p>
+    <code>{{ library_subpath }}</code>
+    <button type="button" class="outline small-btn copy-btn"
+            onclick="copyUrl(this, '{{ library_subpath }}')">Copy</button>
+  </p>
+  <p><small>In Jellyfin, add a library (TV Shows, metadata downloading
+     <strong>off</strong>) pointing at that <code>{{ library_subpath }}</code>
+     folder wherever the media volume is mounted, and grant only your Jellyfin
+     user access. Full path in this container: <code>{{ library_path }}</code>.</small></p>
+  <p><small><strong>Don't</strong> point the library at the media root itself or the
+     <code>{{ canonical_subdir }}</code> staging folder — those hold every user's
+     files and the download originals, so Jellyfin would show duplicates.</small></p>
 </section>
 
 <section>
   <h2>YouTube Accounts</h2>
   {% if accounts %}
   <div class="overflow-auto">
-    <table class="striped">
+    <table class="striped cards-on-mobile">
       <thead>
         <tr>
           <th>Channel</th>
@@ -37,9 +142,9 @@
       <tbody>
         {% for acct in accounts %}
         <tr>
-          <td>{{ acct.channel_title or acct.channel_id }}</td>
-          <td>{{ acct.last_synced_at.strftime('%Y-%m-%d %H:%M') if acct.last_synced_at else 'Never' }}</td>
-          <td>
+          <td class="card-title">{{ acct.channel_title or acct.channel_id }}</td>
+          <td data-label="Last synced">{{ acct.last_synced_at.strftime('%Y-%m-%d %H:%M') if acct.last_synced_at else 'Never' }}</td>
+          <td data-label="Actions">
             <form method="post" action="/sync/{{ acct.id }}" class="inline-form">
               <button type="submit" class="outline">Sync now</button>
             </form>

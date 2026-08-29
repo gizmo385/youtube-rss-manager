@@ -1,13 +1,19 @@
 {% if categories_with_counts %}
 <div class="overflow-auto">
-  <table class="striped">
+  <table class="striped cards-on-mobile">
     <thead>
       <tr>
         <th>Name</th>
         <th>Slug</th>
         <th>Channels</th>
+        <th title="Disk used by completed downloads in this category">Disk</th>
         <th>Shorts</th>
         <th>Live</th>
+        <th title="Download videos into Jellyfin">Archive</th>
+        <th title="Keep last N per channel (blank = inherit, 0 = all)">Keep</th>
+        <th title="Max duration in minutes (blank = inherit, 0 = no limit)">Max&nbsp;min</th>
+        <th title="Generate podcast audio">Podcast</th>
+        <th title="What a feed entry links to once archived">Link</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -15,11 +21,11 @@
       {% for item in categories_with_counts %}
       {% set cat = item.category %}
       <tr id="category-{{ cat.id }}">
-        <td>
+        <td class="card-title">
           <input type="text" name="name" value="{{ cat.name }}" form="edit-{{ cat.id }}">
         </td>
-        <td><code>{{ cat.slug }}</code></td>
-        <td>
+        <td data-label="Slug"><code>{{ cat.slug }}</code></td>
+        <td data-label="Channels">
           <a href="#" class="link-btn"
               hx-get="/categories/{{ cat.id }}/channels"
               hx-target="#cat-detail-{{ cat.id }}"
@@ -28,7 +34,8 @@
             {{ item.channel_count }}
           </a>
         </td>
-        <td>
+        <td data-label="Disk"><small>{{ item.disk_human }}</small></td>
+        <td data-label="Shorts">
           <select class="shorts-select"
                   name="include_shorts"
                   hx-patch="/categories/{{ cat.id }}/include-shorts"
@@ -39,7 +46,7 @@
             <option value="false"{% if cat.include_shorts == false %} selected{% endif %}>Exclude</option>
           </select>
         </td>
-        <td>
+        <td data-label="Live">
           <select class="shorts-select"
                   name="include_live"
                   hx-patch="/categories/{{ cat.id }}/include-live"
@@ -50,7 +57,54 @@
             <option value="false"{% if cat.include_live == false %} selected{% endif %}>Exclude</option>
           </select>
         </td>
-        <td>
+        <td data-label="Archive">
+          <select class="shorts-select" name="value"
+                  hx-patch="/categories/{{ cat.id }}/archive-pref"
+                  hx-vals='{"field": "download_enabled"}'
+                  hx-target="#category-list" hx-swap="innerHTML">
+            <option value="inherit"{% if cat.download_enabled is none %} selected{% endif %}>Inherit</option>
+            <option value="true"{% if cat.download_enabled == true %} selected{% endif %}>On</option>
+            <option value="false"{% if cat.download_enabled == false %} selected{% endif %}>Off</option>
+          </select>
+        </td>
+        <td data-label="Keep last N">
+          <input type="number" min="0" step="1" class="archive-num" placeholder="—" name="value"
+                 value="{{ cat.keep_last_n if cat.keep_last_n is not none else '' }}"
+                 hx-patch="/categories/{{ cat.id }}/archive-pref"
+                 hx-vals='{"field": "keep_last_n"}'
+                 hx-trigger="change"
+                 hx-target="#category-list" hx-swap="innerHTML">
+        </td>
+        <td data-label="Max minutes">
+          <input type="number" min="0" step="1" class="archive-num" placeholder="—" name="value"
+                 value="{{ (cat.max_duration_seconds // 60) if cat.max_duration_seconds is not none else '' }}"
+                 hx-patch="/categories/{{ cat.id }}/archive-pref"
+                 hx-vals='{"field": "max_duration_seconds"}'
+                 hx-trigger="change"
+                 hx-target="#category-list" hx-swap="innerHTML">
+        </td>
+        <td data-label="Podcast">
+          <select class="shorts-select" name="value"
+                  hx-patch="/categories/{{ cat.id }}/archive-pref"
+                  hx-vals='{"field": "generate_podcast"}'
+                  hx-target="#category-list" hx-swap="innerHTML">
+            <option value="inherit"{% if cat.generate_podcast is none %} selected{% endif %}>Inherit</option>
+            <option value="true"{% if cat.generate_podcast == true %} selected{% endif %}>On</option>
+            <option value="false"{% if cat.generate_podcast == false %} selected{% endif %}>Off</option>
+          </select>
+        </td>
+        <td data-label="Feed link">
+          <select class="shorts-select" name="value"
+                  hx-patch="/categories/{{ cat.id }}/archive-pref"
+                  hx-vals='{"field": "link_target"}'
+                  hx-target="#category-list" hx-swap="innerHTML">
+            <option value="inherit"{% if cat.link_target is none %} selected{% endif %}>Inherit</option>
+            {% for lt in link_targets %}
+            <option value="{{ lt }}"{% if cat.link_target == lt %} selected{% endif %}>{{ lt }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td data-label="Actions" class="col-actions">
           <div class="cat-actions" role="group">
             <form id="edit-{{ cat.id }}"
                   hx-put="/categories/{{ cat.id }}"
@@ -73,7 +127,7 @@
         </td>
       </tr>
       <tr class="hidden cat-detail-row" id="cat-detail-row-{{ cat.id }}">
-        <td colspan="6" id="cat-detail-{{ cat.id }}"></td>
+        <td colspan="12" id="cat-detail-{{ cat.id }}"></td>
       </tr>
       {% endfor %}
     </tbody>

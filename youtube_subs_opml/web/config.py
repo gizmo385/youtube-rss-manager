@@ -39,12 +39,38 @@ class Settings(BaseSettings):
     youtube_client_id: str = Field("")
     youtube_client_secret: str = Field("")
 
+    # --- Video archive ------------------------------------------------------
+    # Root of the Jellyfin-visible media tree. Must be the same path inside the
+    # downloader container and (via the same bind mount) inside Jellyfin.
+    media_root: str = Field("/media/youtube")
+    # Refuse to download unless media_root is a real mount, so a forgotten
+    # volume doesn't silently fill the container's ephemeral layer. Set True for
+    # local development, where the store is just a folder (see local-mode
+    # defaults below).
+    allow_unmounted_media: bool = Field(False)
+    # How often the poller re-reads channel RSS. YouTube's feed only carries
+    # the ~15 most recent entries, so this bounds what can be captured for
+    # prolific channels — 6 hours would silently lose videos.
+    poll_interval_minutes: int = Field(20)
+    # Keep this at 1. Concurrent downloads from one IP are the fastest route to
+    # "Sign in to confirm you're not a bot".
+    download_concurrency: int = Field(1)
+    ytdlp_format: str = Field("bestvideo[height<=1080]+bestaudio/best[height<=1080]")
+    # Politeness knobs passed through to yt-dlp.
+    ytdlp_sleep_interval: int = Field(5)
+    ytdlp_max_retries: int = Field(3)
+    # How often to resolve Jellyfin item ids and reconcile playlists. HTTP-only,
+    # runs in the web process. A no-op for users without a Jellyfin account.
+    jellyfin_sync_interval_minutes: int = Field(30)
+
     @model_validator(mode="after")
     def _apply_mode_defaults(self) -> "Settings":
         if self.local_mode:
             self.database_url = self.database_url or _LOCAL_DATABASE_URL
             self.session_secret = self.session_secret or _LOCAL_SESSION_SECRET
             self.fernet_key = self.fernet_key or _LOCAL_FERNET_KEY
+            # Local media is a plain folder, not a mount.
+            self.allow_unmounted_media = True
             return self
 
         missing = [

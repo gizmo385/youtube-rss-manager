@@ -1,15 +1,15 @@
 <tr class="channel-row{% if ch.ignored %} ignored{% endif %}" data-title="{{ ch.title|lower }}">
-  <td>
+  <td class="col-select">
     <input type="checkbox" name="channel_ids" value="{{ ch.channel_id }}" onchange="updateSelection()">
   </td>
-  <td>
+  <td class="card-title">
     <a href="https://www.youtube.com/channel/{{ ch.channel_id }}" target="_blank" rel="noopener" class="channel-link">{{ ch.title }}</a>
     {% if ch.is_manual %}
     <span class="manual-badge" title="Added manually (not from YouTube subscriptions)">manual</span>
     <button type="button" class="manual-remove" title="Remove this manually-added channel" onclick="removeManualChannel('{{ ch.channel_id }}')">&times;</button>
     {% endif %}
   </td>
-  <td class="channel-categories">
+  <td class="channel-categories" data-label="Categories">
     {% for cat in ch.categories %}
       <span class="category-chip"
             hx-post="/channels/unassign"
@@ -37,7 +37,7 @@
     </select>
     {% endif %}
   </td>
-  <td>
+  <td data-label="Ignored">
     <input type="checkbox"
            {% if ch.ignored %}checked{% endif %}
            hx-post="/channels/ignore"
@@ -46,7 +46,7 @@
            hx-swap="innerHTML show:none"
            hx-vals='{"channel_ids": "{{ ch.channel_id }}", "ignored": "{{ 'false' if ch.ignored else 'true' }}"}'>
   </td>
-  <td>
+  <td data-label="Shorts">
     <select class="shorts-select"
             onchange="postChannelUpdate('/channels/include-shorts', {'channel_ids': '{{ ch.channel_id }}', 'include_shorts': this.value})">
       <option value="inherit"{% if ch.include_shorts is none %} selected{% endif %}>Inherit</option>
@@ -54,7 +54,7 @@
       <option value="false"{% if ch.include_shorts == false %} selected{% endif %}>Exclude</option>
     </select>
   </td>
-  <td>
+  <td data-label="Live">
     <select class="shorts-select"
             onchange="postChannelUpdate('/channels/include-live', {'channel_ids': '{{ ch.channel_id }}', 'include_live': this.value})">
       <option value="inherit"{% if ch.include_live is none %} selected{% endif %}>Inherit</option>
@@ -62,7 +62,42 @@
       <option value="false"{% if ch.include_live == false %} selected{% endif %}>Exclude</option>
     </select>
   </td>
-  <td class="topics">
+  <td data-label="Archive">
+    <select class="shorts-select"
+            onchange="postChannelUpdate('/channels/archive-pref', {'channel_ids': '{{ ch.channel_id }}', 'field': 'download_enabled', 'value': this.value})">
+      <option value="inherit"{% if ch.download_enabled is none %} selected{% endif %}>Inherit</option>
+      <option value="true"{% if ch.download_enabled == true %} selected{% endif %}>On</option>
+      <option value="false"{% if ch.download_enabled == false %} selected{% endif %}>Off</option>
+    </select>
+  </td>
+  <td data-label="Keep last N">
+    <input type="number" min="0" step="1" class="archive-num" placeholder="—"
+           value="{{ ch.keep_last_n if ch.keep_last_n is not none else '' }}"
+           onchange="postChannelUpdate('/channels/archive-pref', {'channel_ids': '{{ ch.channel_id }}', 'field': 'keep_last_n', 'value': this.value})">
+  </td>
+  <td data-label="Max minutes">
+    <input type="number" min="0" step="1" class="archive-num" placeholder="—"
+           value="{{ ch.max_duration_minutes if ch.max_duration_minutes is not none else '' }}"
+           onchange="postChannelUpdate('/channels/archive-pref', {'channel_ids': '{{ ch.channel_id }}', 'field': 'max_duration_seconds', 'value': this.value})">
+  </td>
+  <td data-label="Podcast">
+    <select class="shorts-select"
+            onchange="postChannelUpdate('/channels/archive-pref', {'channel_ids': '{{ ch.channel_id }}', 'field': 'generate_podcast', 'value': this.value})">
+      <option value="inherit"{% if ch.generate_podcast is none %} selected{% endif %}>Inherit</option>
+      <option value="true"{% if ch.generate_podcast == true %} selected{% endif %}>On</option>
+      <option value="false"{% if ch.generate_podcast == false %} selected{% endif %}>Off</option>
+    </select>
+  </td>
+  <td data-label="Feed link">
+    <select class="shorts-select"
+            onchange="postChannelUpdate('/channels/archive-pref', {'channel_ids': '{{ ch.channel_id }}', 'field': 'link_target', 'value': this.value})">
+      <option value="inherit"{% if ch.link_target is none %} selected{% endif %}>Inherit</option>
+      {% for lt in link_targets %}
+      <option value="{{ lt }}"{% if ch.link_target == lt %} selected{% endif %}>{{ lt }}</option>
+      {% endfor %}
+    </select>
+  </td>
+  <td class="topics" data-label="Topics">
     {% for topic in ch.youtube_topics %}
       <span class="topic">{{ topic }}</span>{% if not loop.last %}, {% endif %}
     {% endfor %}
