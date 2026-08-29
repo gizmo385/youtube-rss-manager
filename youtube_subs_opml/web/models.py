@@ -400,6 +400,31 @@ class CategoryPlaylist(Base):
     )
 
 
+class ChannelFeedCache(Base):
+    """Last good raw Atom XML for a channel's YouTube RSS feed.
+
+    The feed proxy serves readers from this cache rather than fetching YouTube on
+    every request: an RSS reader polls every feed URL at once, and proxying each
+    to YouTube synchronously turned that into a burst the IP got throttled for.
+    The scheduled poller — which already fetches these feeds on a spread-out,
+    backed-off cadence — writes the raw XML here, and the proxy reads it. One row
+    per channel; the upstream feed is per-channel and user-independent (filtering
+    happens after), so it's shared across all subscribers.
+    """
+
+    __tablename__ = "channel_feed_cache"
+
+    channel_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("channels.channel_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    xml: Mapped[bytes] = mapped_column(LargeBinary)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class OpmlToken(Base):
     __tablename__ = "opml_tokens"
 

@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from youtube_subs_opml.opml import FEED_URL
 from youtube_subs_opml.web.db import Base
-from youtube_subs_opml.web.models import Subscription, Video
+from youtube_subs_opml.web.models import ChannelFeedCache, Subscription, Video
 from youtube_subs_opml.web.services import poller
 
 FEED = (
@@ -39,7 +39,10 @@ def db():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    Base.metadata.create_all(engine, tables=[Video.__table__, Subscription.__table__])
+    Base.metadata.create_all(
+        engine,
+        tables=[Video.__table__, Subscription.__table__, ChannelFeedCache.__table__],
+    )
     session = sessionmaker(bind=engine)()
     try:
         yield session
@@ -81,6 +84,30 @@ def test_retries_transient_then_succeeds(db, monkeypatch):
     assert new == 1  # recovered on retry and parsed the entry
     assert len(fake.calls) == 2
     assert db.execute(select(Video.video_id)).scalars().all() == ["vidAAAA1111"]
+
+
+def test_poll_warms_the_feed_cache(db, monkeypatch):
+    cid = "UCchannel00000000000001"
+    url = FEED_URL.format(channel_id=cid)
+    fake = FakeClient({url: [_resp(200, url, FEED)]})
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    poller.poll_channel(cid, db)
+    db.commit()
+
+    # The raw XML is stored so the feed proxy can serve it without hitting YouTube.
+    assert db.get(ChannelFeedCache, cid).xml == FEED
+
+
+def test_failed_poll_does_not_touch_cache(db, monkeypatch):
+    cid = "UCchannel00000000000009"
+    url = FEED_URL.format(channel_id=cid)
+    fake = FakeClient({url: [_resp(500, url), _resp(500, url), _resp(500, url)]})
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    assert poller.poll_channel(cid, db) == 0
+    db.commit()
+    assert db.get(ChannelFeedCache, cid) is None  # nothing cached on failure
 
 
 def test_gives_up_after_max_retries(db, monkeypatch):

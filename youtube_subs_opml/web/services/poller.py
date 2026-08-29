@@ -30,6 +30,7 @@ from youtube_subs_opml.opml import FEED_URL
 from ..config import get_settings
 from ..models import Subscription, Video
 from .archive import enqueue_pending
+from .feed_cache import store_feed
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,11 @@ def poll_channel(
     finally:
         if owns_client:
             client.close()
+
+    # Warm the feed cache so the proxy can serve readers without hitting YouTube.
+    # Cached regardless of whether there are new videos — an unchanged feed is
+    # still what a reader should get. store_feed skips the write when unchanged.
+    store_feed(db, channel_id, resp.content)
 
     entries = _parse_entries(resp.content)
     if not entries:

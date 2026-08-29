@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from youtube_subs_opml.web.db import Base, get_db
 from youtube_subs_opml.web.models import (
     Category,
+    ChannelFeedCache,
     OpmlToken,
     Subscription,
     User,
@@ -46,7 +47,7 @@ def client(monkeypatch):
             t.__table__
             for t in (
                 User, Subscription, Category, OpmlToken,
-                VideoShort, VideoLiveStatus,
+                VideoShort, VideoLiveStatus, ChannelFeedCache,
             )
         ],
     )
@@ -93,7 +94,9 @@ def client(monkeypatch):
         lambda ids, db: {"shortone111": "upcoming", "realvideo22": "none"},
     )
 
-    return TestClient(app)
+    tc = TestClient(app)
+    tc.sessionmaker = TestingSession  # for tests that pre-seed the feed cache
+    return tc
 
 
 def test_passthrough_keeps_shorts(client):
@@ -132,9 +135,53 @@ def test_unknown_category_404(client):
     assert client.get(f"/feed/{TOKEN}/nope/{CID}.xml").status_code == 404
 
 
-def test_upstream_failure_502(client, monkeypatch):
+def test_seeds_cache_on_first_fetch(client):
+    """A cache miss fetches once, stores the raw XML, and reports the miss."""
+    resp = client.get(f"/feed/{TOKEN}/{CID}.xml")
+    assert resp.status_code == 200
+    assert resp.headers["X-Feed-Cache"] == "miss"
+    with client.sessionmaker() as db:
+        assert db.get(ChannelFeedCache, CID).xml == SAMPLE_FEED
+
+
+def test_serves_cache_without_fetching(client, monkeypatch):
+    """A warm cache is served without touching YouTube at all."""
+    with client.sessionmaker() as db:
+        db.add(ChannelFeedCache(channel_id=CID, xml=SAMPLE_FEED))
+        db.commit()
+
+    def boom(url, **kwargs):
+        raise AssertionError("must not fetch upstream on a cache hit")
+
+    monkeypatch.setattr(feed.httpx, "get", boom)
+    resp = client.get(f"/feed/{TOKEN}/{CID}.xml")
+    assert resp.status_code == 200
+    assert resp.headers["X-Feed-Cache"] == "hit"
+    assert b"realvideo22" in resp.content
+
+
+def test_stale_cache_served_when_upstream_down(client, monkeypatch):
+    """With a cached copy present, an upstream outage is invisible to the reader."""
+    with client.sessionmaker() as db:
+        db.add(ChannelFeedCache(channel_id=CID, xml=SAMPLE_FEED))
+        db.commit()
+
+    monkeypatch.setattr(
+        feed.httpx, "get",
+        lambda url, **kw: (_ for _ in ()).throw(httpx.ConnectError("down")),
+    )
+    resp = client.get(f"/feed/{TOKEN}/tech/{CID}.xml")  # filtered path
+    assert resp.status_code == 200
+    assert b"shortone111" not in resp.content  # still filtered from the cached copy
+    assert b"realvideo22" in resp.content
+
+
+def test_cache_miss_and_upstream_down_returns_503(client, monkeypatch):
+    """No cache and a dead upstream: a retryable 503, not a 502 or empty feed."""
     def boom(url, **kwargs):
         raise httpx.ConnectError("down")
 
     monkeypatch.setattr(feed.httpx, "get", boom)
-    assert client.get(f"/feed/{TOKEN}/{CID}.xml").status_code == 502
+    resp = client.get(f"/feed/{TOKEN}/{CID}.xml")
+    assert resp.status_code == 503
+    assert resp.headers.get("Retry-After") == "300"

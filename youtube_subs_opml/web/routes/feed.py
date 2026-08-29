@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 
@@ -21,9 +22,13 @@ from ..models import (
     Subscription,
     User,
 )
+from ..services.feed_cache import load_feed, store_feed
 from ..services.live import classify_live, resolve_include_live
+from ..services.poller import _USER_AGENT
 from ..services.prefs import resolve
 from ..services.shorts import classify_videos, resolve_include_shorts
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/feed", tags=["feed"])
 
@@ -224,22 +229,44 @@ def _serve_feed(
         if not jellyfin_base:
             link_target = "youtube"
 
-    try:
-        upstream = httpx.get(
-            FEED_URL.format(channel_id=channel_id),
-            timeout=_UPSTREAM_TIMEOUT,
-            follow_redirects=True,
-        )
-        upstream.raise_for_status()
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="Upstream feed fetch failed")
+    # Serve from the cache the poller keeps warm rather than fetching YouTube on
+    # this request. A reader polls every feed URL at once; proxying each straight
+    # to YouTube turned that into a burst the IP got soft-throttled for (the same
+    # throttling the poller is spaced out to avoid). The only live fetch here is
+    # to seed a channel that has never been polled — a rare cache miss, not the
+    # steady-state fan-out — so it doesn't reintroduce the burst.
+    content = load_feed(db, channel_id)
+    cache_state = "hit"
+    if content is None:
+        cache_state = "miss"
+        try:
+            resp = httpx.get(
+                FEED_URL.format(channel_id=channel_id),
+                timeout=_UPSTREAM_TIMEOUT,
+                follow_redirects=True,
+                headers={"User-Agent": _USER_AGENT},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            # Nothing cached and upstream is unavailable — tell the reader to
+            # retry rather than 502ing or serving a misleading empty feed.
+            logger.warning("Feed cache miss + upstream fetch failed for %s: %s", channel_id, exc)
+            raise HTTPException(
+                status_code=503,
+                detail="Feed temporarily unavailable; retry shortly.",
+                headers={"Retry-After": "300"},
+            )
+        content = resp.content
+        store_feed(db, channel_id, content)
+        db.commit()
 
+    headers = {"X-Feed-Cache": cache_state}
     if not drop_shorts and not drop_live and link_target == "youtube":
         # Cheap passthrough — nothing to filter or rewrite.
-        return Response(content=upstream.content, media_type="application/xml")
+        return Response(content=content, media_type="application/xml", headers=headers)
 
     filtered = _filter_feed(
-        upstream.content,
+        content,
         db,
         drop_shorts=drop_shorts,
         drop_live=drop_live,
@@ -247,7 +274,7 @@ def _serve_feed(
         user_id=user_id,
         jellyfin_base=jellyfin_base,
     )
-    return Response(content=filtered, media_type="application/xml")
+    return Response(content=filtered, media_type="application/xml", headers=headers)
 
 
 @router.get("/{token}/{channel_id}.xml")
