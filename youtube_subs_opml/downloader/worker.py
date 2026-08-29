@@ -225,12 +225,29 @@ def process(row: Download, db: Session) -> None:
 
 
 def _unlink_all(mkv_path: Path) -> None:
-    """Remove an episode's .mkv and its sidecars, ignoring already-gone files."""
+    """Remove an episode's .mkv and its sidecars, then any Season/Channel dirs
+    the removal has emptied, ignoring already-gone files.
+
+    Without the directory cleanup a fully-pruned channel leaves an empty
+    ``{Channel}/Season {YYYY}/`` tree behind, which Jellyfin keeps showing as an
+    empty series. The climb is bounded to those two levels — the layout is
+    ``{root}/{Channel}/Season {YYYY}/…`` — so it can never reach the library or
+    canonical root. ``rmdir`` only removes an empty dir, so a season still
+    holding other episodes (or a channel with other seasons) is left untouched.
+    """
     for p in naming.episode_files(mkv_path):
         try:
             p.unlink()
         except FileNotFoundError:
             pass
+
+    season_dir = mkv_path.parent
+    channel_dir = season_dir.parent
+    for d in (season_dir, channel_dir):
+        try:
+            d.rmdir()
+        except OSError:
+            break  # not empty (or already gone) — stop climbing
 
 
 def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:

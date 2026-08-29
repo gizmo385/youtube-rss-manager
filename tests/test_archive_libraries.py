@@ -274,6 +274,67 @@ def test_prune_keeps_file_a_second_user_still_wants(db, tmp_path):
     assert links_old == {2}  # only user 2 has the old video linked
 
 
+# --- empty-directory cleanup (no phantom empty series in Jellyfin) -------
+
+def test_reconcile_removes_empty_user_channel_dir(db, tmp_path):
+    media = str(tmp_path)
+    user = add_user(db, 1, download_enabled=True, keep_last_n=0)
+    add_sub(db, 1)
+    ids = add_videos(db, 2)
+    [complete_download(db, media, v, i + 1) for i, v in enumerate(ids)]
+    reconcile_links(db, media)
+
+    chan_dir = naming.user_episode_dir(media, 1, CHAN_TITLE, BASE).parent
+    assert chan_dir.is_dir()  # present while episodes are linked
+
+    # Stop archiving the channel: the user retains nothing for it.
+    user.download_enabled = False
+    db.commit()
+    reconcile_links(db, media)
+
+    # The emptied Season/Channel dirs are gone, so Jellyfin won't keep showing a
+    # phantom empty series — but the user's library root stays put.
+    assert not chan_dir.exists()
+    assert Path(media, naming.LIBRARIES_SUBDIR, "1").is_dir()
+
+
+def test_reconcile_keeps_channel_dir_with_remaining_episode(db, tmp_path):
+    media = str(tmp_path)
+    user = add_user(db, 1, download_enabled=True, keep_last_n=0)
+    add_sub(db, 1)
+    ids = add_videos(db, 2)
+    [complete_download(db, media, v, i + 1) for i, v in enumerate(ids)]
+    reconcile_links(db, media)
+
+    user.keep_last_n = 1  # drop only the oldest
+    db.commit()
+    reconcile_links(db, media)
+
+    chan_dir = naming.user_episode_dir(media, 1, CHAN_TITLE, BASE).parent
+    assert chan_dir.is_dir()               # a season still holds the newest
+    assert list(chan_dir.rglob("*.mkv"))   # and its file
+
+
+def test_prune_removes_empty_canonical_channel_dir(db, tmp_path):
+    media = str(tmp_path)
+    user = add_user(db, 1, download_enabled=True, keep_last_n=0)
+    add_sub(db, 1)
+    ids = add_videos(db, 2)
+    [complete_download(db, media, v, i + 1) for i, v in enumerate(ids)]
+    reconcile_links(db, media)
+
+    canon_chan = naming.canonical_episode_dir(media, CHAN_TITLE, BASE).parent
+    assert canon_chan.is_dir()
+
+    user.download_enabled = False
+    db.commit()
+    reconcile_links(db, media)     # drop the hardlinks first
+    assert run_prune(db) == 2      # both canonical files pruned
+
+    assert not canon_chan.exists()                       # empty channel dir removed
+    assert Path(media, naming.CANONICAL_SUBDIR).is_dir()  # canonical root kept
+
+
 # --- hardlink primitive + sidecar discovery ------------------------------
 
 def test_hardlink_idempotent_and_last_link_frees_data(tmp_path):
