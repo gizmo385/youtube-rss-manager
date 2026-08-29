@@ -256,6 +256,44 @@ def test_worker_skips_short_when_channel_excludes_shorts(db, monkeypatch):
     assert row.skip_reason == "short"
 
 
+# --- terminal probe errors skip immediately instead of retrying ----------
+
+def test_terminal_skip_reason_classifies_permanent_errors():
+    geo = ("ERROR: [youtube] kYjRBnFKNN4: The uploader has not made this video "
+           "available in your country")
+    assert worker._terminal_skip_reason(geo) == "geo_blocked"
+    assert worker._terminal_skip_reason("ERROR: Private video. Sign in if you've been granted access") == "unavailable"
+    assert worker._terminal_skip_reason("This video is available to this channel's members") == "members_only"
+    # Bot-detection / throttling is transient — must NOT be treated as terminal.
+    assert worker._terminal_skip_reason(
+        "ERROR: Sign in to confirm you're not a bot") is None
+    assert worker._terminal_skip_reason("HTTP Error 429: Too Many Requests") is None
+
+
+def test_worker_skips_geoblocked_video_on_first_probe(db, monkeypatch):
+    add_user(db, 1, download_enabled=True)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    row = Download(video_id=ids[0], status="downloading", attempts=1)  # first attempt
+    db.add(row)
+    db.commit()
+
+    def _geo_block(vid, **kw):
+        raise worker.ytdlp.ProbeError(
+            "ERROR: [youtube] x: The uploader has not made this video available "
+            "in your country")
+
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(worker.ytdlp, "probe", _geo_block)
+
+    worker.process(row, db)
+
+    # Skipped straight away — not left pending for four more back-off'd retries.
+    assert row.status == "skipped"
+    assert row.skip_reason == "geo_blocked"
+    assert row.next_attempt_at is None
+
+
 def test_backfill_classifies_and_prunes_archived_shorts(db, tmp_path, monkeypatch):
     from youtube_subs_opml.web.services import shorts
 

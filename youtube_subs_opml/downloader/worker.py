@@ -63,6 +63,42 @@ def _backoff(attempts: int) -> datetime:
     return datetime.now(timezone.utc) + timedelta(seconds=delay)
 
 
+# yt-dlp probe errors that will never succeed from this IP/account. Skipping
+# them on the first failure avoids burning five back-off'd retries over hours on
+# something permanent. Deliberately conservative: "Sign in to confirm you're not
+# a bot" and other throttling ARE transient and must keep retrying, so they are
+# NOT listed here.
+_TERMINAL_PROBE_ERRORS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("geo_blocked", (
+        "available in your country",       # "not made this video available in your country"
+        "blocked it in your country",
+    )),
+    ("members_only", (
+        "members-only",
+        "available to this channel's members",
+        "join this channel",
+    )),
+    ("unavailable", (
+        "private video",
+        "removed by the uploader",
+        "account associated with this video has been terminated",
+        "video is no longer available",
+        "confirm your age",
+        "age-restricted",
+        "inappropriate for some users",
+    )),
+)
+
+
+def _terminal_skip_reason(error_text: str) -> str | None:
+    """A skip_reason if the probe error is permanent, else None (keep retrying)."""
+    low = error_text.lower()
+    for reason, needles in _TERMINAL_PROBE_ERRORS:
+        if any(needle in low for needle in needles):
+            return reason
+    return None
+
+
 def claim_one(db: Session) -> Download | None:
     """Atomically claim the oldest eligible pending row.
 
@@ -126,12 +162,23 @@ def process(row: Download, db: Session) -> None:
     try:
         meta = ytdlp.probe(row.video_id)
     except ytdlp.ProbeError as exc:
-        logger.warning("Probe failed for %s: %s", row.video_id, exc)
-        row.last_error = str(exc)
-        if row.attempts >= _MAX_ATTEMPTS:
+        msg = str(exc)
+        row.last_error = msg[:2000]
+        terminal = _terminal_skip_reason(msg)
+        if terminal is not None:
+            # Permanent (geo-block, private, removed, members-only, age-gated):
+            # don't waste retries — it will never succeed from here.
+            logger.info("Skipping %s permanently (%s)", row.video_id, terminal)
+            row.status = "skipped"
+            row.skip_reason = terminal
+        elif row.attempts >= _MAX_ATTEMPTS:
+            logger.warning("Giving up on %s after %d attempts: %s",
+                           row.video_id, row.attempts, exc)
             row.status = "skipped"
             row.skip_reason = "unavailable"
         else:
+            logger.warning("Probe failed for %s (attempt %d): %s",
+                           row.video_id, row.attempts, exc)
             row.status = "pending"
             row.next_attempt_at = _backoff(row.attempts)
         db.commit()
