@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     # How often to resolve Jellyfin item ids and reconcile playlists. HTTP-only,
     # runs in the web process. A no-op for users without a Jellyfin account.
     jellyfin_sync_interval_minutes: int = Field(30)
+    # --- Podcast feeds ------------------------------------------------------
+    # RSS <language> for generated podcast feeds.
+    podcast_language: str = Field("en")
+    # Optional channel-level artwork. Apple requires a square image ≥1400px over
+    # HTTPS for *directory submission*; "Add a Show by URL" is lenient, so this
+    # is optional. When unset, no <itunes:image> is emitted. Point it at a
+    # public URL you control (e.g. a static asset served by this app).
+    podcast_cover_url: str = Field("")
 
     @model_validator(mode="after")
     def _apply_mode_defaults(self) -> "Settings":

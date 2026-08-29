@@ -20,7 +20,7 @@ COPY youtube_subs_opml/ ./youtube_subs_opml/
 
 RUN uv pip install --system --no-cache ".[downloader]"
 
-# YouTube breaks yt-dlp extraction every few months, so refresh on every start
-# rather than waiting for an image rebuild. Failure here is non-fatal: the
-# pinned version still runs.
-CMD ["sh", "-c", "pip install --quiet --upgrade yt-dlp || true; python -m youtube_subs_opml.downloader.worker"]
+# yt-dlp is pinned via the "downloader" extra above. YouTube breaks extraction
+# every few months; when that happens, bump the pin (or just rebuild this image)
+# to pick up a fresh yt-dlp release.
+CMD ["python", "-m", "youtube_subs_opml.downloader.worker"]

@@ -24,6 +24,11 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-yts}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-yts}
+      MEDIA_ROOT: /media/youtube
+    volumes:
+      # Read-only so the web process can serve podcast audio enclosures over
+      # HTTP range. Same host path as the downloader (which mounts it rw).
+      - ${MEDIA_HOST_PATH:?MEDIA_HOST_PATH must be set}:/media/youtube:ro
     networks:
       - default
       - caddy

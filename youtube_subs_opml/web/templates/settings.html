@@ -192,6 +192,34 @@
   {% endif %}
 </section>
 
+{% if opml_token %}
+<section>
+  <h2>Podcast Feeds</h2>
+  <p>
+    Audio-only feeds for archived videos, for Apple Podcasts and other podcast
+    apps (Library → ⋯ → <em>Add a Show by URL</em>). Episodes appear only for
+    channels with <strong>Generate podcast feeds</strong> enabled, once their
+    audio has been extracted.
+  </p>
+  <ul class="opml-url-list">
+    <li>
+      <code>{{ base_url }}/podcast/{{ opml_token.token }}/all.xml</code>
+      <button type="button" class="outline small-btn copy-btn"
+              onclick="copyUrl(this, '{{ base_url }}/podcast/{{ opml_token.token }}/all.xml')">Copy</button>
+      <span class="opml-label">All channels</span>
+    </li>
+    {% for cat in categories %}
+    <li>
+      <code>{{ base_url }}/podcast/{{ opml_token.token }}/{{ cat.slug }}.xml</code>
+      <button type="button" class="outline small-btn copy-btn"
+              onclick="copyUrl(this, '{{ base_url }}/podcast/{{ opml_token.token }}/{{ cat.slug }}.xml')">Copy</button>
+      <span class="opml-label">{{ cat.name }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <script>
 function copyUrl(btn, url) {
   navigator.clipboard.writeText(url).then(function() {
