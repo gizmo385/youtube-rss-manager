@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
@@ -90,6 +91,13 @@ def start_scheduler() -> None:
         minutes=interval,
         id="poll_videos",
         replace_existing=True,
+        # Warm the feed cache right after startup instead of a full interval
+        # later: the feed proxy now serves only from cache, so an empty cache
+        # after a deploy means every feed 503s until the first sweep runs.
+        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=10),
+        # A slow sweep must never overlap itself once the interval also fires.
+        max_instances=1,
+        coalesce=True,
     )
     jellyfin_interval = settings.jellyfin_sync_interval_minutes
     scheduler.add_job(
@@ -106,6 +114,23 @@ def start_scheduler() -> None:
         interval,
         jellyfin_interval,
     )
+
+
+def trigger_poll_soon(delay_seconds: float = 5) -> None:
+    """Nudge the video poll to run shortly.
+
+    Called after a channel is added or an account synced, so a freshly-visible
+    channel's feed cache warms in seconds rather than at the next interval —
+    otherwise its feed URL 503s until then. Best-effort: a no-op if the
+    scheduler isn't running (e.g. tests) or the job hasn't been registered.
+    """
+    try:
+        scheduler.modify_job(
+            "poll_videos",
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=delay_seconds),
+        )
+    except Exception:
+        logger.debug("Could not nudge poll job (scheduler not running?)", exc_info=True)
 
 
 def stop_scheduler() -> None:

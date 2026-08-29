@@ -101,6 +101,12 @@ def trigger_sync(
 
     sync_account(account, db, get_settings())
     db.commit()
+
+    # Newly-synced subscriptions have no cached feed yet; nudge a poll so their
+    # feed URLs warm in seconds rather than 503ing until the next interval.
+    from ..services.scheduler import trigger_poll_soon
+    trigger_poll_soon()
+
     return RedirectResponse("/settings", status_code=303)
 
 

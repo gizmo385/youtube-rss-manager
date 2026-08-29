@@ -841,6 +841,11 @@ async def add_manual_channel(
 
     db.commit()
 
+    # Warm the new channel's feed cache soon so its feed URL doesn't 503 until
+    # the next scheduled poll.
+    from ..services.scheduler import trigger_poll_soon
+    trigger_poll_soon()
+
     filt = form.get("filter") or "All"
     return _list_response(request, user, db, resolved.channel_id, filt)
 

@@ -4,13 +4,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
-from youtube_subs_opml.opml import FEED_URL
 
 from ..db import get_db
 from ..models import (
@@ -22,9 +19,8 @@ from ..models import (
     Subscription,
     User,
 )
-from ..services.feed_cache import load_feed, store_feed
+from ..services.feed_cache import load_feed
 from ..services.live import classify_live, resolve_include_live
-from ..services.poller import _USER_AGENT
 from ..services.prefs import resolve
 from ..services.shorts import classify_videos, resolve_include_shorts
 
@@ -35,7 +31,6 @@ router = APIRouter(prefix="/feed", tags=["feed"])
 _ATOM = "http://www.w3.org/2005/Atom"
 _YT = "http://www.youtube.com/xml/schemas/2015"
 _MEDIA = "http://search.yahoo.com/mrss/"
-_UPSTREAM_TIMEOUT = 15.0
 
 # A download that never completes must not vanish forever under ``hold``: after
 # this long we publish the entry with its original YouTube link instead.
@@ -229,38 +224,26 @@ def _serve_feed(
         if not jellyfin_base:
             link_target = "youtube"
 
-    # Serve from the cache the poller keeps warm rather than fetching YouTube on
+    # Serve only from the cache the poller keeps warm — never fetch YouTube on
     # this request. A reader polls every feed URL at once; proxying each straight
-    # to YouTube turned that into a burst the IP got soft-throttled for (the same
-    # throttling the poller is spaced out to avoid). The only live fetch here is
-    # to seed a channel that has never been polled — a rare cache miss, not the
-    # steady-state fan-out — so it doesn't reintroduce the burst.
+    # to YouTube turned that into a burst the IP got soft-throttled for. The
+    # poller is the sole fetcher (spaced out, backed off), so the fan-out here is
+    # just cheap cache reads.
+    #
+    # A miss means the poller hasn't reached this channel yet (a fresh deploy
+    # before the first sweep, or a just-added channel). Return a retryable 503
+    # rather than fetching — fetching is exactly what caused the throttling. An
+    # add/sync nudges a poll, and startup warms the cache, so misses are brief.
     content = load_feed(db, channel_id)
-    cache_state = "hit"
     if content is None:
-        cache_state = "miss"
-        try:
-            resp = httpx.get(
-                FEED_URL.format(channel_id=channel_id),
-                timeout=_UPSTREAM_TIMEOUT,
-                follow_redirects=True,
-                headers={"User-Agent": _USER_AGENT},
-            )
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            # Nothing cached and upstream is unavailable — tell the reader to
-            # retry rather than 502ing or serving a misleading empty feed.
-            logger.warning("Feed cache miss + upstream fetch failed for %s: %s", channel_id, exc)
-            raise HTTPException(
-                status_code=503,
-                detail="Feed temporarily unavailable; retry shortly.",
-                headers={"Retry-After": "300"},
-            )
-        content = resp.content
-        store_feed(db, channel_id, content)
-        db.commit()
+        logger.info("Feed cache miss for %s (not polled yet); returning 503", channel_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Feed not ready yet; retry shortly.",
+            headers={"Retry-After": "120"},
+        )
 
-    headers = {"X-Feed-Cache": cache_state}
+    headers = {"X-Feed-Cache": "hit"}
     if not drop_shorts and not drop_live and link_target == "youtube":
         # Cheap passthrough — nothing to filter or rewrite.
         return Response(content=content, media_type="application/xml", headers=headers)
