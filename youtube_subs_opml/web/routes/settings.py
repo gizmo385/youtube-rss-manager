@@ -51,6 +51,8 @@ def settings_page(
         select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
     ).scalar_one_or_none()
 
+    from ..services.stats import shell_stats
+
     settings = get_settings()
     # The subtree an admin points this user's Jellyfin library at. The relative
     # subpath is the only structure the app imposes; the absolute path just shows
@@ -76,6 +78,8 @@ def settings_page(
             "media_root": settings.media_root,
             "link_targets": LINK_TARGETS,
             "max_duration_minutes": user.max_duration_seconds // 60,
+            "active_nav": "settings",
+            "stats": shell_stats(user, db),
         },
     )
 

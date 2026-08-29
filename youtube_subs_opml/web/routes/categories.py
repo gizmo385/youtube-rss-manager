@@ -156,9 +156,18 @@ def list_categories(
 ) -> HTMLResponse:
     if _is_htmx(request):
         return _category_list_response(request, user, db)
-    # Full-page fallback redirects to channels page (categories tab)
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse("/channels?tab=categories", status_code=303)
+    from ..services.stats import shell_stats
+    return templates.TemplateResponse(
+        request,
+        "categories.html",
+        context={
+            "categories_with_counts": _categories_with_counts(user, db),
+            "user": user,
+            "link_targets": LINK_TARGETS,
+            "active_nav": "categories",
+            "stats": shell_stats(user, db),
+        },
+    )
 
 
 @router.post("")

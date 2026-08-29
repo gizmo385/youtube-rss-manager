@@ -5,54 +5,51 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}YouTube Subs OPML{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap">
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <link rel="stylesheet" href="/static/style.css">
-  <script>
-    (function() {
-      var stored = localStorage.getItem('theme');
-      if (stored) {
-        document.documentElement.setAttribute('data-theme', stored);
-      } else if (matchMedia('(prefers-color-scheme: dark)').matches) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-      } else {
-        document.documentElement.setAttribute('data-theme', 'light');
-      }
-    })();
-  </script>
 </head>
-<body>
-  <nav class="container">
-    <ul>
-      <li><a href="/channels"><strong>YouTube Subs OPML</strong></a></li>
-    </ul>
-    <ul>
-      {% if user %}
-        <li><a href="/channels">Channels</a></li>
-        <li><a href="/settings">Settings</a></li>
-        <li class="nav-username">{{ user.display_name or user.email }}</li>
-        <li><a href="/auth/logout">Log out</a></li>
-      {% else %}
-        <li><a href="/auth/login">Log in</a></li>
-      {% endif %}
-      <li>
-        <a href="#" class="theme-toggle" onclick="toggleTheme(); return false;" title="Toggle dark mode">
-          <span class="theme-icon-light">&#9790;</span>
-          <span class="theme-icon-dark">&#9788;</span>
-        </a>
-      </li>
-    </ul>
-  </nav>
-  <main class="container">
+<body class="sb">
+  {% if user %}
+  <header class="app-header">
+    <div class="brand">
+      <a href="/channels" class="brand-name">YouTube Subs OPML</a>
+      <span class="brand-tag">Subscription &amp; archive manager</span>
+    </div>
+    <nav class="app-nav">
+      <a href="/channels" class="nav-link{% if active_nav == 'channels' %} active{% endif %}">Channels</a>
+      <a href="/categories" class="nav-link{% if active_nav == 'categories' %} active{% endif %}">Categories</a>
+      <a href="/channels/board" class="nav-link{% if active_nav == 'board' %} active{% endif %}">Board</a>
+      <a href="/settings" class="nav-link{% if active_nav == 'settings' %} active{% endif %}">Settings</a>
+      <span class="nav-divider"></span>
+      <span class="nav-user">{{ user.display_name or user.email }}</span>
+      <a href="/auth/logout" class="nav-logout">Log out</a>
+    </nav>
+  </header>
+
+  {% if stats is defined and stats %}
+  <div class="subbar">
+    <div class="subbar-stats">
+      {{ stats.channels }} channel{{ '' if stats.channels == 1 else 's' }}
+      · {{ stats.categories }} categor{{ 'y' if stats.categories == 1 else 'ies' }}
+      · {{ stats.archived_human }} archived
+    </div>
+    {% if stats.failed %}
+    <a href="/channels?filter=Failed" class="alert-pill">
+      <span class="dot"></span>
+      {{ stats.failed }} download{{ '' if stats.failed == 1 else 's' }} failed
+    </a>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% block body %}
+  <main class="page">
     {% block content %}{% endblock %}
   </main>
-  <script>
-    function toggleTheme() {
-      var html = document.documentElement;
-      var newTheme = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      html.setAttribute('data-theme', newTheme);
-      localStorage.setItem('theme', newTheme);
-    }
-  </script>
+  {% endblock %}
 </body>
 </html>

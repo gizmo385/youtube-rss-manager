@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Board — YouTube Subs OPML{% endblock %}
+
+{% block body %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+
+<div class="board">
+  <div class="board-toolbar">
+    <input type="search" id="board-search" placeholder="Search channels…" oninput="filterBoard(this.value)">
+    <span class="board-hint">Drag between columns · pin to keep a column in view · every move is undoable</span>
+    <div class="move-mode">
+      <span class="eyebrow" style="color:var(--faint)">Move mode</span>
+      <div class="seg" id="move-mode-seg">
+        <button class="on" data-mode="move" onclick="setMoveMode('move', this)">Move</button>
+        <button data-mode="copy" onclick="setMoveMode('copy', this)">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="board-body">
+    <div id="kanban-board" class="sb" style="display:flex;flex:1;min-height:0">
+      {% include "partials/kanban_board.html" %}
+    </div>
+  </div>
+</div>
+
+<div id="toast-host"></div>
+
+<script>
+var moveMode = 'move';
+var pinned = {};        // col-key -> true
+var lastMove = null;    // {channelId, from, to, mode} for undo
+
+function setMoveMode(mode, btn) {
+  moveMode = mode;
+  document.querySelectorAll('#move-mode-seg button').forEach(function(b){ b.classList.remove('on'); });
+  btn.classList.add('on');
+}
+
+function togglePin(btn) {
+  var col = btn.closest('.kcol');
+  var key = col.getAttribute('data-col-key');
+  if (pinned[key]) { delete pinned[key]; } else { pinned[key] = true; }
+  applyPins();
+}
+
+function applyPins() {
+  var wrap = document.querySelector('.board-columns');
+  if (!wrap) return;
+  document.querySelectorAll('.kcol').forEach(function(col){
+    var key = col.getAttribute('data-col-key');
+    var isPinned = !!pinned[key];
+    col.classList.toggle('pinned', isPinned);
+    var pin = col.querySelector('.kcol-pin');
+    if (pin) pin.textContent = isPinned ? '◆' : '◇';
+    if (isPinned) wrap.prepend(col);
+  });
+}
+
+function inspectCard(el) {
+  // "Inspect" opens the channel's full detail on the Channels screen.
+  var id = el.getAttribute('data-channel-id');
+  window.location = '/channels?selected=' + encodeURIComponent(id);
+}
+
+function filterBoard(query) {
+  var q = query.toLowerCase();
+  document.querySelectorAll('.kcard').forEach(function(card){
+    card.style.display = (card.getAttribute('data-title') || '').includes(q) ? '' : 'none';
+  });
+  document.querySelectorAll('.kcol').forEach(function(col){
+    var visible = col.querySelectorAll('.kcard:not([style*="display: none"])').length;
+    var c = col.querySelector('.kcol-count');
+    if (c) c.textContent = visible;
+  });
+}
+
+function doMove(channelId, from, to, opts) {
+  var fd = new FormData();
+  fd.append('channel_id', channelId);
+  fd.append('from_category_id', from);
+  fd.append('to_category_id', to);
+  return fetch('/channels/move', {method:'POST', body:fd, headers:{'HX-Request':'true'}})
+    .then(function(r){ return r.text(); })
+    .then(function(html){
+      var board = document.getElementById('kanban-board');
+      board.innerHTML = html;
+      htmx.process(board);
+      initBoard();
+      applyPins();
+      reapplyBoardSearch();
+      if (opts && opts.toast) showToast(opts.toast);
+    });
+}
+
+function onDrop(evt) {
+  var channelId = evt.item.getAttribute('data-channel-id');
+  var title = evt.item.querySelector('.kcard-title').textContent;
+  var from = evt.from.getAttribute('data-category-id');
+  var to = evt.to.getAttribute('data-category-id');
+  if (from === to) return;
+  var sendFrom = moveMode === 'copy' ? '' : from;
+  lastMove = {channelId: channelId, from: from, to: to, mode: moveMode};
+  var toName = evt.to.closest('.kcol').getAttribute('data-col-name');
+  var fromName = evt.from.closest('.kcol').getAttribute('data-col-name');
+  doMove(channelId, sendFrom, to, {toast: {
+    text: (moveMode === 'copy' ? 'Copied ' : 'Moved ') + title + ' → ' + toName,
+    sub: moveMode === 'copy' ? 'Still in ' + fromName : 'Removed from ' + fromName
+  }});
+}
+
+function undoMove() {
+  if (!lastMove) return;
+  var m = lastMove;
+  lastMove = null;
+  dismissToast();
+  if (m.mode === 'copy') {
+    doMove(m.channelId, m.to, '', null);       // remove the copy from target
+  } else {
+    doMove(m.channelId, m.to, m.from, null);    // move back
+  }
+}
+
+function showToast(t) {
+  var host = document.getElementById('toast-host');
+  host.innerHTML =
+    '<div class="toast"><div><div class="toast-text">' + escapeHtml(t.text) + '</div>' +
+    '<div class="toast-sub">' + escapeHtml(t.sub) + '</div></div>' +
+    '<button class="btn btn-sm btn-ghost" onclick="undoMove()">Undo</button>' +
+    '<button class="toast-x" onclick="dismissToast()">&times;</button></div>';
+  clearTimeout(window._toastT);
+  window._toastT = setTimeout(dismissToast, 8000);
+}
+function dismissToast() { document.getElementById('toast-host').innerHTML = ''; clearTimeout(window._toastT); }
+function escapeHtml(s){ var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+function initBoard() {
+  document.querySelectorAll('.kcol-cards').forEach(function(container){
+    new Sortable(container, {
+      group: {name: 'kanban', pull: function(){ return moveMode === 'copy' ? 'clone' : true; }, put: true},
+      animation: 150,
+      ghostClass: 'kanban-ghost',
+      chosenClass: 'kanban-chosen',
+      dragClass: 'kanban-drag',
+      scrollSensitivity: 60,
+      scrollSpeed: 10,
+      onEnd: onDrop
+    });
+  });
+}
+function reapplyBoardSearch() {
+  var s = document.getElementById('board-search');
+  if (s && s.value) filterBoard(s.value);
+}
+
+initBoard();
+</script>
+{% endblock %}

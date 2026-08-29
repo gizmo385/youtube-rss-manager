@@ -1,0 +1,181 @@
+{% if not detail %}
+<div class="detail-empty">Select a channel</div>
+{% else %}
+{% set d = detail %}
+{# Hidden state pulled into every detail-pane write via hx-include. #}
+<input type="hidden" name="channel_ids" value="{{ d.channel_id }}">
+<input type="hidden" name="selected" value="{{ d.channel_id }}">
+<input type="hidden" name="return" value="detail">
+<input type="hidden" name="filter" value="All" data-detail-filter>
+
+<div class="detail-head">
+  <div class="detail-head-top">
+    <div>
+      <div class="eyebrow">Channel</div>
+      <h1 class="detail-title">{{ d.title }}</h1>
+      <div class="detail-sub">
+        <a href="{{ d.youtube_url }}" target="_blank" rel="noopener">Open on YouTube</a>
+        <span>·</span>
+        <span class="mono tabular">{{ d.channel_id }}</span>
+        {% if d.is_manual %}<span class="badge-manual">Manual</span>{% endif %}
+      </div>
+    </div>
+    <div class="detail-stats">
+      <div>
+        <div class="stat-k">Archived</div>
+        <div class="stat-v tabular">{{ d.video_count }}</div>
+      </div>
+      <div>
+        <div class="stat-k">Disk</div>
+        <div class="stat-v tabular">{{ d.disk_human }}</div>
+      </div>
+      <div>
+        <div class="stat-k">Last video</div>
+        <div class="stat-v tabular">{{ d.last_video }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="detail-grid">
+  <div class="detail-col-l">
+    <h2 class="section-label">Categories</h2>
+    <div class="chip-row">
+      {% for c in d.cats %}
+      <span class="cat-chip">
+        {{ c.name }}
+        <span class="chip-x" title="Remove from {{ c.name }}"
+              hx-post="/channels/unassign" hx-include="#channel-detail [type=hidden]"
+              hx-vals='{"category_id": "{{ c.id }}"}'
+              hx-target="#channel-detail" hx-swap="innerHTML">&times;</span>
+      </span>
+      {% endfor %}
+      {% if d.assignable_categories %}
+      <select class="assign-select" name="category_id"
+              hx-post="/channels/assign" hx-include="#channel-detail [type=hidden]"
+              hx-target="#channel-detail" hx-swap="innerHTML">
+        <option value="" disabled selected>+ Assign</option>
+        {% for c in d.assignable_categories %}
+        <option value="{{ c.id }}">{{ c.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+    </div>
+
+    <h2 class="section-label spaced">Feed</h2>
+    {% for s in d.feed_settings %}
+    <div class="pref-row">
+      <div class="pref-name">
+        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-eff">{{ s.effective }}</div>
+      </div>
+      <div class="seg">
+        {% set field = 'include_shorts' if 'Shorts' in s.label else 'include_live' %}
+        {% for o in s.options %}
+        <button class="{{ 'on' if o.on }}"
+                hx-post="/channels/{{ 'include-shorts' if field == 'include_shorts' else 'include-live' }}"
+                hx-include="#channel-detail [type=hidden]"
+                hx-vals='{"{{ field }}": "{{ o.value }}"}'
+                hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}</button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+
+    <h2 class="section-label spaced">Video archive</h2>
+    {% for s in d.archive_settings %}
+    <div class="pref-row">
+      <div class="pref-name">
+        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-eff">{{ s.effective }}</div>
+      </div>
+      <div class="seg">
+        {% for o in s.options %}
+        <button class="{{ 'on' if o.on }}"
+                hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
+                hx-vals='{"field": "download_enabled", "value": "{{ o.value }}"}'
+                hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}</button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    {% for s in d.archive_numbers %}
+    <div class="pref-row">
+      <div class="pref-name">
+        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-eff">{{ s.effective }}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input class="pref-num" type="number" min="0" step="1" value="{{ s.value }}" placeholder="inherit"
+               name="value" hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
+               hx-vals='{"field": "{{ 'keep_last_n' if 'Keep' in s.label else 'max_duration_seconds' }}"}'
+               hx-trigger="change" hx-target="#channel-detail" hx-swap="innerHTML">
+        <span class="pref-unit">{{ s.unit }}</span>
+      </div>
+    </div>
+    {% endfor %}
+    {% for s in d.archive_choices %}
+    <div class="pref-row">
+      <div class="pref-name">
+        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-eff">{{ s.effective }}</div>
+      </div>
+      <div class="seg">
+        {% set field = 'generate_podcast' if 'Podcast' in s.label else 'link_target' %}
+        {% for o in s.options %}
+        <button class="{{ 'on' if o.on }}"
+                hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
+                hx-vals='{"field": "{{ field }}", "value": "{{ o.value }}"}'
+                hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}</button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+
+    <h2 class="section-label spaced">YouTube topics</h2>
+    <div class="topic-row">
+      {% for t in d.topics %}
+      <span class="topic-tag">{{ t }}</span>
+      {% else %}
+      <span class="empty">No topics reported</span>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="detail-col-r">
+    <div class="activity-head">
+      <h2 class="section-label" style="margin:0">Archive activity</h2>
+    </div>
+    {% for v in d.activity %}
+    <div class="activity-item">
+      <span class="activity-dot {{ v.status }}"></span>
+      <div style="min-width:0">
+        <div class="activity-title">{{ v.title }}</div>
+        <div class="activity-meta">{{ v.meta }}</div>
+      </div>
+      <span class="activity-size">{{ v.size }}</span>
+    </div>
+    {% else %}
+    <div class="empty" style="padding:8px 0">Nothing archived yet for this channel.</div>
+    {% endfor %}
+
+    {% if d.feed_url %}
+    <div class="callout">
+      <div class="callout-k">Effective feed URL</div>
+      <div class="callout-url mono">{{ d.feed_url }}</div>
+    </div>
+    {% else %}
+    <div class="callout">
+      <div class="callout-k">Feed URL</div>
+      <div class="help-text">Generate an OPML token in <a href="/settings">Settings</a> to get a feed URL.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if oob_list %}
+<div id="channel-groups" class="list-scroll sb" hx-swap-oob="true">
+  {% include "partials/channel_list.html" %}
+</div>
+{% endif %}

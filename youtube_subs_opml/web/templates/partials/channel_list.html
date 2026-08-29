@@ -1,91 +1,38 @@
-{% if uncategorized %}
-<h3>Uncategorized ({{ uncategorized|length }})</h3>
-<div class="overflow-auto">
-  <table class="striped cards-on-mobile">
-    <thead>
-      <tr>
-        <th class="col-select"><input type="checkbox" onclick="toggleAll(this)"></th>
-        <th>Channel</th>
-        <th>Categories</th>
-        <th>Ignored</th>
-        <th>Shorts</th>
-        <th>Live</th>
-        <th title="Download videos into Jellyfin">Archive</th>
-        <th title="Keep last N per channel (blank = inherit, 0 = all)">Keep</th>
-        <th title="Max duration in minutes (blank = inherit, 0 = no limit)">Max&nbsp;min</th>
-        <th title="Generate podcast audio">Podcast</th>
-        <th title="What a feed entry links to once archived">Link</th>
-        <th>YouTube Topics</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for ch in uncategorized %}
-      {% include "partials/channel_row.html" %}
-      {% endfor %}
-    </tbody>
-  </table>
+{# Grouped channel list (rows only). Wrapped in #channel-groups by the page or
+   an OOB block. Row click loads the detail pane; the small box multi-selects. #}
+{% for group in groups %}
+<div class="chan-group">
+  <div class="group-head">
+    <span class="group-name">{{ group.name }}</span>
+    <span class="group-count">{{ group.count }}</span>
+  </div>
+  {% for ch in group.channels %}
+  <div class="chan-row{% if ch.channel_id == selected_id %} selected{% endif %}{% if ch.ignored %} ignored{% endif %}"
+       data-title="{{ ch.title|lower }}" data-channel-id="{{ ch.channel_id }}"
+       hx-get="/channels/{{ ch.channel_id }}/detail" hx-target="#channel-detail" hx-swap="innerHTML"
+       onclick="selectRow(this)">
+    <span class="chan-check" data-id="{{ ch.channel_id }}" title="Select" onclick="toggleCheck(event, this)"></span>
+    <span class="chan-title">{{ ch.title }}</span>
+    <span class="chan-badges">
+      {% if ch.cat_count > 1 %}
+      <span class="badge" title="In {{ ch.cat_count }} categories">+{{ ch.cat_count - 1 }}</span>
+      {% endif %}
+      {% if ch.archive_on %}
+      <span class="badge-arc" title="Archiving enabled">ARC</span>
+      {% endif %}
+      {% if ch.has_failure %}
+      <span class="badge-fail" title="A download failed">!</span>
+      {% endif %}
+      {% if ch.is_manual %}
+      <span class="badge-manual" title="Added manually">M</span>
+      {% endif %}
+    </span>
+  </div>
+  {% endfor %}
 </div>
+{% endfor %}
+{% if not groups %}
+<div class="list-end">No channels{% if active_filter != 'All' %} match this filter{% endif %}.</div>
+{% else %}
+<div class="list-end">End of list · {{ total }} channel{{ '' if total == 1 else 's' }}</div>
 {% endif %}
-
-{% if categorized %}
-<h3>Categorized ({{ categorized|length }})</h3>
-<div class="overflow-auto">
-  <table class="striped cards-on-mobile">
-    <thead>
-      <tr>
-        <th class="col-select"><input type="checkbox" onclick="toggleAll(this)"></th>
-        <th>Channel</th>
-        <th>Categories</th>
-        <th>Ignored</th>
-        <th>Shorts</th>
-        <th>Live</th>
-        <th title="Download videos into Jellyfin">Archive</th>
-        <th title="Keep last N per channel (blank = inherit, 0 = all)">Keep</th>
-        <th title="Max duration in minutes (blank = inherit, 0 = no limit)">Max&nbsp;min</th>
-        <th title="Generate podcast audio">Podcast</th>
-        <th title="What a feed entry links to once archived">Link</th>
-        <th>YouTube Topics</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for ch in categorized %}
-      {% include "partials/channel_row.html" %}
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
-
-{% if ignored %}
-<h3>Ignored ({{ ignored|length }})</h3>
-<div class="overflow-auto">
-  <table class="striped cards-on-mobile">
-    <thead>
-      <tr>
-        <th class="col-select"><input type="checkbox" onclick="toggleAll(this)"></th>
-        <th>Channel</th>
-        <th>Categories</th>
-        <th>Ignored</th>
-        <th>Shorts</th>
-        <th>Live</th>
-        <th title="Download videos into Jellyfin">Archive</th>
-        <th title="Keep last N per channel (blank = inherit, 0 = all)">Keep</th>
-        <th title="Max duration in minutes (blank = inherit, 0 = no limit)">Max&nbsp;min</th>
-        <th title="Generate podcast audio">Podcast</th>
-        <th title="What a feed entry links to once archived">Link</th>
-        <th>YouTube Topics</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for ch in ignored %}
-      {% include "partials/channel_row.html" %}
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
-
-{% if not channels %}
-<p><em>No channels synced yet. Connect a YouTube account and sync to get started.</em></p>
-{% endif %}
-
