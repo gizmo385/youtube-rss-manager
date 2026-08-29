@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,6 +23,8 @@ from ..services.prefs import (
 from ..services.sync import sync_account
 from ..templating import templates
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["settings"])
 
 
@@ -29,6 +32,7 @@ router = APIRouter(tags=["settings"])
 def settings_page(
     request: Request,
     jellyfin_test: str | None = None,
+    jellyfin_sync: str | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -72,6 +76,7 @@ def settings_page(
             "base_url": settings.base_url,
             "jellyfin": jellyfin,
             "jellyfin_test": jellyfin_test,
+            "jellyfin_sync": jellyfin_sync,
             "library_path": library_path,
             "library_subpath": library_subpath,
             "canonical_subdir": CANONICAL_SUBDIR,
@@ -198,6 +203,41 @@ def test_jellyfin(
         db.commit()
         return RedirectResponse("/settings?jellyfin_test=ok", status_code=303)
     return RedirectResponse("/settings?jellyfin_test=fail", status_code=303)
+
+
+@router.post("/settings/jellyfin/sync")
+def sync_jellyfin_now(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Run the Jellyfin playlist sync for this user on demand.
+
+    The same work the scheduled job does — resolve item ids for downloaded
+    files and reconcile each category's playlist — but triggered from the
+    settings page so a user isn't waiting on the next interval. Needs the user
+    GUID: without it item ids can't be scoped and playlists can't be created.
+    """
+    account = db.execute(
+        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
+    ).scalar_one_or_none()
+    if account is None:
+        return RedirectResponse("/settings?jellyfin_sync=missing", status_code=303)
+    if not account.jellyfin_user_id:
+        return RedirectResponse("/settings?jellyfin_sync=no_guid", status_code=303)
+
+    from ..services.jellyfin_sync import sync_user
+
+    client = JellyfinClient(
+        base_url=account.base_url,
+        api_key=decrypt_token(account.api_key_encrypted),
+    )
+    try:
+        sync_user(db, user.id, account.jellyfin_user_id, client)
+    except Exception:
+        logger.exception("Manual Jellyfin sync failed for user %s", user.id)
+        db.rollback()
+        return RedirectResponse("/settings?jellyfin_sync=fail", status_code=303)
+    return RedirectResponse("/settings?jellyfin_sync=ok", status_code=303)
 
 
 @router.post("/settings/opml-token/rotate")

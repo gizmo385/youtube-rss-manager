@@ -104,6 +104,16 @@
       <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Save your Jellyfin connection first.</p>
       {% endif %}
 
+      {% if jellyfin_sync == 'ok' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Playlist sync complete.</p>
+      {% elif jellyfin_sync == 'no_guid' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Set the Jellyfin user GUID below first — playlists can't be created without it.</p>
+      {% elif jellyfin_sync == 'missing' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Save your Jellyfin connection first.</p>
+      {% elif jellyfin_sync == 'fail' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Sync failed — check the connection and the app logs.</p>
+      {% endif %}
+
       <form method="post" action="/settings/jellyfin">
         <div class="field-grid">
           <label class="field">
@@ -128,6 +138,7 @@
           <button type="submit" class="btn-primary">Save connection</button>
           {% if jellyfin %}
           <button type="submit" class="btn btn-ghost" formaction="/settings/jellyfin/test">Test</button>
+          <button type="submit" class="btn" formaction="/settings/jellyfin/sync" formnovalidate>Sync playlists now</button>
           {% endif %}
         </div>
       </form>

@@ -188,6 +188,44 @@ def test_jellyfin_test_ok_and_fail(app_db, monkeypatch):
     assert resp.headers["location"] == "/settings?jellyfin_test=fail"
 
 
+def test_jellyfin_sync_requires_account(app_db):
+    client, _ = app_db
+    resp = client.post("/settings/jellyfin/sync", follow_redirects=False)
+    assert resp.headers["location"] == "/settings?jellyfin_sync=missing"
+
+
+def test_jellyfin_sync_requires_user_guid(app_db):
+    client, _ = app_db
+    client.post(
+        "/settings/jellyfin",
+        data={"base_url": "https://jf.example.com", "api_key": "k"},  # no GUID
+        follow_redirects=False,
+    )
+    resp = client.post("/settings/jellyfin/sync", follow_redirects=False)
+    assert resp.headers["location"] == "/settings?jellyfin_sync=no_guid"
+
+
+def test_jellyfin_sync_runs_for_this_user(app_db, monkeypatch):
+    client, _ = app_db
+    client.post(
+        "/settings/jellyfin",
+        data={"base_url": "https://jf.example.com", "api_key": "k",
+              "jellyfin_user_id": "guid-1"},
+        follow_redirects=False,
+    )
+
+    from youtube_subs_opml.web.services import jellyfin_sync
+
+    seen = {}
+    monkeypatch.setattr(
+        jellyfin_sync, "sync_user",
+        lambda db, user_id, jf_user_id, client: seen.update(user_id=user_id, guid=jf_user_id),
+    )
+    resp = client.post("/settings/jellyfin/sync", follow_redirects=False)
+    assert resp.headers["location"] == "/settings?jellyfin_sync=ok"
+    assert seen == {"user_id": USER_ID, "guid": "guid-1"}
+
+
 def test_settings_page_renders_library_path(app_db):
     client, _ = app_db
     resp = client.get("/settings")
