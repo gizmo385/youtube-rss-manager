@@ -252,6 +252,9 @@ class Video(Base):
     # Filled in by the downloader's metadata probe, not by the poller: the RSS
     # feed doesn't carry duration. NULL means "not probed yet".
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Also filled by the probe; surfaced as podcast episode notes. NULL means
+    # "not probed yet"; an empty string means the video genuinely has none.
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

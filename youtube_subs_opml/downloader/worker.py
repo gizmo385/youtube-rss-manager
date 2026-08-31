@@ -22,10 +22,12 @@ from __future__ import annotations
 import logging
 import os
 import random
+import re
 import signal
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import httpx
 from sqlalchemy import select
@@ -188,6 +190,9 @@ def process(row: Download, db: Session) -> None:
 
     if meta.duration_seconds is not None:
         video.duration_seconds = meta.duration_seconds
+    # Persist the description so podcast feeds can surface it — the poller never
+    # sees it (RSS omits it) and it would otherwise only live in the NFO.
+    video.description = meta.description
 
     intent = channel_intents(db).get(video.channel_id)
     if intent is None or not intent.download:
@@ -222,9 +227,7 @@ def process(row: Download, db: Session) -> None:
         return
 
     # --- Download ----------------------------------------------------------
-    episode_number = naming.next_episode_number(
-        db, video.channel_id, video.published_at.year if video.published_at else 1970
-    )
+    episode_number = naming.date_episode_number(video.published_at)
     basename = naming.episode_basename(
         channel_title, video.published_at, episode_number, video.title or meta.title
     )
@@ -390,6 +393,106 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
         db.commit()
         logger.info("Reconciled links: +%d, -%d", created, removed)
     return created, removed
+
+
+# The ``S{YYYY}E{NN}`` token inside a canonical basename. Group 1 keeps the
+# season prefix so we can swap only the episode digits when renumbering.
+_EPISODE_TOKEN = re.compile(r"(S\d{4}E)\d+")
+
+
+def _rename_episode_files(old_mkv: Path, new_stem: str) -> Path:
+    """Rename an episode's .mkv and its sidecars to ``new_stem`` in place.
+
+    Returns the new .mkv path. Sidecars keep their suffix (``.nfo``,
+    ``-thumb.jpg``) — only the shared stem changes.
+    """
+    old_stem = old_mkv.stem
+    new_mkv = old_mkv
+    for f in naming.episode_files(old_mkv):
+        target = f.with_name(new_stem + f.name[len(old_stem):])
+        if target == f:
+            continue
+        f.rename(target)
+        if f == old_mkv:
+            new_mkv = target
+    return new_mkv
+
+
+def renumber_episodes(db: Session, media_root: str) -> int:
+    """Migrate downloaded episodes to date-based numbering. Idempotent.
+
+    Episode numbers used to be a monotonic download-order counter, which put
+    backfilled (newest-first) videos in reverse chronological order in Jellyfin.
+    They are now the upload date's ``MMDD`` (``naming.date_episode_number``). This
+    one-off pass rewrites the ``S{YYYY}E{NN}`` token in each already-downloaded
+    file's name and its NFO ``<episode>`` to the new number, and — while it has
+    the NFO open — backfills ``Video.description`` from ``<plot>`` so older
+    episodes gain podcast notes without a re-probe. Renamed episodes have their
+    stale per-user hardlinks dropped so ``reconcile_links`` rebuilds them under
+    the new names. A no-op once every file already matches.
+
+    Returns the number of episodes renamed.
+    """
+    renamed = 0
+    relinked: set[str] = set()
+    downloads = [
+        d
+        for d in db.execute(
+            select(Download).where(Download.status == "complete")
+        ).scalars().all()
+        if d.file_path
+    ]
+    for download in downloads:
+        video = db.get(Video, download.video_id)
+        if video is None:
+            continue
+        new_num = naming.date_episode_number(video.published_at)
+        old_mkv = Path(download.file_path)
+        old_stem = old_mkv.stem
+        new_stem = _EPISODE_TOKEN.sub(rf"\g<1>{new_num:04d}", old_stem, count=1)
+
+        if new_stem != old_stem:
+            if not old_mkv.exists():
+                logger.warning("Canonical file missing, skipping renumber: %s", old_mkv)
+                continue
+            new_mkv = _rename_episode_files(old_mkv, new_stem)
+            download.file_path = str(new_mkv)
+            relinked.add(download.video_id)
+            renamed += 1
+        else:
+            new_mkv = old_mkv
+
+        nfo = new_mkv.parent / f"{new_stem}.nfo"
+        if not nfo.exists():
+            continue
+        try:
+            tree = ET.parse(nfo)
+        except ET.ParseError:
+            continue
+        root = tree.getroot()
+        ep = root.find("episode")
+        if ep is not None and ep.text != str(new_num):
+            ep.text = str(new_num)
+            tree.write(nfo, encoding="utf-8", xml_declaration=True)
+        if video.description is None:
+            plot = root.find("plot")
+            if plot is not None and plot.text:
+                video.description = plot.text
+
+    # Drop stale hardlinks for renamed episodes; reconcile_links recreates them
+    # from the new canonical names on the next idle pass.
+    if relinked:
+        for link in db.execute(
+            select(DownloadLink).where(DownloadLink.video_id.in_(relinked))
+        ).scalars().all():
+            if link.link_path:
+                _unlink_all(Path(link.link_path))
+            db.delete(link)
+
+    db.commit()
+    if renamed:
+        logger.info("Renumbered %d episode(s) to date-based numbering", renamed)
+    return renamed
 
 
 def run_prune(db: Session) -> int:
@@ -676,6 +779,10 @@ def run_forever() -> None:
 
     # Edge-triggered so we log the transition once, not every idle tick.
     media_ready_last: bool | None = None
+    # One-off migration to date-based episode numbering, run the first time we
+    # see ready media (so files are actually reachable). Idempotent, but there's
+    # no reason to re-scan every download on each iteration once it's done.
+    renumbered = False
 
     while not _shutdown:
         ready = naming.media_is_ready(
@@ -696,6 +803,17 @@ def run_forever() -> None:
             # nothing lands in the container's ephemeral filesystem.
             time.sleep(_IDLE_SLEEP)
             continue
+
+        if not renumbered:
+            db = session_factory()
+            try:
+                renumber_episodes(db, media_root)
+            except Exception:
+                logger.exception("Episode renumber pass failed")
+                db.rollback()
+            finally:
+                db.close()
+            renumbered = True
 
         db = session_factory()
         processed = False

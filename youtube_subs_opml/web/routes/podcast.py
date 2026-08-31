@@ -40,8 +40,42 @@ router = APIRouter(tags=["podcast"])
 _ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 ET.register_namespace("itunes", _ITUNES)
 
+# Rich HTML show notes go in <content:encoded>, which Apple Podcasts and others
+# prefer over the plain-text <description> (and, unlike it, render links).
+_CONTENT = "http://purl.org/rss/1.0/modules/content/"
+ET.register_namespace("content", _CONTENT)
+
 # yt-dlp extracts audio as m4a (see downloader.ytdlp.extract_audio).
 _AUDIO_MIME = "audio/x-m4a"
+
+
+def _watch_url(video_id: str) -> str:
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+def _episode_notes(description: str | None, video_id: str) -> str:
+    """Plain-text show notes: the video's description plus a link back to it.
+
+    Always includes the source link even when the description is empty or the
+    video hasn't been probed yet, so every episode carries at least that much.
+    """
+    link = f"Watch on YouTube: {_watch_url(video_id)}"
+    body = (description or "").strip()
+    return f"{body}\n\n{link}" if body else link
+
+
+def _episode_notes_html(description: str | None, video_id: str) -> str:
+    """The same notes as HTML for <content:encoded>.
+
+    Returned unescaped — ElementTree XML-escapes it exactly once on write, which
+    is the correct on-the-wire form for content:encoded.
+    """
+    body = (description or "").strip()
+    parts = []
+    if body:
+        parts.append("<p>" + body.replace("\n", "<br/>") + "</p>")
+    parts.append(f'<p><a href="{_watch_url(video_id)}">Watch on YouTube</a></p>')
+    return "".join(parts)
 
 
 def episode_image_url(video_id: str) -> str:
@@ -80,6 +114,10 @@ def _sub(parent: ET.Element, tag: str, text: str | None = None, **attrs: str) ->
 
 def _itunes(name: str) -> str:
     return f"{{{_ITUNES}}}{name}"
+
+
+def _content_tag(name: str) -> str:
+    return f"{{{_CONTENT}}}{name}"
 
 
 def build_podcast_feed(
@@ -122,6 +160,14 @@ def build_podcast_feed(
         duration = _fmt_duration(item["duration_seconds"])
         if duration:
             _sub(it, _itunes("duration"), duration)
+        # Show notes: the video's description plus a link back to the source.
+        # Plain text in <description>/<itunes:summary>; the same as HTML (with a
+        # clickable link) in <content:encoded> for clients that render it.
+        notes = _episode_notes(item.get("description"), item["video_id"])
+        _sub(it, "description", notes)
+        _sub(it, _itunes("summary"), notes)
+        _sub(it, _content_tag("encoded"),
+             _episode_notes_html(item.get("description"), item["video_id"]))
         # Per-episode art so each entry is visually attributable to its video.
         # Apple ignores item-level <itunes:image>, but Overcast/Pocket Casts
         # honour it, which is exactly where the "who is this from?" gap showed.
@@ -174,6 +220,7 @@ def _podcast_items(
                 "video_id": video.video_id,
                 "title": video.title or video.video_id,
                 "author": channel.title,
+                "description": video.description,
                 "pub_date": video.published_at,
                 "duration_seconds": video.duration_seconds,
                 "length": download.audio_size_bytes or 0,

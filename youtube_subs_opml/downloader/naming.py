@@ -21,10 +21,13 @@ library; each user's library points at ``libraries/{user_id}``. Pointing a
 library at ``media_root`` itself would scan the canonical tree plus every user
 tree and show N+1 copies of everything.
 
-Episode numbers are synthesized as a monotonic sequence per channel-year,
-assigned from the database rather than guessed from upload dates. This is the
-one place having a real DB beats the config-file tools. The number is a property
-of the channel-year, so the basename is identical in every user's subtree.
+Episode numbers are derived from the video's upload date as ``MMDD`` (see
+``date_episode_number``). Jellyfin sorts episodes within a season by this
+number, so encoding the date makes episodes appear in chronological order
+regardless of the order we happened to download them — the earlier scheme
+numbered by download order, which put backfilled (newest-first) videos in
+reverse. The number is a pure function of ``published_at``, so the basename is
+stable and identical in every user's subtree.
 
 Configure the library in Jellyfin with metadata downloading **off** — otherwise
 it will cheerfully match your woodworking channel against a real TV series.
@@ -70,10 +73,14 @@ def sanitize(name: str) -> str:
 def episode_basename(
     channel_title: str, published_at: datetime | None, episode_number: int, title: str
 ) -> str:
-    """``Channel - S2026E07 - Title`` with no extension."""
+    """``Channel - S2026E0315 - Title`` with no extension.
+
+    The episode number is the ``MMDD`` of the upload date (``date_episode_number``),
+    zero-padded to four digits so a March episode reads ``E0315``.
+    """
     year = published_at.year if published_at else 1970
     return (
-        f"{sanitize(channel_title)} - S{year:04d}E{episode_number:02d} - "
+        f"{sanitize(channel_title)} - S{year:04d}E{episode_number:04d} - "
         f"{sanitize(title)}"
     )
 
@@ -219,35 +226,19 @@ def build_nfo(
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def next_episode_number(db, channel_id: str, year: int) -> int:
-    """Next monotonic episode number for a channel-year.
+def date_episode_number(published_at: datetime | None) -> int:
+    """Episode number encoding the upload date as ``MMDD`` (e.g. Mar 15 -> 315).
 
-    Counts videos already assigned a canonical file path in that season. Called
-    inside the worker's transaction so concurrent workers can't collide —
-    though concurrency is 1 by default anyway.
+    Jellyfin orders episodes within a season by this number, so deriving it from
+    the publish date — rather than the download order — makes videos appear
+    oldest-first regardless of the order we fetched them. The season is the
+    publish *year*, so ``MMDD`` is unique within a season except for two uploads
+    on the same calendar day, a rare and harmless collision (both still play;
+    their relative order is just unspecified).
 
-    Filters on a half-open ``published_at`` year range rather than
-    ``extract('year', ...)`` so it behaves identically on Postgres and on the
-    SQLite used by local mode and the tests.
+    Falls back to ``0`` when the publish date is unknown — those land in the
+    1970 season together, which is the best we can do without a date.
     """
-    from datetime import datetime, timezone
-
-    from sqlalchemy import func, select
-
-    from ..web.models import Download, Video
-
-    start = datetime(year, 1, 1, tzinfo=timezone.utc)
-    end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-
-    count = db.execute(
-        select(func.count())
-        .select_from(Download)
-        .join(Video, Video.video_id == Download.video_id)
-        .where(
-            Video.channel_id == channel_id,
-            Download.file_path.is_not(None),
-            Video.published_at >= start,
-            Video.published_at < end,
-        )
-    ).scalar_one()
-    return int(count) + 1
+    if published_at is None:
+        return 0
+    return published_at.month * 100 + published_at.day

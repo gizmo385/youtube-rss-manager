@@ -30,6 +30,7 @@ from youtube_subs_opml.web.routes import podcast
 
 TOKEN = "podtoken123"
 ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+CONTENT = "http://purl.org/rss/1.0/modules/content/"
 CID = "UCchannelaaaaaaaaaaaaaa"
 CID2 = "UCchannelbbbbbbbbbbbbbb"
 
@@ -81,7 +82,8 @@ def client(audio_file):
         pub = datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc)
         # Complete + audio -> appears in feed.
         seed.add(Video(video_id="withaudio001", channel_id=CID, title="Has Audio",
-                       published_at=pub, duration_seconds=3661))
+                       published_at=pub, duration_seconds=3661,
+                       description="First line\nSecond line"))
         seed.add(Download(video_id="withaudio001", status="complete",
                           file_path="/c/withaudio001.mkv",
                           audio_path=str(audio_file), audio_size_bytes=20))
@@ -147,6 +149,28 @@ def test_feed_item_shape(client):
     img = it.find(f"{{{ITUNES}}}image")
     assert img is not None
     assert img.get("href") == "https://i.ytimg.com/vi/withaudio001/hqdefault.jpg"
+
+
+def test_episode_notes_include_description_and_source_link(client):
+    resp = client.get(f"/podcast/{TOKEN}/all.xml")
+    channel = ET.fromstring(resp.content).find("channel")
+    by_guid = {it.find("guid").text: it for it in channel.findall("item")}
+
+    # A probed video surfaces its description plus a link back to the source.
+    it = by_guid["withaudio001"]
+    desc = it.find("description").text
+    assert "First line" in desc and "Second line" in desc
+    assert "https://www.youtube.com/watch?v=withaudio001" in desc
+    assert it.find(f"{{{ITUNES}}}summary").text == desc
+    html = it.find(f"{{{CONTENT}}}encoded").text
+    assert "<br/>" in html  # newlines preserved as HTML breaks
+    assert '<a href="https://www.youtube.com/watch?v=withaudio001">' in html
+
+    # A video with no stored description still carries the source link.
+    other = by_guid["otheraud0001"]
+    assert other.find("description").text == (
+        "Watch on YouTube: https://www.youtube.com/watch?v=otheraud0001"
+    )
 
 
 def test_channel_cover_falls_back_to_newest_episode(client):
