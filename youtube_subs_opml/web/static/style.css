@@ -997,6 +997,53 @@ label { display: block; }
   border: 1px solid var(--faint); padding: 2px 6px; white-space: nowrap;
 }
 .dl-pill.fail { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.dl-pill.ok { color: var(--accent-2); border-color: var(--accent-line); }
+
+/* Settings tabs: title-scale text switcher that stands in for the page title */
+.page-tabs { display: flex; align-items: baseline; gap: 22px; margin-top: 2px; flex-wrap: wrap; }
+.page-tab {
+  appearance: none; background: none; border: 0; padding: 0; cursor: pointer;
+  font-family: inherit; font-size: 28px; font-weight: 800; line-height: 1.1;
+  letter-spacing: -0.01em; color: var(--muted-2);
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: color 0.12s ease;
+}
+.page-tab:hover { color: var(--ink-2); }
+.page-tab.active { color: var(--ink); }
+.tab-badge {
+  font-size: 12px; font-weight: 800; color: var(--bg); background: var(--accent);
+  padding: 1px 6px; align-self: center;
+}
+.tab-panel[hidden] { display: none; }
+
+/* Downloader summary strip: tiles + retry-all */
+.dl-summary { display: flex; align-items: stretch; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.dl-summary .statbar { flex: 1; margin-bottom: 0; min-width: 260px; }
+.dl-summary-action { display: flex; align-items: center; }
+
+/* Filters */
+.dl-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.dl-filters select,
+.dl-filters input[type="search"] {
+  font-size: 13px; padding: 6px 8px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+}
+.dl-filters input[type="search"] { flex: 1; min-width: 160px; }
+
+/* Table meta line + pager */
+.dtable-meta { font-size: 11px; color: var(--muted-2); margin-bottom: 6px; }
+.col-date, .dtable td.col-date {
+  white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 14px 0 2px; }
+.pager-info { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Mobile: hide the wide error column; keep the essentials legible. */
+@media (max-width: 720px) {
+  .dtable .col-err { display: none; }
+  .dl-summary .statbar { min-width: 100%; }
+  .page-tab { font-size: 22px; }
+}
 
 /* =====================================================================
    Login

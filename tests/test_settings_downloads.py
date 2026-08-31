@@ -12,10 +12,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from datetime import datetime, timedelta, timezone
+
 from youtube_subs_opml.web.db import Base, get_db
 from youtube_subs_opml.web.deps import get_current_user
 from youtube_subs_opml.web.models import (
+    Category,
     Channel,
+    ChannelCategory,
     Download,
     Subscription,
     User,
@@ -109,29 +113,6 @@ def test_status_counts_scoped_to_subscriptions(app_db):
     # Ignored sub and the other user's channel contribute nothing.
 
 
-def test_problem_list_excludes_muted_and_unscoped(app_db):
-    _client, Session = app_db
-    with Session() as db:
-        problems = downloads.problem_downloads(db, USER_ID)
-    ids = {p["video_id"] for p in problems}
-    assert ids == {"vfailed00001", "vunavail0001", "vtoolong0001"}
-    # short is muted; complete/pending aren't problems; ignored & other-user hidden.
-    assert "vshort000001" not in ids
-    assert "vignored0001" not in ids
-    assert "vother000001" not in ids
-
-
-def test_problem_row_carries_error_and_attempts(app_db):
-    _client, Session = app_db
-    with Session() as db:
-        problems = downloads.problem_downloads(db, USER_ID)
-    row = next(p for p in problems if p["video_id"] == "vunavail0001")
-    assert row["status"] == "skipped"
-    assert row["skip_reason"] == "unavailable"
-    assert row["attempts"] == 5
-    assert "bot" in row["last_error"]
-
-
 # --- service: retry ------------------------------------------------------
 
 def test_retry_one_requeues_and_clears(app_db):
@@ -181,7 +162,8 @@ def test_settings_page_renders_downloader_panel(app_db):
     client, _Session = app_db
     resp = client.get("/settings")
     assert resp.status_code == 200
-    assert "Downloader" in resp.text
+    assert 'data-tab="downloads"' in resp.text  # the Downloads tab
+    assert "Download history" in resp.text       # the panel heading
     assert "Title vfailed00001" in resp.text
     assert "Retry all recoverable (2)" in resp.text
 
@@ -210,4 +192,161 @@ def test_retry_all_route(app_db):
     assert resp.status_code == 303
     assert "dl=retried&dl_n=2" in resp.headers["location"]
     with Session() as db:
+        assert db.get(Download, "vunavail0001").status == "pending"
+
+
+# --- service: full history list (filters + pagination) -------------------
+
+@pytest.fixture
+def history_db():
+    """A fresh session with 60 downloads across two channels and one category."""
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as s:
+        s.add(User(id=1, oidc_sub="s", email="e"))
+        s.add(Channel(channel_id="UCa", title="Alpha"))
+        s.add(Channel(channel_id="UCb", title="Beta"))
+        s.add(Subscription(user_id=1, channel_id="UCa"))
+        s.add(Subscription(user_id=1, channel_id="UCb"))
+        s.add(Category(id=1, user_id=1, name="Tech", slug="tech"))
+        s.add(ChannelCategory(user_id=1, channel_id="UCa", category_id=1))
+        s.commit()
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        statuses = ["complete", "failed", "skipped", "pending"]
+        for i in range(60):
+            cid = "UCa" if i % 2 else "UCb"
+            st = statuses[i % 4]
+            s.add(Video(video_id=f"v{i:09d}", channel_id=cid, title=f"Vid {i}",
+                        published_at=base + timedelta(days=i)))
+            s.add(Download(video_id=f"v{i:09d}", status=st,
+                           skip_reason="unavailable" if st == "skipped" else None))
+        s.commit()
+    return Session
+
+
+def test_list_paginates(history_db):
+    with history_db() as db:
+        p1 = downloads.list_downloads(db, 1, page=1)
+        assert p1["total"] == 60 and p1["pages"] == 3
+        assert len(p1["rows"]) == 25
+        assert (p1["start"], p1["end"]) == (1, 25)
+        assert p1["has_prev"] is False and p1["has_next"] is True
+        p3 = downloads.list_downloads(db, 1, page=3)
+        assert len(p3["rows"]) == 10 and p3["end"] == 60 and p3["has_next"] is False
+        # Out-of-range page clamps rather than returning an empty page.
+        assert downloads.list_downloads(db, 1, page=99)["page"] == 3
+
+
+def test_list_orders_newest_first(history_db):
+    with history_db() as db:
+        rows = downloads.list_downloads(db, 1, page=1)["rows"]
+    # Video 59 is the most recent (largest published_at).
+    assert rows[0]["video_id"] == "v000000059"
+
+
+def test_list_filters(history_db):
+    with history_db() as db:
+        assert downloads.list_downloads(db, 1, channel_id="UCa")["total"] == 30
+        assert downloads.list_downloads(db, 1, category_id=1)["total"] == 30
+        assert downloads.list_downloads(db, 1, status="failed")["total"] == 15
+        # Title search: "Vid 1" matches 1 and 10–19 == 11 rows.
+        assert downloads.list_downloads(db, 1, q="Vid 1")["total"] == 11
+        # Combined filters intersect: all 15 failures happen to sit on UCa
+        # (odd indices), so UCa+failed keeps them and UCb+failed drops them all.
+        assert downloads.list_downloads(db, 1, channel_id="UCa", status="failed")["total"] == 15
+        assert downloads.list_downloads(db, 1, channel_id="UCb", status="failed")["total"] == 0
+
+
+def test_subscribed_channels_sorted(history_db):
+    with history_db() as db:
+        chans = downloads.subscribed_channels(db, 1)
+    assert [c["title"] for c in chans] == ["Alpha", "Beta"]
+
+
+# --- friendly display labels ---------------------------------------------
+
+def test_table_uses_friendly_labels(app_db):
+    client, _Session = app_db
+    html = client.get("/settings/downloads/table").text
+    # Statuses and skip reasons render as human labels, not raw values.
+    for label in ("Archived", "Failed", "Unavailable", "Too long", "Short", "Queued"):
+        assert label in html
+    assert "too_long" not in html
+    assert "members_only" not in html
+
+
+def test_no_subscribers_reads_as_not_wanted(app_db):
+    client, Session = app_db
+    with Session() as db:
+        db.add(Video(video_id="vnowant00001", channel_id=SUB, title="Nobody wants me"))
+        db.add(Download(video_id="vnowant00001", status="skipped",
+                        skip_reason="no_subscribers"))
+        db.commit()
+    html = client.get("/settings/downloads/table", params={"status": "skipped"}).text
+    assert "Not wanted" in html
+    assert "no_subscribers" not in html
+
+
+# --- routes: tabs, table partial, htmx retry -----------------------------
+
+def test_settings_has_two_tabs(app_db):
+    client, _Session = app_db
+    html = client.get("/settings").text
+    assert 'id="panel-settings"' in html and 'id="panel-downloads"' in html
+    assert 'data-tab="downloads"' in html
+    # Settings tab is the default; the downloads panel starts hidden.
+    assert 'id="panel-downloads" class="tab-panel" hidden' in html
+
+
+def test_tab_query_param_opens_downloads(app_db):
+    client, _Session = app_db
+    html = client.get("/settings?tab=downloads").text
+    assert 'id="panel-settings" class="tab-panel" hidden' in html
+
+
+def test_table_partial_filters_by_status(app_db):
+    client, _Session = app_db
+    # SUB has 3 skipped rows (unavailable, too_long, short) in full history.
+    resp = client.get("/settings/downloads/table", params={"status": "skipped"})
+    assert resp.status_code == 200
+    assert "of 3" in resp.text
+    assert "Title vshort000001" in resp.text  # full history includes Shorts
+    # A status filter with no matches renders the empty state, not an error.
+    empty = client.get("/settings/downloads/table", params={"status": "downloading"})
+    assert "No downloads match these filters" in empty.text
+
+
+def test_htmx_retry_returns_refresh_partial(app_db):
+    client, Session = app_db
+    resp = client.post(
+        "/settings/downloads/vfailed00001/retry",
+        headers={"HX-Request": "true"},
+        data={"status": "", "page": "1"},
+    )
+    assert resp.status_code == 200
+    # Table body + out-of-band summary come back together.
+    assert 'id="dl-page"' in resp.text
+    assert 'id="dl-summary" class="dl-summary" hx-swap-oob="true"' in resp.text
+    # Recoverable dropped from 2 to 1 after requeuing the failure.
+    assert "Retry all recoverable (1)" in resp.text
+    with Session() as db:
+        assert db.get(Download, "vfailed00001").status == "pending"
+
+
+def test_htmx_retry_all_returns_refresh_partial(app_db):
+    client, Session = app_db
+    resp = client.post(
+        "/settings/downloads/retry-all",
+        headers={"HX-Request": "true"},
+        data={"page": "1"},
+    )
+    assert resp.status_code == 200
+    assert 'hx-swap-oob="true"' in resp.text
+    # Nothing recoverable left, so the button is gone.
+    assert "Retry all recoverable" not in resp.text
+    with Session() as db:
+        assert db.get(Download, "vfailed00001").status == "pending"
         assert db.get(Download, "vunavail0001").status == "pending"

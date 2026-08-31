@@ -9,10 +9,16 @@
 <div class="page-head">
   <div>
     <div class="eyebrow">Account</div>
-    <h1 class="page-title">Settings</h1>
+    <div class="page-tabs" role="tablist">
+      <button type="button" class="page-tab{% if active_tab != 'downloads' %} active{% endif %}" data-tab="settings" role="tab">Settings</button>
+      <button type="button" class="page-tab{% if active_tab == 'downloads' %} active{% endif %}" data-tab="downloads" role="tab">
+        Downloads{% if download_counts.get('failed', 0) %} <span class="tab-badge">{{ download_counts.get('failed', 0) }}</span>{% endif %}
+      </button>
+    </div>
   </div>
 </div>
 
+<div id="panel-settings" class="tab-panel"{% if active_tab == 'downloads' %} hidden{% endif %}>
 <div class="settings-grid">
   <form method="post" action="/settings/defaults" style="display:contents">
     <section class="card">
@@ -85,89 +91,6 @@
       </div>
     </section>
   </form>
-
-  <section class="card span-all">
-    <div class="card-head">
-      <h2 class="card-title">Downloader</h2>
-      {% if recoverable_downloads %}
-      <form method="post" action="/settings/downloads/retry-all">
-        <button type="submit" class="btn btn-sm">Retry all recoverable ({{ recoverable_downloads }})</button>
-      </form>
-      {% endif %}
-    </div>
-    <div class="card-body">
-      {% if dl == 'retried' %}
-      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Requeued {{ dl_n }} download{{ '' if dl_n == 1 else 's' }} — the worker will pick {{ 'it' if dl_n == 1 else 'them' }} up shortly.</p>
-      {% elif dl == 'none' %}
-      <p class="status-inline" role="status" style="margin:0 0 10px"><span class="dot"></span>Nothing recoverable to retry.</p>
-      {% elif dl == 'notfound' %}
-      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>That download couldn't be requeued.</p>
-      {% endif %}
-
-      <div class="statbar">
-        <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('complete', 0) }}</span><span class="statbar-lab">Archived</span></div>
-        <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('pending', 0) }}</span><span class="statbar-lab">Pending</span></div>
-        <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('downloading', 0) }}</span><span class="statbar-lab">Downloading</span></div>
-        <div class="statbar-item"><span class="statbar-num{{ ' accent' if download_counts.get('failed', 0) }}">{{ download_counts.get('failed', 0) }}</span><span class="statbar-lab">Failed</span></div>
-        <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('skipped', 0) }}</span><span class="statbar-lab">Skipped</span></div>
-      </div>
-
-      {% if problem_downloads %}
-      <p class="help-text" style="margin:0 0 10px">
-        Videos that failed or were skipped for a notable reason — <code class="mono">last error</code> is the raw
-        message from the downloader. Retrying resets the attempt count and requeues it.
-      </p>
-      <div class="dtable-wrap">
-        <table class="dtable">
-          <thead>
-            <tr>
-              <th>Video</th>
-              <th>Status</th>
-              <th class="col-num">Attempts</th>
-              <th>Last error</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for p in problem_downloads %}
-            <tr>
-              <td>
-                <div class="dtable-title">{{ p.title }}</div>
-                <div class="dtable-sub">{{ p.channel_title }}</div>
-              </td>
-              <td>
-                {% if p.status == 'failed' %}
-                <span class="dl-pill fail">Failed</span>
-                {% else %}
-                <span class="dl-pill">Skipped{% if p.skip_reason %}: {{ p.skip_reason }}{% endif %}</span>
-                {% endif %}
-              </td>
-              <td class="col-num">{{ p.attempts }}</td>
-              <td class="dtable-err">
-                {% if p.last_error %}
-                <span title="{{ p.last_error }}">{{ p.last_error | truncate(140) }}</span>
-                {% else %}
-                <span class="none">—</span>
-                {% endif %}
-              </td>
-              <td>
-                <div class="dtable-acts">
-                  <a class="btn btn-sm btn-ghost" href="https://www.youtube.com/watch?v={{ p.video_id }}" target="_blank" rel="noopener">Open</a>
-                  <form method="post" action="/settings/downloads/{{ p.video_id }}/retry">
-                    <button type="submit" class="btn btn-sm">Retry</button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <p class="empty" style="margin-top:12px">No failed or skipped downloads.</p>
-      {% endif %}
-    </div>
-  </section>
 
   <section class="card">
     <div class="card-head">
@@ -268,7 +191,7 @@
 
   <section class="card span-all">
     <div class="card-head">
-      <h2 class="card-title">OPML feeds</h2>
+      <h2 class="card-title">OPML Videeo Feeds</h2>
       {% if opml_token %}
       <form method="post" action="/settings/opml-token/rotate">
         <button type="submit" class="btn btn-sm btn-ghost"
@@ -302,7 +225,7 @@
   {% if opml_token %}
   <section class="card span-all">
     <div class="card-head">
-      <h2 class="card-title">Podcast feeds</h2>
+      <h2 class="card-title">Podcast Feeds</h2>
       <span class="card-note">Audio-only, for Apple Podcasts &amp; other apps</span>
     </div>
     <div class="card-body">
@@ -325,6 +248,55 @@
   </section>
   {% endif %}
 </div>
+</div>
+
+<div id="panel-downloads" class="tab-panel"{% if active_tab != 'downloads' %} hidden{% endif %}>
+  <section class="card span-all">
+    <div class="card-head">
+      <h2 class="card-title">Download history</h2>
+      <span class="card-note">Everything the archive has seen — filter, page, and retry failures</span>
+    </div>
+    <div class="card-body">
+      {% if dl == 'retried' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Requeued {{ dl_n }} download{{ '' if dl_n == 1 else 's' }} — the worker will pick {{ 'it' if dl_n == 1 else 'them' }} up shortly.</p>
+      {% elif dl == 'none' %}
+      <p class="status-inline" role="status" style="margin:0 0 10px"><span class="dot"></span>Nothing recoverable to retry.</p>
+      {% elif dl == 'notfound' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>That download couldn't be requeued.</p>
+      {% endif %}
+
+      {% include "partials/downloads_summary.html" %}
+
+      <form id="dl-filters" class="dl-filters"
+            hx-get="/settings/downloads/table" hx-target="#downloads-table" hx-swap="innerHTML"
+            hx-trigger="change, search, keyup delay:300ms from:input[name='q']">
+        <select name="channel_id" aria-label="Filter by channel">
+          <option value="">All channels</option>
+          {% for c in filter_channels %}
+          <option value="{{ c.channel_id }}"{% if f_channel_id == c.channel_id %} selected{% endif %}>{{ c.title }}</option>
+          {% endfor %}
+        </select>
+        <select name="category_id" aria-label="Filter by category">
+          <option value="">All categories</option>
+          {% for cat in categories %}
+          <option value="{{ cat.id }}"{% if f_category_id == cat.id %} selected{% endif %}>{{ cat.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="status" aria-label="Filter by status">
+          <option value="">Any status</option>
+          {% for s in download_statuses %}
+          <option value="{{ s }}"{% if f_status == s %} selected{% endif %}>{{ STATUS_LABELS.get(s, s) }}</option>
+          {% endfor %}
+        </select>
+        <input type="search" name="q" value="{{ f_q }}" placeholder="Search title…" aria-label="Search by title">
+      </form>
+
+      <div id="downloads-table">
+        {% include "partials/downloads_table.html" %}
+      </div>
+    </div>
+  </section>
+</div>
 
 <script>
 function copyUrl(btn, url) {
@@ -334,5 +306,25 @@ function copyUrl(btn, url) {
     setTimeout(function(){ btn.textContent = orig; }, 1500);
   });
 }
+
+(function () {
+  var buttons = document.querySelectorAll('.page-tab');
+  function show(tab) {
+    buttons.forEach(function (b) { b.classList.toggle('active', b.dataset.tab === tab); });
+    document.getElementById('panel-settings').hidden = (tab === 'downloads');
+    document.getElementById('panel-downloads').hidden = (tab !== 'downloads');
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var tab = b.dataset.tab;
+      show(tab);
+      // Keep the URL shareable/back-button friendly without a reload.
+      var url = new URL(window.location);
+      if (tab === 'downloads') { url.searchParams.set('tab', 'downloads'); }
+      else { url.searchParams.delete('tab'); }
+      history.replaceState(null, '', url);
+    });
+  });
+})();
 </script>
 {% endblock %}

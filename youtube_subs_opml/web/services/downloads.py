@@ -14,16 +14,44 @@ from __future__ import annotations
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from ..models import Channel, Download, Subscription, Video
-
-# Skip reasons that are deliberate/expected rather than failures, so they're
-# kept out of the "problem" list (a channel excluding Shorts would otherwise
-# flood it). Everything else — unavailable, too_long, members_only,
-# geo_blocked — is worth surfacing.
-_MUTED_SKIP_REASONS = ("short", "no_subscribers")
+from ..models import Channel, ChannelCategory, Download, Subscription, Video
 
 # Terminal states a user can meaningfully retry from.
 _RETRYABLE_STATUSES = ("failed", "skipped")
+
+# The statuses a Download row can hold, for the status filter dropdown.
+DOWNLOAD_STATUSES = ("pending", "downloading", "complete", "failed", "skipped")
+
+# Human-friendly labels for the UI. The raw values are what the worker writes;
+# these are only ever for display (pills, dropdowns, tooltips).
+STATUS_LABELS: dict[str, str] = {
+    "pending": "Queued",
+    "downloading": "Downloading",
+    "complete": "Archived",
+    "failed": "Failed",
+    "skipped": "Skipped",
+}
+
+# Skip reasons (Download.skip_reason) → short label + a plain-English tooltip.
+SKIP_REASON_LABELS: dict[str, str] = {
+    "too_long": "Too long",
+    "unavailable": "Unavailable",
+    "members_only": "Members only",
+    "geo_blocked": "Region-blocked",
+    "no_subscribers": "Not wanted",
+    "short": "Short",
+}
+SKIP_REASON_HELP: dict[str, str] = {
+    "too_long": "Longer than the max-duration cap set for this channel.",
+    "unavailable": "Private, removed, age-restricted, or otherwise unfetchable.",
+    "members_only": "Requires a paid channel membership to watch.",
+    "geo_blocked": "Not available in this server's region.",
+    "no_subscribers": "No subscriber currently has archiving enabled for this channel.",
+    "short": "A YouTube Short, excluded from the archive for this channel.",
+}
+
+# Rows per page in the download-history table.
+PER_PAGE = 25
 
 
 def _visible(user_id: int):
@@ -61,17 +89,12 @@ def status_counts(db: Session, user_id: int) -> dict[str, int]:
     return {status: count for status, count in rows}
 
 
-def problem_downloads(db: Session, user_id: int, *, limit: int = 100) -> list[dict]:
-    """Failed or notably-skipped downloads the user might want to retry.
-
-    Newest first, so recent breakage is at the top. ``last_error`` is the raw
-    yt-dlp stderr captured by the worker — the actual reason a probe/download
-    fell over.
-    """
-    stmt = (
-        select(Video, Download, Channel)
-        .join(Download, Download.video_id == Video.video_id)
-        .join(Channel, Channel.channel_id == Video.channel_id)
+def recoverable_count(db: Session, user_id: int) -> int:
+    """How many downloads 'Retry all recoverable' would requeue (failed + unavailable)."""
+    return db.execute(
+        select(func.count())
+        .select_from(Download)
+        .join(Video, Video.video_id == Download.video_id)
         .join(
             Subscription,
             and_(
@@ -85,28 +108,134 @@ def problem_downloads(db: Session, user_id: int, *, limit: int = 100) -> list[di
                 Download.status == "failed",
                 and_(
                     Download.status == "skipped",
-                    Download.skip_reason.notin_(_MUTED_SKIP_REASONS),
+                    Download.skip_reason == "unavailable",
                 ),
             )
         )
-        .order_by(Video.published_at.desc().nullslast())
-        .limit(limit)
+    ).scalar_one()
+
+
+def subscribed_channels(db: Session, user_id: int) -> list[dict]:
+    """The user's non-ignored channels, for the channel filter dropdown."""
+    rows = db.execute(
+        select(Channel.channel_id, Channel.title)
+        .join(
+            Subscription,
+            and_(
+                Subscription.channel_id == Channel.channel_id,
+                Subscription.user_id == user_id,
+                Subscription.ignored == False,  # noqa: E712
+            ),
+        )
+        .order_by(func.lower(Channel.title))
+    ).all()
+    return [{"channel_id": cid, "title": title or cid} for cid, title in rows]
+
+
+def _filtered_query(
+    user_id: int,
+    *,
+    channel_id: str | None,
+    category_id: int | None,
+    status: str | None,
+    q: str | None,
+):
+    """Base SELECT over (Video, Download, Channel) in scope, with filters applied."""
+    stmt = (
+        select(Video, Download, Channel)
+        .join(Download, Download.video_id == Video.video_id)
+        .join(Channel, Channel.channel_id == Video.channel_id)
+        .join(
+            Subscription,
+            and_(
+                Subscription.channel_id == Video.channel_id,
+                Subscription.user_id == user_id,
+                Subscription.ignored == False,  # noqa: E712
+            ),
+        )
     )
-    out: list[dict] = []
-    for video, download, channel in db.execute(stmt).all():
-        out.append(
+    if channel_id:
+        stmt = stmt.where(Video.channel_id == channel_id)
+    if status:
+        stmt = stmt.where(Download.status == status)
+    if q:
+        stmt = stmt.where(Video.title.ilike(f"%{q}%"))
+    if category_id:
+        stmt = stmt.join(
+            ChannelCategory,
+            and_(
+                ChannelCategory.channel_id == Video.channel_id,
+                ChannelCategory.user_id == user_id,
+                ChannelCategory.category_id == category_id,
+            ),
+        )
+    return stmt
+
+
+def list_downloads(
+    db: Session,
+    user_id: int,
+    *,
+    channel_id: str | None = None,
+    category_id: int | None = None,
+    status: str | None = None,
+    q: str | None = None,
+    page: int = 1,
+    per_page: int = PER_PAGE,
+) -> dict:
+    """A page of the user's whole download history, filtered and newest-first.
+
+    Returns the rows plus everything the template needs to render pagination:
+    ``total`` (matching the filters), clamped ``page``, ``pages``, ``has_prev``/
+    ``has_next`` and the 1-based ``start``/``end`` indices of this page.
+    """
+    base = _filtered_query(
+        user_id, channel_id=channel_id, category_id=category_id, status=status, q=q
+    )
+    total = db.execute(
+        select(func.count()).select_from(base.subquery())
+    ).scalar_one()
+
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(max(1, page), pages)
+
+    rows_stmt = (
+        base.order_by(
+            Video.published_at.desc().nullslast(),
+            Download.created_at.desc(),
+            Video.video_id,
+        )
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+    )
+    rows = []
+    for video, download, channel in db.execute(rows_stmt).all():
+        rows.append(
             {
                 "video_id": video.video_id,
                 "title": video.title or video.video_id,
                 "channel_title": channel.title or channel.channel_id,
+                "channel_id": channel.channel_id,
                 "status": download.status,
                 "skip_reason": download.skip_reason,
                 "attempts": download.attempts,
                 "last_error": download.last_error,
                 "published_at": video.published_at,
+                "file_size_bytes": download.file_size_bytes,
             }
         )
-    return out
+
+    return {
+        "rows": rows,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pages,
+        "has_prev": page > 1,
+        "has_next": page < pages,
+        "start": 0 if total == 0 else (page - 1) * per_page + 1,
+        "end": min(page * per_page, total),
+    }
 
 
 def _reset(download: Download) -> None:

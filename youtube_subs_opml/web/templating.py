@@ -24,3 +24,14 @@ def _asset_version() -> str:
 
 # Computed once at import; the file doesn't change under a running process.
 templates.env.globals["asset_v"] = _asset_version()
+
+# Display labels shared across templates, defined once in the domain layer.
+from .services.downloads import (  # noqa: E402 — after templates is defined
+    SKIP_REASON_HELP,
+    SKIP_REASON_LABELS,
+    STATUS_LABELS,
+)
+
+templates.env.globals["STATUS_LABELS"] = STATUS_LABELS
+templates.env.globals["SKIP_REASON_LABELS"] = SKIP_REASON_LABELS
+templates.env.globals["SKIP_REASON_HELP"] = SKIP_REASON_HELP

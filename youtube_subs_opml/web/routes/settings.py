@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -13,6 +14,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..deps import get_current_user
 from ..models import Category, JellyfinAccount, OpmlToken, User, YoutubeAccount
+from ..services import downloads as downloads_service
 from ..services.crypto import decrypt_token, encrypt_token
 from ..services.jellyfin import JellyfinClient
 from ..services.prefs import (
@@ -28,9 +30,63 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["settings"])
 
 
+def _int_or_none(value) -> int | None:  # noqa: ANN001 — form/query values are str
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean(value) -> str | None:  # noqa: ANN001
+    text = (value or "").strip()
+    return text or None
+
+
+def _status_or_none(value) -> str | None:  # noqa: ANN001
+    text = _clean(value)
+    return text if text in downloads_service.DOWNLOAD_STATUSES else None
+
+
+def _table_context(db: Session, user: User, params) -> dict:  # noqa: ANN001
+    """Build the download-history table context from query/form params.
+
+    Shared by the initial page render, the htmx filter/pagination endpoint, and
+    the retry endpoints, so filters and the current page survive a retry.
+    """
+    channel_id = _clean(params.get("channel_id"))
+    category_id = _int_or_none(params.get("category_id"))
+    status = _status_or_none(params.get("status"))
+    q = _clean(params.get("q"))
+    page = _int_or_none(params.get("page")) or 1
+
+    data = downloads_service.list_downloads(
+        db, user.id,
+        channel_id=channel_id, category_id=category_id, status=status, q=q, page=page,
+    )
+    active = {
+        k: v
+        for k, v in (
+            ("channel_id", channel_id), ("category_id", category_id),
+            ("status", status), ("q", q),
+        )
+        if v not in (None, "")
+    }
+    return {
+        "user": user,
+        **data,
+        "f_channel_id": channel_id or "",
+        "f_category_id": category_id or "",
+        "f_status": status or "",
+        "f_q": q or "",
+        # Current filters as a query string, for pagination links to preserve.
+        "filter_qs": urlencode(active),
+    }
+
+
 @router.get("/settings")
 def settings_page(
     request: Request,
+    tab: str | None = None,
     jellyfin_test: str | None = None,
     jellyfin_sync: str | None = None,
     dl: str | None = None,
@@ -57,16 +113,7 @@ def settings_page(
         select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
     ).scalar_one_or_none()
 
-    from ..services.downloads import problem_downloads, status_counts
     from ..services.stats import shell_stats
-
-    problems = problem_downloads(db, user.id)
-    recoverable = sum(
-        1
-        for p in problems
-        if p["status"] == "failed"
-        or (p["status"] == "skipped" and p["skip_reason"] == "unavailable")
-    )
 
     settings = get_settings()
     # The subtree an admin points this user's Jellyfin library at. The relative
@@ -76,33 +123,37 @@ def settings_page(
     library_subpath = f"{LIBRARIES_SUBDIR}/{user.id}"
     library_path = f"{settings.media_root}/{library_subpath}"
 
-    return templates.TemplateResponse(
-        request,
-        "settings.html",
-        context={
-            "user": user,
-            "accounts": accounts,
-            "opml_token": opml_token,
-            "categories": categories,
-            "base_url": settings.base_url,
-            "jellyfin": jellyfin,
-            "jellyfin_test": jellyfin_test,
-            "jellyfin_sync": jellyfin_sync,
-            "library_path": library_path,
-            "library_subpath": library_subpath,
-            "canonical_subdir": CANONICAL_SUBDIR,
-            "media_root": settings.media_root,
-            "link_targets": LINK_TARGETS,
-            "max_duration_minutes": user.max_duration_seconds // 60,
-            "active_nav": "settings",
-            "stats": shell_stats(user, db),
-            "download_counts": status_counts(db, user.id),
-            "problem_downloads": problems,
-            "recoverable_downloads": recoverable,
-            "dl": dl,
-            "dl_n": dl_n,
-        },
-    )
+    active_tab = "downloads" if tab in ("downloads", "downloader") else "settings"
+
+    context = {
+        "user": user,
+        "accounts": accounts,
+        "opml_token": opml_token,
+        "categories": categories,
+        "base_url": settings.base_url,
+        "jellyfin": jellyfin,
+        "jellyfin_test": jellyfin_test,
+        "jellyfin_sync": jellyfin_sync,
+        "library_path": library_path,
+        "library_subpath": library_subpath,
+        "canonical_subdir": CANONICAL_SUBDIR,
+        "media_root": settings.media_root,
+        "link_targets": LINK_TARGETS,
+        "max_duration_minutes": user.max_duration_seconds // 60,
+        "active_nav": "settings",
+        "active_tab": active_tab,
+        "stats": shell_stats(user, db),
+        # Downloader tab: summary counts, retry-all count, filter options, and
+        # the first page of the (unfiltered) history table.
+        "download_counts": downloads_service.status_counts(db, user.id),
+        "recoverable": downloads_service.recoverable_count(db, user.id),
+        "filter_channels": downloads_service.subscribed_channels(db, user.id),
+        "download_statuses": downloads_service.DOWNLOAD_STATUSES,
+        "dl": dl,
+        "dl_n": dl_n,
+    }
+    context.update(_table_context(db, user, request.query_params))
+    return templates.TemplateResponse(request, "settings.html", context=context)
 
 
 @router.post("/sync/{account_id}")
@@ -256,33 +307,66 @@ def sync_jellyfin_now(
     return RedirectResponse("/settings?jellyfin_sync=ok", status_code=303)
 
 
-@router.post("/settings/downloads/{video_id}/retry")
-def retry_download(
-    video_id: str,
+@router.get("/settings/downloads/table")
+def downloads_table(
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
-    """Requeue a single failed/skipped download for this user."""
-    from ..services.downloads import retry_one
+) -> HTMLResponse:
+    """htmx partial: a filtered, paginated page of the download history table."""
+    ctx = _table_context(db, user, request.query_params)
+    return templates.TemplateResponse(request, "partials/downloads_table.html", ctx)
 
-    ok = retry_one(db, user.id, video_id)
+
+def _retry_response(
+    request: Request, db: Session, user: User, form, *, dl: str, dl_n: int
+):  # noqa: ANN001
+    """Refresh the table + summary in place for htmx; redirect otherwise.
+
+    Retry buttons send the current filters and page (via hx-include), so the
+    table re-renders on the same page the user was looking at, and the summary
+    (which drives the stat tiles and the 'retry all' count) is swapped
+    out-of-band so it stays in sync.
+    """
+    if request.headers.get("HX-Request"):
+        ctx = _table_context(db, user, form)
+        ctx["download_counts"] = downloads_service.status_counts(db, user.id)
+        ctx["recoverable"] = downloads_service.recoverable_count(db, user.id)
+        return templates.TemplateResponse(
+            request, "partials/downloads_refresh.html", ctx
+        )
     return RedirectResponse(
-        f"/settings?dl={'retried' if ok else 'notfound'}&dl_n={1 if ok else 0}",
-        status_code=303,
+        f"/settings?tab=downloads&dl={dl}&dl_n={dl_n}", status_code=303
+    )
+
+
+@router.post("/settings/downloads/{video_id}/retry")
+async def retry_download(
+    video_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Requeue a single failed/skipped download for this user."""
+    ok = downloads_service.retry_one(db, user.id, video_id)
+    form = await request.form()
+    return _retry_response(
+        request, db, user, form,
+        dl="retried" if ok else "notfound", dl_n=1 if ok else 0,
     )
 
 
 @router.post("/settings/downloads/retry-all")
-def retry_all_downloads(
+async def retry_all_downloads(
+    request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+):
     """Requeue every recoverable (failed / unavailable) download for this user."""
-    from ..services.downloads import retry_all_recoverable
-
-    n = retry_all_recoverable(db, user.id)
-    return RedirectResponse(
-        f"/settings?dl={'retried' if n else 'none'}&dl_n={n}", status_code=303
+    n = downloads_service.retry_all_recoverable(db, user.id)
+    form = await request.form()
+    return _retry_response(
+        request, db, user, form, dl="retried" if n else "none", dl_n=n
     )
 
 
