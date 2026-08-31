@@ -256,6 +256,31 @@ def test_worker_skips_short_when_channel_excludes_shorts(db, monkeypatch):
     assert row.skip_reason == "short"
 
 
+# --- download spacing ----------------------------------------------------
+
+def test_sleep_between_downloads_disabled_when_zero(monkeypatch):
+    slept = []
+    monkeypatch.setattr(worker.time, "sleep", lambda s: slept.append(s))
+    worker._sleep_between_downloads(SimpleNamespace(download_delay_seconds=0))
+    assert slept == []
+
+
+def test_sleep_between_downloads_jitters_delay(monkeypatch):
+    slept = []
+    monkeypatch.setattr(worker.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(worker.random, "uniform", lambda a, b: b)  # max jitter
+    worker._sleep_between_downloads(SimpleNamespace(download_delay_seconds=5.0))
+    assert slept == [10.0]  # base + up-to-base jitter
+
+
+def test_sleep_between_downloads_skipped_on_shutdown(monkeypatch):
+    slept = []
+    monkeypatch.setattr(worker.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(worker, "_shutdown", True)
+    worker._sleep_between_downloads(SimpleNamespace(download_delay_seconds=5.0))
+    assert slept == []  # stays responsive to SIGTERM
+
+
 # --- terminal probe errors skip immediately instead of retrying ----------
 
 def test_terminal_skip_reason_classifies_permanent_errors():

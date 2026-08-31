@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     # Politeness knobs passed through to yt-dlp.
     ytdlp_sleep_interval: int = Field(5)
     ytdlp_max_retries: int = Field(3)
+    # Pause between consecutive downloads so a large queue (e.g. a bulk retry of
+    # failed items) doesn't fire back-to-back metadata probes at YouTube. The
+    # worker sleeps this many seconds plus up to the same again as jitter after
+    # each processed download — negligible next to a real download's runtime, but
+    # it smooths the burst when many items fail/skip quickly. 0 disables it.
+    download_delay_seconds: float = Field(5.0)
     # How often to resolve Jellyfin item ids and reconcile playlists. HTTP-only,
     # runs in the web process. A no-op for users without a Jellyfin account.
     jellyfin_sync_interval_minutes: int = Field(30)

@@ -33,6 +33,8 @@ def settings_page(
     request: Request,
     jellyfin_test: str | None = None,
     jellyfin_sync: str | None = None,
+    dl: str | None = None,
+    dl_n: int | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -55,7 +57,16 @@ def settings_page(
         select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
     ).scalar_one_or_none()
 
+    from ..services.downloads import problem_downloads, status_counts
     from ..services.stats import shell_stats
+
+    problems = problem_downloads(db, user.id)
+    recoverable = sum(
+        1
+        for p in problems
+        if p["status"] == "failed"
+        or (p["status"] == "skipped" and p["skip_reason"] == "unavailable")
+    )
 
     settings = get_settings()
     # The subtree an admin points this user's Jellyfin library at. The relative
@@ -85,6 +96,11 @@ def settings_page(
             "max_duration_minutes": user.max_duration_seconds // 60,
             "active_nav": "settings",
             "stats": shell_stats(user, db),
+            "download_counts": status_counts(db, user.id),
+            "problem_downloads": problems,
+            "recoverable_downloads": recoverable,
+            "dl": dl,
+            "dl_n": dl_n,
         },
     )
 
@@ -238,6 +254,36 @@ def sync_jellyfin_now(
         db.rollback()
         return RedirectResponse("/settings?jellyfin_sync=fail", status_code=303)
     return RedirectResponse("/settings?jellyfin_sync=ok", status_code=303)
+
+
+@router.post("/settings/downloads/{video_id}/retry")
+def retry_download(
+    video_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Requeue a single failed/skipped download for this user."""
+    from ..services.downloads import retry_one
+
+    ok = retry_one(db, user.id, video_id)
+    return RedirectResponse(
+        f"/settings?dl={'retried' if ok else 'notfound'}&dl_n={1 if ok else 0}",
+        status_code=303,
+    )
+
+
+@router.post("/settings/downloads/retry-all")
+def retry_all_downloads(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Requeue every recoverable (failed / unavailable) download for this user."""
+    from ..services.downloads import retry_all_recoverable
+
+    n = retry_all_recoverable(db, user.id)
+    return RedirectResponse(
+        f"/settings?dl={'retried' if n else 'none'}&dl_n={n}", status_code=303
+    )
 
 
 @router.post("/settings/opml-token/rotate")

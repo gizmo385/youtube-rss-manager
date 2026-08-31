@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import signal
 import time
 from datetime import datetime, timedelta, timezone
@@ -648,6 +649,19 @@ def sync_library_art(db: Session, media_root: str) -> int:
     return created
 
 
+def _sleep_between_downloads(settings) -> None:
+    """Space out consecutive downloads so a big queue doesn't look like a burst.
+
+    Jittered like the poller's per-channel delay: sleep the base delay plus up
+    to the same again. A no-op when the delay is 0 (tests, or explicit opt-out)
+    or when a shutdown has been signalled, so SIGTERM stays responsive.
+    """
+    delay = settings.download_delay_seconds
+    if delay <= 0 or _shutdown:
+        return
+    time.sleep(delay + random.uniform(0, delay))
+
+
 def run_forever() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -684,6 +698,7 @@ def run_forever() -> None:
             continue
 
         db = session_factory()
+        processed = False
         try:
             reap_stale(db)
             row = claim_one(db)
@@ -709,12 +724,19 @@ def run_forever() -> None:
             # Link the freshly downloaded file into its subscribers' libraries
             # immediately, rather than waiting for the next idle pass.
             reconcile_links(db, media_root)
+            processed = True
         except Exception:
             logger.exception("Worker iteration failed")
             db.rollback()
             time.sleep(_IDLE_SLEEP)
         finally:
             db.close()
+
+        # Space out real downloads (session closed first, so we don't hold it
+        # open while sleeping). Only after an actual attempt — the idle path
+        # already sleeps, and errors back off on their own.
+        if processed:
+            _sleep_between_downloads(settings)
 
     logger.info("Downloader worker stopped")
 

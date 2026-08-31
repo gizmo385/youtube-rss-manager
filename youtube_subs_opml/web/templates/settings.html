@@ -86,6 +86,89 @@
     </section>
   </form>
 
+  <section class="card span-all">
+    <div class="card-head">
+      <h2 class="card-title">Downloader</h2>
+      {% if recoverable_downloads %}
+      <form method="post" action="/settings/downloads/retry-all">
+        <button type="submit" class="btn btn-sm">Retry all recoverable ({{ recoverable_downloads }})</button>
+      </form>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if dl == 'retried' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Requeued {{ dl_n }} download{{ '' if dl_n == 1 else 's' }} — the worker will pick {{ 'it' if dl_n == 1 else 'them' }} up shortly.</p>
+      {% elif dl == 'none' %}
+      <p class="status-inline" role="status" style="margin:0 0 10px"><span class="dot"></span>Nothing recoverable to retry.</p>
+      {% elif dl == 'notfound' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>That download couldn't be requeued.</p>
+      {% endif %}
+
+      <div class="statbar">
+        <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('complete', 0) }}</span><span class="statbar-lab">Archived</span></div>
+        <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('pending', 0) }}</span><span class="statbar-lab">Pending</span></div>
+        <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('downloading', 0) }}</span><span class="statbar-lab">Downloading</span></div>
+        <div class="statbar-item"><span class="statbar-num{{ ' accent' if download_counts.get('failed', 0) }}">{{ download_counts.get('failed', 0) }}</span><span class="statbar-lab">Failed</span></div>
+        <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('skipped', 0) }}</span><span class="statbar-lab">Skipped</span></div>
+      </div>
+
+      {% if problem_downloads %}
+      <p class="help-text" style="margin:0 0 10px">
+        Videos that failed or were skipped for a notable reason — <code class="mono">last error</code> is the raw
+        message from the downloader. Retrying resets the attempt count and requeues it.
+      </p>
+      <div class="dtable-wrap">
+        <table class="dtable">
+          <thead>
+            <tr>
+              <th>Video</th>
+              <th>Status</th>
+              <th class="col-num">Attempts</th>
+              <th>Last error</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in problem_downloads %}
+            <tr>
+              <td>
+                <div class="dtable-title">{{ p.title }}</div>
+                <div class="dtable-sub">{{ p.channel_title }}</div>
+              </td>
+              <td>
+                {% if p.status == 'failed' %}
+                <span class="dl-pill fail">Failed</span>
+                {% else %}
+                <span class="dl-pill">Skipped{% if p.skip_reason %}: {{ p.skip_reason }}{% endif %}</span>
+                {% endif %}
+              </td>
+              <td class="col-num">{{ p.attempts }}</td>
+              <td class="dtable-err">
+                {% if p.last_error %}
+                <span title="{{ p.last_error }}">{{ p.last_error | truncate(140) }}</span>
+                {% else %}
+                <span class="none">—</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="dtable-acts">
+                  <a class="btn btn-sm btn-ghost" href="https://www.youtube.com/watch?v={{ p.video_id }}" target="_blank" rel="noopener">Open</a>
+                  <form method="post" action="/settings/downloads/{{ p.video_id }}/retry">
+                    <button type="submit" class="btn btn-sm">Retry</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="empty" style="margin-top:12px">No failed or skipped downloads.</p>
+      {% endif %}
+    </div>
+  </section>
+
   <section class="card">
     <div class="card-head">
       <h2 class="card-title">Jellyfin</h2>
