@@ -593,15 +593,31 @@ label { display: block; }
 }
 .pref-name { flex: 1; min-width: 140px; }
 .pref-name .pref-label { font-size: 13px; font-weight: 600; }
-.pref-name .pref-eff { font-size: 11px; color: var(--muted-2); }
+
+/* Numeric prefs: match the segmented controls' look and drop the native
+   spinners, which overlapped the placeholder and read as unstyled. */
+.pref-num-wrap { display: flex; align-items: center; gap: 8px; }
 .pref-num {
-  width: 74px;
-  padding: 4px 6px;
+  width: 84px;
+  padding: 4px 8px;
   font-size: 13px;
+  font-family: inherit;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  appearance: textfield;
+  -moz-appearance: textfield;
 }
-.pref-unit { font-size: 11px; color: var(--muted-2); width: 34px; }
+.pref-num::-webkit-outer-spin-button,
+.pref-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.pref-num:focus { outline: none; border-color: var(--accent); }
+.pref-num::placeholder { color: var(--muted-2); font-style: italic; }
+.pref-unit { font-size: 11px; color: var(--muted-2); min-width: 24px; }
+
+/* Inherited-value hint shown on the active "Inherit" segment. */
+.seg-hint { margin-left: 5px; font-weight: 700; opacity: 0.72; }
 
 .chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
 .topic-row { display: flex; gap: 5px; flex-wrap: wrap; }

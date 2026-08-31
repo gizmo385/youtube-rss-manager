@@ -217,44 +217,70 @@ def _first_channel_id(list_ctx: dict) -> str | None:
 # --- detail context ---------------------------------------------------------
 
 
-def _pref_choice(sub, cats, user, key, label, opts, *, minutes=False):
-    """A segmented pref row: own value + effective-value subtext."""
-    value, source = _effective(sub, cats, user, key)
+def _inherited_value(cats, user, key):
+    """The value this pref would resolve to if the channel doesn't override it.
+
+    Walks category then account, ignoring the subscription's own value — i.e.
+    what "Inherit" means here. Shown on the control as a hint so the effective
+    value doesn't need a separate line of subtext.
+    """
+    for cat in cats:
+        v = getattr(cat, key)
+        if v is not None:
+            return v
+    return getattr(user, key)
+
+
+def _pref_choice(sub, cats, user, key, label, opts):
+    """A segmented pref row. When inheriting, the Inherit option is annotated
+    with the value it resolves to (e.g. "Inherit (Exclude)"), replacing subtext.
+
+    The hint reuses the label of whichever option matches the inherited value,
+    so it always speaks the control's own vocabulary (Include/Exclude, On/Off,
+    a link-target name) rather than a generic On/Off.
+    """
     own = getattr(sub, key)
 
-    def fmt(v):
-        if v is True:
-            return "On"
-        if v is False:
-            return "Off"
-        if v is None:
-            return "—"
-        if minutes and isinstance(v, int):
-            return str(v // 60)
-        return str(v)
+    hint = None
+    if own is None:
+        inherited = _inherited_value(cats, user, key)
+        hint = next(
+            (opt_label for opt_label, _val, raw in opts
+             if raw is not None and raw == inherited),
+            None,
+        )
 
     return {
         "label": label,
-        "effective": f"Now {fmt(value)} · from {source}",
-        "options": [{"label": l, "value": val, "on": own == raw}
-                    for l, val, raw in opts],
+        "options": [
+            {
+                "label": opt_label,
+                "value": val,
+                "on": own == raw,
+                "hint": hint if raw is None else None,
+            }
+            for opt_label, val, raw in opts
+        ],
     }
 
 
-def _pref_number(sub, cats, user, key, label, unit, hint, *, minutes=False):
-    value, source = _effective(sub, cats, user, key)
+def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False):
+    """A numeric pref row. Blank means inherit; the placeholder shows the
+    inherited value so the effective number is visible without extra subtext."""
     own = getattr(sub, key)
+    inherited = _inherited_value(cats, user, key)
     if minutes:
         own_display = "" if own is None else str(own // 60)
-        eff_display = value // 60 if value is not None else 0
+        placeholder = "0" if inherited is None else str(inherited // 60)
     else:
         own_display = "" if own is None else str(own)
-        eff_display = value if value is not None else 0
+        placeholder = "0" if inherited is None else str(inherited)
     return {
         "label": label,
-        "effective": f"{hint} · effective {eff_display} from {source}",
         "unit": unit,
         "value": own_display,
+        "placeholder": placeholder,
+        "note": note,  # tooltip on the input, e.g. "Blank inherits, 0 = no limit"
     }
 
 
