@@ -38,7 +38,8 @@ from ..web.db import get_session_factory
 from ..web.models import Channel, Download, DownloadLink, Video, VideoShort
 from ..web.services.archive import (
     channel_intents,
-    prune_candidates,
+    retained_podcast_ids,
+    retained_video_ids,
     user_retained_video_ids,
 )
 from ..web.services.prefs import is_within_duration_limit
@@ -195,7 +196,7 @@ def process(row: Download, db: Session) -> None:
     video.description = meta.description
 
     intent = channel_intents(db).get(video.channel_id)
-    if intent is None or not intent.download:
+    if intent is None or not (intent.download or intent.generate_podcast):
         row.status = "skipped"
         row.skip_reason = "no_subscribers"
         db.commit()
@@ -226,7 +227,9 @@ def process(row: Download, db: Session) -> None:
         db.commit()
         return
 
-    # --- Download ----------------------------------------------------------
+    # --- Fetch: the video if archived, the audio if a podcast is wanted -----
+    # A channel wanted only as a podcast (archive off, podcasts on) fetches just
+    # the audio: no .mkv, no Jellyfin sidecars, never linked into a library.
     episode_number = naming.date_episode_number(video.published_at)
     basename = naming.episode_basename(
         channel_title, video.published_at, episode_number, video.title or meta.title
@@ -236,56 +239,72 @@ def process(row: Download, db: Session) -> None:
     )
     target = target_dir / basename
 
-    try:
-        produced = ytdlp.download(
-            row.video_id,
-            target,
-            video_format=settings.ytdlp_format,
-            sleep_interval=settings.ytdlp_sleep_interval,
-            max_retries=settings.ytdlp_max_retries,
+    if intent.download:
+        try:
+            produced = ytdlp.download(
+                row.video_id,
+                target,
+                video_format=settings.ytdlp_format,
+                sleep_interval=settings.ytdlp_sleep_interval,
+                max_retries=settings.ytdlp_max_retries,
+            )
+        except ytdlp.DownloadError as exc:
+            logger.warning("Download failed for %s: %s", row.video_id, exc)
+            row.last_error = str(exc)
+            if row.attempts >= _MAX_ATTEMPTS:
+                row.status = "failed"
+            else:
+                row.status = "pending"
+                row.next_attempt_at = _backoff(row.attempts)
+            db.commit()
+            return
+
+        nfo = naming.build_nfo(
+            title=video.title or meta.title,
+            channel_title=channel_title,
+            published_at=video.published_at,
+            episode_number=episode_number,
+            description=meta.description,
+            video_id=row.video_id,
         )
-    except ytdlp.DownloadError as exc:
-        logger.warning("Download failed for %s: %s", row.video_id, exc)
-        row.last_error = str(exc)
-        if row.attempts >= _MAX_ATTEMPTS:
-            row.status = "failed"
-        else:
-            row.status = "pending"
-            row.next_attempt_at = _backoff(row.attempts)
-        db.commit()
-        return
+        (target_dir / f"{basename}.nfo").write_bytes(nfo)
+        row.file_path = str(produced)
+        row.file_size_bytes = produced.stat().st_size
 
-    nfo = naming.build_nfo(
-        title=video.title or meta.title,
-        channel_title=channel_title,
-        published_at=video.published_at,
-        episode_number=episode_number,
-        description=meta.description,
-        video_id=row.video_id,
-    )
-    (target_dir / f"{basename}.nfo").write_bytes(nfo)
-
-    # --- Optional audio extraction for podcast feeds ------------------------
     if intent.generate_podcast:
         try:
             audio = ytdlp.extract_audio(
                 row.video_id,
-                target_dir / f"{basename}",
+                target,
                 sleep_interval=settings.ytdlp_sleep_interval,
             )
             row.audio_path = str(audio)
             row.audio_size_bytes = audio.stat().st_size
         except ytdlp.DownloadError as exc:
-            # Non-fatal: the video succeeded, the podcast item just won't appear.
-            logger.warning("Audio extraction failed for %s: %s", row.video_id, exc)
+            if intent.download:
+                # The video already succeeded; the podcast item just won't
+                # appear until a later backfill_audio pass retries the audio.
+                logger.warning("Audio extraction failed for %s: %s", row.video_id, exc)
+            else:
+                # Audio-only: nothing was produced, so retry with back-off
+                # rather than marking the row complete with no media at all.
+                logger.warning("Audio-only fetch failed for %s: %s", row.video_id, exc)
+                row.last_error = str(exc)
+                if row.attempts >= _MAX_ATTEMPTS:
+                    row.status = "failed"
+                else:
+                    row.status = "pending"
+                    row.next_attempt_at = _backoff(row.attempts)
+                db.commit()
+                return
 
-    row.file_path = str(produced)
-    row.file_size_bytes = produced.stat().st_size
     row.status = "complete"
     row.completed_at = datetime.now(timezone.utc)
     row.last_error = None
     db.commit()
-    logger.info("Downloaded %s -> %s", row.video_id, produced)
+    kind = ("video+audio" if intent.download and intent.generate_podcast
+            else "video" if intent.download else "audio")
+    logger.info("Fetched %s (%s)", row.video_id, kind)
 
 
 def _unlink_all(mkv_path: Path) -> None:
@@ -495,27 +514,88 @@ def renumber_episodes(db: Session, media_root: str) -> int:
     return renamed
 
 
-def run_prune(db: Session) -> int:
-    """Delete canonical files no user retains, freeing the last hardlink.
+def _unlink_video_files(mkv_path: Path) -> None:
+    """Remove an episode's video artifacts (.mkv, .nfo, thumbnail) but leave any
+    extracted ``.m4a`` in place, then tidy now-empty dirs.
 
-    Per-user hardlinks for these videos are already gone (reconcile removes a
-    link the moment no user wants it), so unlinking the canonical file drops the
-    inode's last reference and frees the disk. The ``Download`` row is deleted;
-    ``download_links`` cascades. Jellyfin playlist/library removal is Phase 3.
-
-    Returns the number of pruned downloads.
+    Used when a channel goes audio-only: the podcast audio stays, the video and
+    its Jellyfin sidecars go. The surviving ``.m4a`` keeps the season dir alive
+    (``rmdir_if_stripped`` sees a non-artwork file), so the climb stops there.
     """
-    candidates = prune_candidates(db)
-    pruned = 0
-    for download in candidates:
-        if download.file_path:
-            _unlink_all(Path(download.file_path))
-        db.delete(download)
-        pruned += 1
-    if pruned:
+    for p in naming.episode_files(mkv_path):
+        if p.suffix == ".m4a":
+            continue
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+    season_dir = mkv_path.parent
+    channel_dir = season_dir.parent
+    for d in (season_dir, channel_dir):
+        if not naming.rmdir_if_stripped(d):
+            break
+
+
+def run_prune(db: Session) -> int:
+    """Reconcile on-disk media against what any user still retains.
+
+    Video files and podcast audio are retained independently: a video's ``.mkv``
+    (and its Jellyfin sidecars) survives while any user wants the channel
+    archived; its ``.m4a`` survives while any user wants it as a podcast. So a
+    channel switched from archive to audio-only loses its video here but keeps
+    the audio, and the ``Download`` row is deleted only once neither is wanted.
+
+    Per-user hardlinks are already gone by the time a video is dropped (reconcile
+    removes a link the moment no user's library wants it), so unlinking the
+    canonical file drops the inode's last reference and frees the disk;
+    ``download_links`` cascades on row deletion.
+
+    Returns the number of ``Download`` rows deleted (fully pruned).
+    """
+    video_keep = retained_video_ids(db)
+    audio_keep = retained_podcast_ids(db)
+    completed = db.execute(
+        select(Download).where(Download.status == "complete")
+    ).scalars().all()
+
+    deleted = 0
+    modified = 0
+    for download in completed:
+        wants_video = download.video_id in video_keep
+        wants_audio = download.video_id in audio_keep
+
+        if not wants_video and not wants_audio:
+            # Nothing wanted: sweep every artifact (episode_files catches the
+            # .mkv, its sidecars and the .m4a together) and delete the row.
+            anchor = download.file_path or download.audio_path
+            if anchor:
+                _unlink_all(Path(anchor))
+            db.delete(download)
+            deleted += 1
+            continue
+
+        if not wants_video and download.file_path:
+            # Audio-only now: drop the video + Jellyfin sidecars, keep the audio.
+            _unlink_video_files(Path(download.file_path))
+            download.file_path = None
+            download.file_size_bytes = None
+            modified += 1
+
+        if not wants_audio and download.audio_path:
+            # Video-only now: drop the extracted audio, keep the video.
+            try:
+                Path(download.audio_path).unlink()
+            except FileNotFoundError:
+                pass
+            download.audio_path = None
+            download.audio_size_bytes = None
+            modified += 1
+
+    if deleted or modified:
         db.commit()
-        logger.info("Pruned %d downloads", pruned)
-    return pruned
+    if deleted:
+        logger.info("Pruned %d downloads", deleted)
+    return deleted
 
 
 def backfill_audio(db: Session, settings) -> int:

@@ -32,7 +32,10 @@ from youtube_subs_opml.web.models import (
 )
 from youtube_subs_opml.web.services.archive import (
     channel_intents,
+    enqueue_pending,
+    retained_podcast_ids,
     retained_video_ids,
+    user_retained_podcast_ids,
     user_retained_video_ids,
 )
 
@@ -580,8 +583,13 @@ def test_episode_files_matches_sidecars_not_prefix_siblings(tmp_path):
 # --- podcast audio backfill ----------------------------------------------
 
 def _fake_extract_audio(video_id, output_path, *, sleep_interval=5, timeout=3600):
-    """Stand-in for ytdlp.extract_audio: writes a .m4a next to output_path."""
+    """Stand-in for ytdlp.extract_audio: writes a .m4a next to output_path.
+
+    Creates the parent dir first, mirroring the real extractor — an audio-only
+    fetch has no prior video download to create the season folder.
+    """
     p = Path(str(output_path)).with_suffix(".m4a")
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(b"audio-bytes-1234")
     return p
 
@@ -636,3 +644,101 @@ def test_backfill_audio_failure_is_nonfatal(db, tmp_path, monkeypatch):
 
     assert backfill_audio(db, SimpleNamespace(ytdlp_sleep_interval=0)) == 0
     assert db.get(Download, ids[0]).audio_path is None  # left for a later pass
+
+
+# --- audio-only: podcast without keeping the video -----------------------
+
+def test_podcast_only_retains_audio_not_video(db):
+    # Archive off, podcasts on: the videos are wanted as audio only.
+    add_user(db, 1, download_enabled=False, generate_podcast=True, keep_last_n=0)
+    add_sub(db, 1)
+    ids = add_videos(db, 2)
+
+    assert user_retained_video_ids(db) == {}       # nothing kept as video
+    assert retained_video_ids(db) == set()
+    assert user_retained_podcast_ids(db) == {1: set(ids)}
+    assert retained_podcast_ids(db) == set(ids)
+
+
+def test_enqueue_includes_podcast_only_videos(db):
+    add_user(db, 1, download_enabled=False, generate_podcast=True, keep_last_n=0)
+    add_sub(db, 1)
+    ids = add_videos(db, 2)
+
+    assert enqueue_pending(db) == 2  # audio-only channel still enqueues
+    assert {d.video_id for d in db.query(Download).all()} == set(ids)
+
+
+def test_worker_audio_only_fetches_audio_and_skips_video(db, tmp_path, monkeypatch):
+    add_user(db, 1, download_enabled=False, generate_podcast=True)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    row = Download(video_id=ids[0], status="downloading")
+    db.add(row)
+    db.commit()
+
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace(
+        media_root=str(tmp_path), ytdlp_format="best",
+        ytdlp_sleep_interval=0, ytdlp_max_retries=1,
+    ))
+    monkeypatch.setattr(worker.ytdlp, "probe",
+                        lambda vid: SimpleNamespace(duration_seconds=120, title="T",
+                                                    description="D"))
+    monkeypatch.setattr(worker, "classify_videos", lambda video_ids, db: {})
+
+    def _no_download(*a, **k):
+        raise AssertionError("audio-only must not download the full video")
+    monkeypatch.setattr(worker.ytdlp, "download", _no_download)
+    monkeypatch.setattr(worker.ytdlp, "extract_audio", _fake_extract_audio)
+
+    worker.process(row, db)
+
+    assert row.status == "complete"
+    assert row.file_path is None                  # no video file
+    assert row.audio_path and row.audio_path.endswith(".m4a")
+    # No Jellyfin NFO for an audio-only fetch.
+    canon = naming.canonical_episode_dir(
+        str(tmp_path), CHAN_TITLE, db.get(Video, ids[0]).published_at
+    )
+    assert not list(canon.glob("*.nfo"))
+
+
+def _seed_download_with_audio(db, media, vid, epnum):
+    """A completed download that has both a video file and extracted audio."""
+    mkv = complete_download(db, media, vid, epnum)
+    audio = mkv.with_suffix(".m4a")
+    audio.write_bytes(b"audio-bytes")
+    d = db.get(Download, vid)
+    d.audio_path = str(audio)
+    d.audio_size_bytes = audio.stat().st_size
+    db.commit()
+    return mkv, audio
+
+
+def test_prune_drops_video_keeps_audio_when_podcast_only(db, tmp_path):
+    media = str(tmp_path)
+    add_user(db, 1, download_enabled=False, generate_podcast=True, keep_last_n=0)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    mkv, audio = _seed_download_with_audio(db, media, ids[0], 1)
+
+    assert run_prune(db) == 0                 # row survives — audio still wanted
+    assert not mkv.exists()                   # video pruned
+    assert not mkv.with_suffix(".nfo").exists()
+    assert audio.exists()                     # audio kept
+    d = db.get(Download, ids[0])
+    assert d.file_path is None and d.audio_path == str(audio)
+
+
+def test_prune_drops_audio_keeps_video_when_not_podcast(db, tmp_path):
+    media = str(tmp_path)
+    add_user(db, 1, download_enabled=True, generate_podcast=False, keep_last_n=0)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    mkv, audio = _seed_download_with_audio(db, media, ids[0], 1)
+
+    assert run_prune(db) == 0                 # row survives — video still wanted
+    assert mkv.exists()                       # video kept
+    assert not audio.exists()                 # audio pruned
+    d = db.get(Download, ids[0])
+    assert d.audio_path is None and d.file_path == str(mkv)

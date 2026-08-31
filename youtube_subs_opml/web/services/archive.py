@@ -164,19 +164,20 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
     return intents
 
 
-def user_retained_video_ids(db: Session) -> dict[int, set[str]]:
-    """Per user, the videos that should be visible in *their* library.
+def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
+    """Shared core of the per-user video/podcast retention sets.
 
-    This is the per-user layer that decides hardlink placement, distinct from
-    the global union (below) that decides whether a file exists on disk at all.
-    A user's library shows their own subscriptions at their own retention.
+    ``podcast=False`` gates on ``download_enabled`` — the videos whose file is
+    kept on disk and shown in the user's Jellyfin library. ``podcast=True`` gates
+    on ``generate_podcast`` — the videos whose extracted audio is kept for the
+    user's podcast feed. Both apply the same ``keep_last_n`` window and Shorts
+    filtering; the only difference is which preference decides the user wants
+    this channel at all. One function so the window and Shorts handling can't
+    drift apart between the two media kinds.
 
-    For each non-ignored subscription, ``download_enabled`` and ``keep_last_n``
-    are resolved via the cascade (subscription > most-permissive category >
-    user). Where download resolves True, the user retains that channel's
-    ``keep_last_n`` most recent videos by publish date (0 = all). A user who
-    does not want a channel contributes nothing — unlike the global merge, their
-    ``keep_last_n`` never inflates anyone else's retention.
+    All three preferences resolve via the cascade (subscription >
+    most-permissive category > user). A user who wants neither contributes
+    nothing — their ``keep_last_n`` never inflates anyone else's retention.
     """
     subs = db.execute(
         select(Subscription).where(Subscription.ignored == False)  # noqa: E712
@@ -189,11 +190,14 @@ def user_retained_video_ids(db: Session) -> dict[int, set[str]]:
         if user is None:
             continue
 
-        cat_download, cat_keep, _cat_max, _cat_podcast, cat_shorts = _category_prefs(
+        cat_download, cat_keep, _cat_max, cat_podcast, cat_shorts = _category_prefs(
             db, sub.user_id, sub.channel_id
         )
-        download = resolve(sub.download_enabled, cat_download, user.download_enabled)
-        if not download:
+        if podcast:
+            wanted = resolve(sub.generate_podcast, cat_podcast, user.generate_podcast)
+        else:
+            wanted = resolve(sub.download_enabled, cat_download, user.download_enabled)
+        if not wanted:
             continue
         keep = resolve(sub.keep_last_n, cat_keep, user.keep_last_n)
         include_shorts = resolve(sub.include_shorts, cat_shorts, user.include_shorts)
@@ -221,6 +225,29 @@ def user_retained_video_ids(db: Session) -> dict[int, set[str]]:
     return retained
 
 
+def user_retained_video_ids(db: Session) -> dict[int, set[str]]:
+    """Per user, the videos that should be visible in *their* Jellyfin library.
+
+    This is the per-user layer that decides hardlink placement, distinct from
+    the global union (below) that decides whether a file exists on disk at all.
+    Gated on ``download_enabled``: a channel a user wants only as a podcast
+    contributes nothing here, so its video is never linked into their library.
+    """
+    return _retained_ids(db, podcast=False)
+
+
+def user_retained_podcast_ids(db: Session) -> dict[int, set[str]]:
+    """Per user, the videos whose audio their podcast feed should keep.
+
+    The audio analogue of ``user_retained_video_ids``, gated on
+    ``generate_podcast`` instead of ``download_enabled``. This is what lets a
+    channel be wanted as a podcast without keeping the full video: the id lands
+    here (so the audio is fetched and retained) but not in the video set (so no
+    ``.mkv`` is kept and it never enters Jellyfin).
+    """
+    return _retained_ids(db, podcast=True)
+
+
 def retained_video_ids(db: Session) -> set[str]:
     """Every video id that should exist on disk right now.
 
@@ -236,15 +263,30 @@ def retained_video_ids(db: Session) -> set[str]:
     return keep
 
 
+def retained_podcast_ids(db: Session) -> set[str]:
+    """Every video id whose *audio* should exist on disk right now (union).
+
+    The podcast analogue of ``retained_video_ids``: the audio survives as long
+    as any user wants that channel as a podcast, independent of whether anyone
+    keeps the video.
+    """
+    keep: set[str] = set()
+    for ids in user_retained_podcast_ids(db).values():
+        keep.update(ids)
+    return keep
+
+
 def enqueue_pending(db: Session) -> int:
     """Create ``pending`` Download rows for wanted videos that lack one.
 
-    Duration is not consulted here — the poller doesn't know it. The worker
-    probes metadata first and marks the row ``skipped``/``too_long`` if it
-    exceeds the cap, which avoids fetching a byte of media for a six-hour
-    stream.
+    "Wanted" is the union of the video and podcast retention sets, so a channel
+    wanted only as a podcast still gets enqueued — the worker fetches its audio
+    without the video. Duration is not consulted here — the poller doesn't know
+    it. The worker probes metadata first and marks the row ``skipped``/
+    ``too_long`` if it exceeds the cap, which avoids fetching a byte of media
+    for a six-hour stream.
     """
-    wanted = retained_video_ids(db)
+    wanted = retained_video_ids(db) | retained_podcast_ids(db)
     if not wanted:
         return 0
 
@@ -263,15 +305,3 @@ def enqueue_pending(db: Session) -> int:
     return created
 
 
-def prune_candidates(db: Session) -> list[Download]:
-    """Completed downloads that no user retains any more.
-
-    Returns rows rather than deleting, so the caller owns both the filesystem
-    unlink and the Jellyfin playlist removal, and can log what it removed.
-    """
-    keep = retained_video_ids(db)
-
-    completed = db.execute(
-        select(Download).where(Download.status == "complete")
-    ).scalars().all()
-    return [d for d in completed if d.video_id not in keep]
