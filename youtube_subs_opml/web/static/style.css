@@ -1089,3 +1089,60 @@ label { display: block; }
   .settings-grid { grid-template-columns: 1fr; }
   .cat-channel-list, .picker-list { columns: 1; }
 }
+
+/* =====================================================================
+   Quick switcher (Cmd/Ctrl-K palette)
+   ===================================================================== */
+
+.qs-trigger {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+  font: inherit; font-size: 12px; padding: 5px 10px; cursor: pointer;
+  margin-left: 4px;
+}
+.qs-trigger:hover { color: var(--ink); border-color: var(--faint); }
+.qs-kbd, .qs-foot kbd {
+  font-family: inherit; font-size: 10px; font-weight: 600; color: var(--muted-2);
+  background: var(--bg); border: 1px solid var(--line); padding: 1px 5px;
+}
+
+.qs-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 12vh 16px 16px;
+}
+.qs-overlay[hidden] { display: none; }
+.qs-modal {
+  width: min(560px, 100%); max-height: 70vh;
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.qs-input {
+  border: 0; border-bottom: 1px solid var(--line); background: transparent;
+  color: var(--ink); font: inherit; font-size: 16px; padding: 15px 16px; outline: none;
+}
+.qs-input::placeholder { color: var(--muted-2); }
+.qs-results { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.qs-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 12px; cursor: pointer; font-size: 14px; color: var(--ink);
+}
+.qs-item.active { background: var(--accent-tint); }
+.qs-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-item-kind {
+  flex-shrink: 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted-2);
+}
+.qs-item.active .qs-item-kind { color: var(--accent-2); }
+.qs-empty { padding: 18px; text-align: center; color: var(--muted-2); font-style: italic; }
+.qs-foot {
+  border-top: 1px solid var(--line); padding: 8px 14px;
+  display: flex; gap: 14px; font-size: 11px; color: var(--muted-2);
+}
+.qs-foot kbd { margin-right: 2px; }
+
+@media (max-width: 720px) {
+  .qs-trigger .qs-kbd { display: none; }
+}

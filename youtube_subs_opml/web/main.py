@@ -19,6 +19,7 @@ from .routes.channels import router as channels_router
 from .routes.feed import router as feed_router
 from .routes.opml import router as opml_router
 from .routes.podcast import router as podcast_router
+from .routes.quickswitch import router as quickswitch_router
 from .routes.settings import router as settings_router
 from .services.scheduler import start_scheduler, stop_scheduler
 
@@ -54,6 +55,7 @@ app.include_router(channels_router)
 app.include_router(feed_router)
 app.include_router(opml_router)
 app.include_router(podcast_router)
+app.include_router(quickswitch_router)
 app.include_router(settings_router)
 
 

@@ -23,6 +23,9 @@
       <a href="/categories" class="nav-link{% if active_nav == 'categories' %} active{% endif %}">Categories</a>
       <a href="/channels/board" class="nav-link{% if active_nav == 'board' %} active{% endif %}">Board</a>
       <a href="/settings" class="nav-link{% if active_nav == 'settings' %} active{% endif %}">Settings</a>
+      <button type="button" class="qs-trigger" onclick="qsOpen()" aria-label="Open quick switcher">
+        <span>Jump to…</span><kbd class="qs-kbd">⌘K</kbd>
+      </button>
       <span class="nav-divider"></span>
       <span class="nav-user">{{ user.display_name or user.email }}</span>
       <a href="/auth/logout" class="nav-logout">Log out</a>
@@ -44,6 +47,151 @@
     {% endif %}
   </div>
   {% endif %}
+
+  <div id="qs-overlay" class="qs-overlay" hidden>
+    <div class="qs-modal" role="dialog" aria-modal="true" aria-label="Quick switcher">
+      <input id="qs-input" class="qs-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Jump to a channel or page…" aria-label="Jump to a channel or page">
+      <ul id="qs-results" class="qs-results" role="listbox"></ul>
+      <div class="qs-foot">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> open</span>
+        <span><kbd>esc</kbd> close</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    var overlay = document.getElementById('qs-overlay');
+    var input = document.getElementById('qs-input');
+    var list = document.getElementById('qs-results');
+    if (!overlay) return;
+
+    var isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+    var kbd = document.querySelector('.qs-kbd');
+    if (kbd && !isMac) kbd.textContent = 'Ctrl K';
+
+    var PAGES = [
+      {label: 'Channels', kind: 'Page', url: '/channels'},
+      {label: 'Categories', kind: 'Page', url: '/categories'},
+      {label: 'Board', kind: 'Page', url: '/channels/board'},
+      {label: 'Settings', kind: 'Page', url: '/settings'},
+      {label: 'Downloads', kind: 'Page', url: '/settings?tab=downloads'},
+      {label: 'Failed downloads', kind: 'Page', url: '/channels?filter=Failed'}
+    ];
+
+    var channels = null;    // lazy-loaded channel entries
+    var items = [];         // current filtered results
+    var active = 0;
+
+    function loadChannels() {
+      if (channels !== null) return Promise.resolve();
+      return fetch('/quickswitch/channels.json', {headers: {Accept: 'application/json'}})
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (data) {
+          channels = data.map(function (c) {
+            return {label: c.title, kind: 'Channel',
+                    url: '/channels?selected=' + encodeURIComponent(c.id)};
+          });
+        })
+        .catch(function () { channels = []; });
+    }
+
+    function score(q, text) {
+      var i = text.toLowerCase().indexOf(q);
+      return i === 0 ? 0 : (i > 0 ? 1 : -1);
+    }
+
+    function render() {
+      var q = input.value.trim().toLowerCase();
+      var pool = PAGES.concat(channels || []);
+      if (!q) {
+        items = pool.slice(0, 50);
+      } else {
+        items = pool
+          .map(function (it) { return {it: it, s: score(q, it.label)}; })
+          .filter(function (x) { return x.s >= 0; })
+          .sort(function (a, b) { return a.s - b.s; })
+          .slice(0, 50)
+          .map(function (x) { return x.it; });
+      }
+      active = 0;
+      list.innerHTML = '';
+      if (!items.length) {
+        var empty = document.createElement('li');
+        empty.className = 'qs-empty';
+        empty.textContent = 'No matches';
+        list.appendChild(empty);
+        return;
+      }
+      items.forEach(function (it, idx) {
+        var li = document.createElement('li');
+        li.className = 'qs-item' + (idx === 0 ? ' active' : '');
+        li.setAttribute('role', 'option');
+        li.dataset.idx = idx;
+        var label = document.createElement('span');
+        label.className = 'qs-item-label';
+        label.textContent = it.label;           // textContent: safe from title HTML
+        var kind = document.createElement('span');
+        kind.className = 'qs-item-kind';
+        kind.textContent = it.kind;
+        li.appendChild(label);
+        li.appendChild(kind);
+        list.appendChild(li);
+      });
+    }
+
+    function move(delta) {
+      if (!items.length) return;
+      var rows = list.querySelectorAll('.qs-item');
+      rows[active].classList.remove('active');
+      active = (active + delta + items.length) % items.length;
+      rows[active].classList.add('active');
+      rows[active].scrollIntoView({block: 'nearest'});
+    }
+
+    function go() {
+      if (items[active]) window.location.href = items[active].url;
+    }
+
+    function open() {
+      loadChannels().then(function () {
+        overlay.hidden = false;
+        input.value = '';
+        render();
+        input.focus();
+      });
+    }
+    function close() { overlay.hidden = true; }
+
+    window.qsOpen = open;
+
+    document.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        overlay.hidden ? open() : close();
+      } else if (!overlay.hidden && e.key === 'Escape') {
+        close();
+      }
+    });
+
+    input.addEventListener('input', render);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+      else if (e.key === 'Enter') { e.preventDefault(); go(); }
+    });
+
+    list.addEventListener('click', function (e) {
+      var li = e.target.closest('.qs-item');
+      if (li) { active = parseInt(li.dataset.idx, 10); go(); }
+    });
+    overlay.addEventListener('mousedown', function (e) {
+      if (e.target === overlay) close();
+    });
+  })();
+  </script>
   {% endif %}
 
   {% block body %}
