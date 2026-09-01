@@ -1,99 +1,330 @@
 {% extends "base.html" %}
-
 {% block title %}Settings — YouTube Subs OPML{% endblock %}
 
+{% macro toggle(name, checked) -%}
+<span class="toggle"><input type="checkbox" name="{{ name }}" value="true"{% if checked %} checked{% endif %}><span class="track"></span></span>
+{%- endmacro %}
+
 {% block content %}
-<h1>Settings</h1>
-
-<section>
-  <h2>Defaults</h2>
-  <form method="post" action="/settings/defaults">
-    <label>
-      <input type="checkbox" name="include_shorts" value="true"
-             {% if user.include_shorts %}checked{% endif %}>
-      Include Shorts in RSS feeds
-    </label>
-    <label>
-      <input type="checkbox" name="include_live" value="true"
-             {% if user.include_live %}checked{% endif %}>
-      Include premieres &amp; livestreams in RSS feeds
-    </label>
-    <button type="submit" class="outline">Save</button>
-  </form>
-</section>
-
-<section>
-  <h2>YouTube Accounts</h2>
-  {% if accounts %}
-  <div class="overflow-auto">
-    <table class="striped">
-      <thead>
-        <tr>
-          <th>Channel</th>
-          <th>Last Synced</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for acct in accounts %}
-        <tr>
-          <td>{{ acct.channel_title or acct.channel_id }}</td>
-          <td>{{ acct.last_synced_at.strftime('%Y-%m-%d %H:%M') if acct.last_synced_at else 'Never' }}</td>
-          <td>
-            <form method="post" action="/sync/{{ acct.id }}" class="inline-form">
-              <button type="submit" class="outline">Sync now</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+<div class="page-head">
+  <div>
+    <div class="eyebrow">Account</div>
+    <div class="page-tabs" role="tablist">
+      <button type="button" class="page-tab{% if active_tab != 'downloads' %} active{% endif %}" data-tab="settings" role="tab">Settings</button>
+      <button type="button" class="page-tab{% if active_tab == 'downloads' %} active{% endif %}" data-tab="downloads" role="tab">
+        Downloads{% if download_counts.get('failed', 0) %} <span class="tab-badge">{{ download_counts.get('failed', 0) }}</span>{% endif %}
+      </button>
+    </div>
   </div>
-  {% else %}
-  <p><em>No YouTube accounts connected.</em></p>
-  {% endif %}
+</div>
 
-  <a href="/auth/youtube/connect" role="button" class="outline">Connect YouTube account</a>
-</section>
+<div id="panel-settings" class="tab-panel"{% if active_tab == 'downloads' %} hidden{% endif %}>
+<div class="settings-grid">
+  <form method="post" action="/settings/defaults" style="display:contents">
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Feed defaults</h2>
+        <span class="card-note">Channels &amp; categories can override</span>
+      </div>
+      <div class="card-body">
+        <div class="toggle-row">
+          <div>
+            <div class="tr-label">Include Shorts in RSS feeds</div>
+            <div class="tr-hint">Off keeps Shorts out of every feed by default</div>
+          </div>
+          {{ toggle('include_shorts', user.include_shorts) }}
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="tr-label">Include premieres &amp; livestreams</div>
+            <div class="tr-hint">Excluded by default to keep feeds clean</div>
+          </div>
+          {{ toggle('include_live', user.include_live) }}
+        </div>
+      </div>
+    </section>
 
-<section>
-  <h2>OPML Feed Token</h2>
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Video archive defaults</h2>
+        <span class="card-note accent">{{ stats.archived_human }} archived</span>
+      </div>
+      <div class="card-body">
+        <div class="toggle-row">
+          <div>
+            <div class="tr-label">Archive videos by default</div>
+            <div class="tr-hint">Enabling globally across a large subscription list will pull hundreds of GB</div>
+          </div>
+          {{ toggle('download_enabled', user.download_enabled) }}
+        </div>
+        <div class="toggle-row">
+          <div>
+            <div class="tr-label">Generate podcast feeds</div>
+            <div class="tr-hint">Extract audio for a podcast feed. With "Archive videos" off, keeps audio only — no video file, not shown in Jellyfin</div>
+          </div>
+          {{ toggle('generate_podcast', user.generate_podcast) }}
+        </div>
+        <div class="field-grid" style="margin-top:12px">
+          <label class="field">
+            <span class="field-label">Keep last N per channel</span>
+            <input type="number" name="keep_last_n" min="0" step="1" value="{{ user.keep_last_n }}">
+            <span class="field-hint">0 = keep everything</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Max duration (min)</span>
+            <input type="number" name="max_duration_minutes" min="0" step="1" value="{{ max_duration_minutes }}">
+            <span class="field-hint">0 = no limit</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Feed link target</span>
+            <select name="link_target">
+              {% for lt in link_targets %}
+              <option value="{{ lt }}"{% if user.link_target == lt %} selected{% endif %}>{{ lt }}</option>
+              {% endfor %}
+            </select>
+            <span class="field-hint">Where a feed entry links once archived</span>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Save defaults</button>
+        </div>
+      </div>
+    </section>
+  </form>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 class="card-title">Jellyfin</h2>
+      {% if jellyfin and jellyfin.last_verified_at %}
+      <span class="status-inline ok"><span class="dot"></span>Verified {{ jellyfin.last_verified_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% elif jellyfin %}
+      <span class="status-inline fail"><span class="dot"></span>Not yet verified</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if jellyfin_test == 'ok' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Connection succeeded.</p>
+      {% elif jellyfin_test == 'fail' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Connection failed — check the URL and API key.</p>
+      {% elif jellyfin_test == 'missing' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Save your Jellyfin connection first.</p>
+      {% endif %}
+
+      {% if jellyfin_sync == 'ok' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Playlist sync complete.</p>
+      {% elif jellyfin_sync == 'no_guid' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Set the Jellyfin user GUID below first — playlists can't be created without it.</p>
+      {% elif jellyfin_sync == 'missing' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Save your Jellyfin connection first.</p>
+      {% elif jellyfin_sync == 'fail' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Sync failed — check the connection and the app logs.</p>
+      {% endif %}
+
+      <form method="post" action="/settings/jellyfin">
+        <div class="field-grid">
+          <label class="field">
+            <span class="field-label">Base URL</span>
+            <input type="url" name="base_url" placeholder="https://jellyfin.example.com"
+                   value="{{ jellyfin.base_url if jellyfin else '' }}" required>
+          </label>
+          <label class="field">
+            <span class="field-label">API key</span>
+            <input type="password" name="api_key" autocomplete="off"
+                   placeholder="{% if jellyfin %}•••••• (blank keeps current){% else %}Dashboard → API Keys{% endif %}"
+                   {% if not jellyfin %}required{% endif %}>
+          </label>
+          <label class="field">
+            <span class="field-label">Jellyfin user GUID</span>
+            <input type="text" name="jellyfin_user_id" autocomplete="off"
+                   placeholder="the user playlists belong to"
+                   value="{{ jellyfin.jellyfin_user_id if jellyfin else '' }}">
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Save connection</button>
+          {% if jellyfin %}
+          <button type="submit" class="btn btn-ghost" formaction="/settings/jellyfin/test">Test</button>
+          <button type="submit" class="btn" formaction="/settings/jellyfin/sync" formnovalidate>Sync playlists now</button>
+          {% endif %}
+        </div>
+      </form>
+
+      <div class="callout accent">
+        <div class="callout-k">Your library folder</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <code class="mono">{{ library_subpath }}</code>
+          <button type="button" class="btn btn-sm" onclick="copyUrl(this, '{{ library_subpath }}')">Copy</button>
+        </div>
+        <p class="help-text" style="margin:8px 0 0">
+          In Jellyfin, add a TV Shows library (metadata downloading <strong>off</strong>) pointing at that
+          folder wherever the media volume is mounted. Full container path:
+          <code class="mono">{{ library_path }}</code>. Don't point it at the media root or the
+          <code class="mono">{{ canonical_subdir }}</code> staging folder.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 class="card-title">YouTube accounts</h2>
+    </div>
+    <div class="card-body">
+      {% for acct in accounts %}
+      <div class="acct-row"{% if not loop.last %} style="margin-bottom:10px"{% endif %}>
+        <div>
+          <div class="acct-name">{{ acct.channel_title or acct.channel_id }}</div>
+          <div class="acct-meta">
+            Last synced {{ acct.last_synced_at.strftime('%Y-%m-%d %H:%M') if acct.last_synced_at else 'never' }}
+          </div>
+        </div>
+        <form method="post" action="/sync/{{ acct.id }}">
+          <button type="submit" class="btn btn-sm">Sync now</button>
+        </form>
+      </div>
+      {% else %}
+      <p class="empty">No YouTube accounts connected.</p>
+      {% endfor %}
+      <a href="/auth/youtube/connect" class="btn btn-dashed btn-block" style="margin-top:12px">+ Connect a YouTube account</a>
+    </div>
+  </section>
+
+  <section class="card span-all">
+    <div class="card-head">
+      <h2 class="card-title">OPML Videeo Feeds</h2>
+      {% if opml_token %}
+      <form method="post" action="/settings/opml-token/rotate">
+        <button type="submit" class="btn btn-sm btn-ghost"
+                onclick="return confirm('Rotate token? Old URLs will stop working.')">Rotate token</button>
+      </form>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if opml_token %}
+      <div class="url-row">
+        <span class="url-label">All channels</span>
+        <code class="mono">{{ base_url }}/opml/{{ opml_token.token }}/all.opml</code>
+        <button type="button" class="btn btn-sm" onclick="copyUrl(this, '{{ base_url }}/opml/{{ opml_token.token }}/all.opml')">Copy</button>
+      </div>
+      {% for cat in categories %}
+      <div class="url-row">
+        <span class="url-label">{{ cat.name }}</span>
+        <code class="mono">{{ base_url }}/opml/{{ opml_token.token }}/{{ cat.slug }}.opml</code>
+        <button type="button" class="btn btn-sm" onclick="copyUrl(this, '{{ base_url }}/opml/{{ opml_token.token }}/{{ cat.slug }}.opml')">Copy</button>
+      </div>
+      {% endfor %}
+      {% else %}
+      <p class="empty" style="margin-bottom:10px">No OPML token generated yet.</p>
+      <form method="post" action="/settings/opml-token/rotate">
+        <button type="submit" class="btn-primary">Generate OPML token</button>
+      </form>
+      {% endif %}
+    </div>
+  </section>
+
   {% if opml_token %}
-  <p>Your OPML feed URLs:</p>
-  <ul class="opml-url-list">
-    <li>
-      <code>{{ base_url }}/opml/{{ opml_token.token }}/all.opml</code>
-      <button type="button" class="outline small-btn copy-btn"
-              onclick="copyUrl(this, '{{ base_url }}/opml/{{ opml_token.token }}/all.opml')">Copy</button>
-      <span class="opml-label">All channels</span>
-    </li>
-    {% for cat in categories %}
-    <li>
-      <code>{{ base_url }}/opml/{{ opml_token.token }}/{{ cat.slug }}.opml</code>
-      <button type="button" class="outline small-btn copy-btn"
-              onclick="copyUrl(this, '{{ base_url }}/opml/{{ opml_token.token }}/{{ cat.slug }}.opml')">Copy</button>
-      <span class="opml-label">{{ cat.name }}</span>
-    </li>
-    {% endfor %}
-  </ul>
-  <form method="post" action="/settings/opml-token/rotate" class="inline-form">
-    <button type="submit" class="outline secondary" onclick="return confirm('Rotate token? Old URLs will stop working.')">Rotate token</button>
-  </form>
-  {% else %}
-  <p>No OPML token generated yet.</p>
-  <form method="post" action="/settings/opml-token/rotate" class="inline-form">
-    <button type="submit">Generate OPML token</button>
-  </form>
+  <section class="card span-all">
+    <div class="card-head">
+      <h2 class="card-title">Podcast Feeds</h2>
+      <span class="card-note">Audio-only, for Apple Podcasts &amp; other apps</span>
+    </div>
+    <div class="card-body">
+      <p class="help-text" style="margin:0 0 10px">
+        Episodes appear only for channels with <strong>Generate podcast feeds</strong> enabled, once audio has been extracted.
+      </p>
+      <div class="url-row">
+        <span class="url-label">All channels</span>
+        <code class="mono">{{ base_url }}/podcast/{{ opml_token.token }}/all.xml</code>
+        <button type="button" class="btn btn-sm" onclick="copyUrl(this, '{{ base_url }}/podcast/{{ opml_token.token }}/all.xml')">Copy</button>
+      </div>
+      {% for cat in categories %}
+      <div class="url-row">
+        <span class="url-label">{{ cat.name }}</span>
+        <code class="mono">{{ base_url }}/podcast/{{ opml_token.token }}/{{ cat.slug }}.xml</code>
+        <button type="button" class="btn btn-sm" onclick="copyUrl(this, '{{ base_url }}/podcast/{{ opml_token.token }}/{{ cat.slug }}.xml')">Copy</button>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
   {% endif %}
-</section>
+</div>
+</div>
+
+<div id="panel-downloads" class="tab-panel"{% if active_tab != 'downloads' %} hidden{% endif %}>
+  <section class="card span-all">
+    <div class="card-head">
+      <h2 class="card-title">Download history</h2>
+      <span class="card-note">Everything the archive has seen — filter, page, and retry failures</span>
+    </div>
+    <div class="card-body">
+      {% if dl == 'retried' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Requeued {{ dl_n }} download{{ '' if dl_n == 1 else 's' }} — the worker will pick {{ 'it' if dl_n == 1 else 'them' }} up shortly.</p>
+      {% elif dl == 'none' %}
+      <p class="status-inline" role="status" style="margin:0 0 10px"><span class="dot"></span>Nothing recoverable to retry.</p>
+      {% elif dl == 'notfound' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>That download couldn't be requeued.</p>
+      {% endif %}
+
+      {% include "partials/downloads_summary.html" %}
+
+      <form id="dl-filters" class="dl-filters"
+            hx-get="/settings/downloads/table" hx-target="#downloads-table" hx-swap="innerHTML"
+            hx-trigger="change, search, keyup delay:300ms from:input[name='q']">
+        <select name="channel_id" aria-label="Filter by channel">
+          <option value="">All channels</option>
+          {% for c in filter_channels %}
+          <option value="{{ c.channel_id }}"{% if f_channel_id == c.channel_id %} selected{% endif %}>{{ c.title }}</option>
+          {% endfor %}
+        </select>
+        <select name="category_id" aria-label="Filter by category">
+          <option value="">All categories</option>
+          {% for cat in categories %}
+          <option value="{{ cat.id }}"{% if f_category_id == cat.id %} selected{% endif %}>{{ cat.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="status" aria-label="Filter by status">
+          <option value="">Any status</option>
+          {% for s in download_statuses %}
+          <option value="{{ s }}"{% if f_status == s %} selected{% endif %}>{{ STATUS_LABELS.get(s, s) }}</option>
+          {% endfor %}
+        </select>
+        <input type="search" name="q" value="{{ f_q }}" placeholder="Search title…" aria-label="Search by title">
+      </form>
+
+      <div id="downloads-table">
+        {% include "partials/downloads_table.html" %}
+      </div>
+    </div>
+  </section>
+</div>
 
 <script>
 function copyUrl(btn, url) {
   navigator.clipboard.writeText(url).then(function() {
     var orig = btn.textContent;
     btn.textContent = 'Copied';
-    setTimeout(function() { btn.textContent = orig; }, 1500);
+    setTimeout(function(){ btn.textContent = orig; }, 1500);
   });
 }
+
+(function () {
+  var buttons = document.querySelectorAll('.page-tab');
+  function show(tab) {
+    buttons.forEach(function (b) { b.classList.toggle('active', b.dataset.tab === tab); });
+    document.getElementById('panel-settings').hidden = (tab === 'downloads');
+    document.getElementById('panel-downloads').hidden = (tab !== 'downloads');
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var tab = b.dataset.tab;
+      show(tab);
+      // Keep the URL shareable/back-button friendly without a reload.
+      var url = new URL(window.location);
+      if (tab === 'downloads') { url.searchParams.set('tab', 'downloads'); }
+      else { url.searchParams.delete('tab'); }
+      history.replaceState(null, '', url);
+    });
+  });
+})();
 </script>
 {% endblock %}

@@ -1,0 +1,5 @@
+{# Retry response: swap the table in place (hx-target) and update the summary
+   tiles + retry-all count out-of-band. #}
+{% include "partials/downloads_table.html" %}
+{% set oob = true %}
+{% include "partials/downloads_summary.html" %}

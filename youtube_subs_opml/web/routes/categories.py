@@ -9,10 +9,55 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import get_current_user
-from ..models import Category, Channel, ChannelCategory, Subscription, User
+from ..models import (
+    Category,
+    Channel,
+    ChannelCategory,
+    Download,
+    Subscription,
+    User,
+    Video,
+)
+from ..services.prefs import (
+    LINK_TARGETS,
+    parse_inherit_int,
+    parse_link_target,
+    parse_tristate_bool,
+    minutes_to_seconds,
+)
 from ..templating import templates
 
 router = APIRouter(prefix="/categories", tags=["categories"])
+
+# Same archive prefs as subscriptions carry, editable at the category level.
+_ARCHIVE_FIELD_KINDS = {
+    "download_enabled": "bool",
+    "generate_podcast": "bool",
+    "keep_last_n": "int",
+    "max_duration_seconds": "minutes",
+    "link_target": "link",
+}
+
+
+def _parse_archive_value(field: str, value: str | None):
+    kind = _ARCHIVE_FIELD_KINDS[field]
+    if kind == "bool":
+        return parse_tristate_bool(value)
+    if kind == "int":
+        return parse_inherit_int(value)
+    if kind == "minutes":
+        return minutes_to_seconds(value)
+    return parse_link_target(value, allow_inherit=True)
+
+
+def _format_bytes(num: int) -> str:
+    """Human-readable size for the disk-usage column."""
+    size = float(num)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
 
 
 def slugify(name: str) -> str:
@@ -58,8 +103,30 @@ def _categories_with_counts(user: User, db: Session) -> list[dict]:
         ).all()
     )
 
+    # Disk used by completed downloads for the channels in each category.
+    disk = dict(
+        db.execute(
+            select(
+                ChannelCategory.category_id,
+                func.coalesce(func.sum(Download.file_size_bytes), 0),
+            )
+            .join(Video, Video.channel_id == ChannelCategory.channel_id)
+            .join(Download, Download.video_id == Video.video_id)
+            .where(
+                ChannelCategory.user_id == user.id,
+                Download.status == "complete",
+            )
+            .group_by(ChannelCategory.category_id)
+        ).all()
+    )
+
     return [
-        {"category": cat, "channel_count": counts.get(cat.id, 0)}
+        {
+            "category": cat,
+            "channel_count": counts.get(cat.id, 0),
+            "disk_bytes": int(disk.get(cat.id, 0)),
+            "disk_human": _format_bytes(int(disk.get(cat.id, 0))),
+        }
         for cat in categories
     ]
 
@@ -73,6 +140,7 @@ def _category_list_response(
         context={
             "categories_with_counts": _categories_with_counts(user, db),
             "user": user,
+            "link_targets": LINK_TARGETS,
         },
     )
 
@@ -88,9 +156,18 @@ def list_categories(
 ) -> HTMLResponse:
     if _is_htmx(request):
         return _category_list_response(request, user, db)
-    # Full-page fallback redirects to channels page (categories tab)
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse("/channels?tab=categories", status_code=303)
+    from ..services.stats import shell_stats
+    return templates.TemplateResponse(
+        request,
+        "categories.html",
+        context={
+            "categories_with_counts": _categories_with_counts(user, db),
+            "user": user,
+            "link_targets": LINK_TARGETS,
+            "active_nav": "categories",
+            "stats": shell_stats(user, db),
+        },
+    )
 
 
 @router.post("")
@@ -201,6 +278,26 @@ async def update_category_live(
         category.include_live = False
     else:
         category.include_live = None
+    db.commit()
+
+    return _category_list_response(request, user, db)
+
+
+@router.patch("/{category_id}/archive-pref")
+async def update_category_archive(
+    category_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Set one archive preference on a category. NULL means inherit from user."""
+    category = _get_owned_category(category_id, user, db)
+    form = await request.form()
+    field = form.get("field", "")
+    if field not in _ARCHIVE_FIELD_KINDS:
+        raise HTTPException(status_code=400, detail="Unknown preference")
+
+    setattr(category, field, _parse_archive_value(field, form.get("value")))
     db.commit()
 
     return _category_list_response(request, user, db)

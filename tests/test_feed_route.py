@@ -2,7 +2,6 @@
 upstream feed. Requires neither Postgres, Keycloak, nor network."""
 from __future__ import annotations
 
-import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from youtube_subs_opml.web.db import Base, get_db
 from youtube_subs_opml.web.models import (
     Category,
+    ChannelFeedCache,
     OpmlToken,
     Subscription,
     User,
@@ -46,7 +46,7 @@ def client(monkeypatch):
             t.__table__
             for t in (
                 User, Subscription, Category, OpmlToken,
-                VideoShort, VideoLiveStatus,
+                VideoShort, VideoLiveStatus, ChannelFeedCache,
             )
         ],
     )
@@ -63,6 +63,8 @@ def client(monkeypatch):
         seed.add(Category(
             id=2, user_id=1, name="Live", slug="live", include_live=False
         ))
+        # The proxy serves only from the poller-warmed cache, so pre-warm it.
+        seed.add(ChannelFeedCache(channel_id=CID, xml=SAMPLE_FEED))
         seed.commit()
 
     def override_db():
@@ -76,13 +78,6 @@ def client(monkeypatch):
     app.include_router(feed.router)
     app.dependency_overrides[get_db] = override_db
 
-    # Mock the upstream YouTube fetch.
-    def fake_get(url, **kwargs):
-        return httpx.Response(
-            200, content=SAMPLE_FEED, request=httpx.Request("GET", url)
-        )
-
-    monkeypatch.setattr(feed.httpx, "get", fake_get)
     # Deterministic classification (no real probing).
     monkeypatch.setattr(
         feed, "classify_videos",
@@ -93,7 +88,9 @@ def client(monkeypatch):
         lambda ids, db: {"shortone111": "upcoming", "realvideo22": "none"},
     )
 
-    return TestClient(app)
+    tc = TestClient(app)
+    tc.sessionmaker = TestingSession  # for tests that pre-seed the feed cache
+    return tc
 
 
 def test_passthrough_keeps_shorts(client):
@@ -132,9 +129,21 @@ def test_unknown_category_404(client):
     assert client.get(f"/feed/{TOKEN}/nope/{CID}.xml").status_code == 404
 
 
-def test_upstream_failure_502(client, monkeypatch):
-    def boom(url, **kwargs):
-        raise httpx.ConnectError("down")
+def test_serves_from_cache_with_hit_header(client):
+    """A warm cache is served and marked as a hit."""
+    resp = client.get(f"/feed/{TOKEN}/{CID}.xml")
+    assert resp.status_code == 200
+    assert resp.headers["X-Feed-Cache"] == "hit"
+    assert b"realvideo22" in resp.content
 
-    monkeypatch.setattr(feed.httpx, "get", boom)
-    assert client.get(f"/feed/{TOKEN}/{CID}.xml").status_code == 502
+
+def test_cache_miss_returns_retryable_503(client):
+    """An un-warmed channel returns a retryable 503 — the proxy never fetches
+    YouTube itself, so a reader's fan-out can't burst the upstream."""
+    with client.sessionmaker() as db:
+        db.delete(db.get(ChannelFeedCache, CID))  # simulate not-yet-polled
+        db.commit()
+
+    resp = client.get(f"/feed/{TOKEN}/{CID}.xml")
+    assert resp.status_code == 503
+    assert resp.headers.get("Retry-After") == "120"

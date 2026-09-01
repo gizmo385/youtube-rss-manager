@@ -1,14 +1,18 @@
 {% extends "base.html" %}
-
 {% block title %}Categories — YouTube Subs OPML{% endblock %}
 
 {% block content %}
-<h1>Categories</h1>
-
-<form hx-post="/categories" hx-target="#category-list" hx-swap="innerHTML">
-  <input type="text" name="name" placeholder="New category name" required>
-  <button type="submit">Create</button>
-</form>
+<div class="page-head">
+  <div>
+    <div class="eyebrow">Organisation</div>
+    <h1 class="page-title">Categories</h1>
+  </div>
+  <form class="page-head-actions" hx-post="/categories" hx-target="#category-list" hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) this.reset()">
+    <input type="text" name="name" placeholder="New category name" required>
+    <button type="submit" class="btn-primary">Create</button>
+  </form>
+</div>
 
 <div id="category-list">
   {% include "partials/category_list.html" %}

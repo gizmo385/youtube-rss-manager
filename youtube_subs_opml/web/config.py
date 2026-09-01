@@ -39,12 +39,59 @@ class Settings(BaseSettings):
     youtube_client_id: str = Field("")
     youtube_client_secret: str = Field("")
 
+    # --- Video archive ------------------------------------------------------
+    # Root of the Jellyfin-visible media tree. Must be the same path inside the
+    # downloader container and (via the same bind mount) inside Jellyfin.
+    media_root: str = Field("/media/youtube")
+    # Refuse to download unless media_root is a real mount, so a forgotten
+    # volume doesn't silently fill the container's ephemeral layer. Set True for
+    # local development, where the store is just a folder (see local-mode
+    # defaults below).
+    allow_unmounted_media: bool = Field(False)
+    # How often the poller re-reads channel RSS. YouTube's feed only carries
+    # the ~15 most recent entries, so this bounds what can be captured for
+    # prolific channels — 6 hours would silently lose videos.
+    poll_interval_minutes: int = Field(20)
+    # Politeness for the poller's per-channel fetches. Polling every subscribed
+    # channel back-to-back looks like a burst and YouTube soft-throttles the IP
+    # (intermittent 404/429/500). A small delay between channels plus a couple of
+    # backoff retries keeps a sweep under the radar. Base delay also seeds the
+    # retry backoff. Set to 0 to disable spacing (e.g. in tests).
+    poll_channel_delay_seconds: float = Field(2.0)
+    poll_max_retries: int = Field(2)
+    # Keep this at 1. Concurrent downloads from one IP are the fastest route to
+    # "Sign in to confirm you're not a bot".
+    download_concurrency: int = Field(1)
+    ytdlp_format: str = Field("bestvideo[height<=1080]+bestaudio/best[height<=1080]")
+    # Politeness knobs passed through to yt-dlp.
+    ytdlp_sleep_interval: int = Field(5)
+    ytdlp_max_retries: int = Field(3)
+    # Pause between consecutive downloads so a large queue (e.g. a bulk retry of
+    # failed items) doesn't fire back-to-back metadata probes at YouTube. The
+    # worker sleeps this many seconds plus up to the same again as jitter after
+    # each processed download — negligible next to a real download's runtime, but
+    # it smooths the burst when many items fail/skip quickly. 0 disables it.
+    download_delay_seconds: float = Field(5.0)
+    # How often to resolve Jellyfin item ids and reconcile playlists. HTTP-only,
+    # runs in the web process. A no-op for users without a Jellyfin account.
+    jellyfin_sync_interval_minutes: int = Field(30)
+    # --- Podcast feeds ------------------------------------------------------
+    # RSS <language> for generated podcast feeds.
+    podcast_language: str = Field("en")
+    # Optional channel-level artwork. Apple requires a square image ≥1400px over
+    # HTTPS for *directory submission*; "Add a Show by URL" is lenient, so this
+    # is optional. When unset, no <itunes:image> is emitted. Point it at a
+    # public URL you control (e.g. a static asset served by this app).
+    podcast_cover_url: str = Field("")
+
     @model_validator(mode="after")
     def _apply_mode_defaults(self) -> "Settings":
         if self.local_mode:
             self.database_url = self.database_url or _LOCAL_DATABASE_URL
             self.session_secret = self.session_secret or _LOCAL_SESSION_SECRET
             self.fernet_key = self.fernet_key or _LOCAL_FERNET_KEY
+            # Local media is a plain folder, not a mount.
+            self.allow_unmounted_media = True
             return self
 
         missing = [

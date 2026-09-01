@@ -1,83 +1,108 @@
 {% if categories_with_counts %}
-<div class="overflow-auto">
-  <table class="striped">
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Slug</th>
-        <th>Channels</th>
-        <th>Shorts</th>
-        <th>Live</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in categories_with_counts %}
-      {% set cat = item.category %}
-      <tr id="category-{{ cat.id }}">
-        <td>
-          <input type="text" name="name" value="{{ cat.name }}" form="edit-{{ cat.id }}">
-        </td>
-        <td><code>{{ cat.slug }}</code></td>
-        <td>
-          <a href="#" class="link-btn"
-              hx-get="/categories/{{ cat.id }}/channels"
-              hx-target="#cat-detail-{{ cat.id }}"
-              hx-swap="innerHTML"
-              onclick="toggleCatDetail({{ cat.id }}); return false;">
-            {{ item.channel_count }}
-          </a>
-        </td>
-        <td>
-          <select class="shorts-select"
-                  name="include_shorts"
-                  hx-patch="/categories/{{ cat.id }}/include-shorts"
-                  hx-target="#category-list"
-                  hx-swap="innerHTML">
-            <option value="inherit"{% if cat.include_shorts is none %} selected{% endif %}>Inherit</option>
-            <option value="true"{% if cat.include_shorts == true %} selected{% endif %}>Include</option>
-            <option value="false"{% if cat.include_shorts == false %} selected{% endif %}>Exclude</option>
-          </select>
-        </td>
-        <td>
-          <select class="shorts-select"
-                  name="include_live"
-                  hx-patch="/categories/{{ cat.id }}/include-live"
-                  hx-target="#category-list"
-                  hx-swap="innerHTML">
-            <option value="inherit"{% if cat.include_live is none %} selected{% endif %}>Inherit</option>
-            <option value="true"{% if cat.include_live == true %} selected{% endif %}>Include</option>
-            <option value="false"{% if cat.include_live == false %} selected{% endif %}>Exclude</option>
-          </select>
-        </td>
-        <td>
-          <div class="cat-actions" role="group">
-            <form id="edit-{{ cat.id }}"
-                  hx-put="/categories/{{ cat.id }}"
-                  hx-target="#category-list"
-                  hx-swap="innerHTML"
-                  class="inline-form">
-              <button type="submit" class="outline small-btn">Save</button>
-            </form>
-            <button class="outline secondary small-btn"
-                    hx-delete="/categories/{{ cat.id }}"
-                    hx-target="#category-list"
-                    hx-swap="innerHTML"
-                    hx-confirm="Delete '{{ cat.name }}'?">Delete</button>
-            <button class="outline contrast small-btn add-channels-btn"
-                    hx-get="/categories/{{ cat.id }}/available-channels"
-                    hx-target="#cat-detail-{{ cat.id }}"
-                    hx-swap="innerHTML"
-                    onclick="showCatDetail({{ cat.id }})">+ Add</button>
+<div class="cat-grid">
+  {% for item in categories_with_counts %}
+  {% set cat = item.category %}
+  <article class="cat-card" id="category-{{ cat.id }}">
+    <div class="cat-card-head">
+      <div class="cat-card-head-row">
+        <div style="min-width:0">
+          <div class="cat-card-name">
+            <input type="text" name="name" value="{{ cat.name }}" form="edit-{{ cat.id }}" aria-label="Category name">
           </div>
-        </td>
-      </tr>
-      <tr class="hidden cat-detail-row" id="cat-detail-row-{{ cat.id }}">
-        <td colspan="6" id="cat-detail-{{ cat.id }}"></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+          <code class="cat-card-slug">{{ cat.slug }}</code>
+        </div>
+        <div class="cat-card-count">
+          <a href="#" class="num" style="color:inherit"
+             hx-get="/categories/{{ cat.id }}/channels" hx-target="#cat-detail-{{ cat.id }}" hx-swap="innerHTML"
+             onclick="toggleCatDetail({{ cat.id }}); return false;">{{ item.channel_count }}</a>
+          <div class="lbl">channels</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cat-card-settings">
+      <div class="cat-setting">
+        <span class="k">Archive</span>
+        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "download_enabled"}'
+                hx-target="#category-list" hx-swap="innerHTML">
+          <option value="inherit"{% if cat.download_enabled is none %} selected{% endif %}>Inherit</option>
+          <option value="true"{% if cat.download_enabled == true %} selected{% endif %}>On</option>
+          <option value="false"{% if cat.download_enabled == false %} selected{% endif %}>Off</option>
+        </select>
+      </div>
+      <div class="cat-setting">
+        <span class="k">Keep</span>
+        <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
+               value="{{ cat.keep_last_n if cat.keep_last_n is not none else '' }}"
+               hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "keep_last_n"}'
+               hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
+      </div>
+      <div class="cat-setting">
+        <span class="k">Max min</span>
+        <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
+               value="{{ (cat.max_duration_seconds // 60) if cat.max_duration_seconds is not none else '' }}"
+               hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "max_duration_seconds"}'
+               hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
+      </div>
+      <div class="cat-setting">
+        <span class="k">Shorts</span>
+        <select name="include_shorts" hx-patch="/categories/{{ cat.id }}/include-shorts"
+                hx-target="#category-list" hx-swap="innerHTML">
+          <option value="inherit"{% if cat.include_shorts is none %} selected{% endif %}>Inherit</option>
+          <option value="true"{% if cat.include_shorts == true %} selected{% endif %}>Include</option>
+          <option value="false"{% if cat.include_shorts == false %} selected{% endif %}>Exclude</option>
+        </select>
+      </div>
+      <div class="cat-setting">
+        <span class="k">Live</span>
+        <select name="include_live" hx-patch="/categories/{{ cat.id }}/include-live"
+                hx-target="#category-list" hx-swap="innerHTML">
+          <option value="inherit"{% if cat.include_live is none %} selected{% endif %}>Inherit</option>
+          <option value="true"{% if cat.include_live == true %} selected{% endif %}>Include</option>
+          <option value="false"{% if cat.include_live == false %} selected{% endif %}>Exclude</option>
+        </select>
+      </div>
+      <div class="cat-setting">
+        <span class="k">Podcast</span>
+        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "generate_podcast"}'
+                hx-target="#category-list" hx-swap="innerHTML">
+          <option value="inherit"{% if cat.generate_podcast is none %} selected{% endif %}>Inherit</option>
+          <option value="true"{% if cat.generate_podcast == true %} selected{% endif %}>On</option>
+          <option value="false"{% if cat.generate_podcast == false %} selected{% endif %}>Off</option>
+        </select>
+      </div>
+      <div class="cat-setting">
+        <span class="k">Link</span>
+        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "link_target"}'
+                hx-target="#category-list" hx-swap="innerHTML">
+          <option value="inherit"{% if cat.link_target is none %} selected{% endif %}>Inherit</option>
+          {% for lt in link_targets %}
+          <option value="{{ lt }}"{% if cat.link_target == lt %} selected{% endif %}>{{ lt }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="cat-card-foot">
+      <span class="disk">{{ item.disk_human }} on disk</span>
+      <div class="foot-actions">
+        <button class="btn btn-sm" hx-get="/categories/{{ cat.id }}/available-channels"
+                hx-target="#cat-detail-{{ cat.id }}" hx-swap="innerHTML"
+                onclick="showCatDetail({{ cat.id }})">+ Add</button>
+        <form id="edit-{{ cat.id }}" hx-put="/categories/{{ cat.id }}" hx-target="#category-list" hx-swap="innerHTML"
+              style="display:inline">
+          <button type="submit" class="btn btn-sm">Save</button>
+        </form>
+        <button class="btn btn-sm btn-danger" hx-delete="/categories/{{ cat.id }}"
+                hx-target="#category-list" hx-swap="innerHTML" hx-confirm="Delete '{{ cat.name }}'?">Delete</button>
+      </div>
+    </div>
+
+    <div class="cat-detail hidden" id="cat-detail-row-{{ cat.id }}">
+      <div id="cat-detail-{{ cat.id }}"></div>
+    </div>
+  </article>
+  {% endfor %}
 </div>
 
 <script>
@@ -89,12 +114,5 @@ function showCatDetail(catId) {
 }
 </script>
 {% else %}
-<p><em>No categories yet. Create one above.</em></p>
+<p class="empty">No categories yet. Create one above.</p>
 {% endif %}
-
-<select id="toolbar-category-select" name="category_id" hx-swap-oob="true">
-  <option value="">— category —</option>
-  {% for item in categories_with_counts %}
-  <option value="{{ item.category.id }}">{{ item.category.name }}</option>
-  {% endfor %}
-</select>

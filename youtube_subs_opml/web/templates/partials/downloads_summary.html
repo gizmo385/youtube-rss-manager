@@ -1,0 +1,18 @@
+{# Status tiles + "retry all" action. Swapped out-of-band after a retry so the
+   counts stay in sync with the table. #}
+<div id="dl-summary" class="dl-summary"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <div class="statbar">
+    <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('complete', 0) }}</span><span class="statbar-lab">Archived</span></div>
+    <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('pending', 0) }}</span><span class="statbar-lab">Pending</span></div>
+    <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('downloading', 0) }}</span><span class="statbar-lab">Downloading</span></div>
+    <div class="statbar-item"><span class="statbar-num{{ ' accent' if download_counts.get('failed', 0) }}">{{ download_counts.get('failed', 0) }}</span><span class="statbar-lab">Failed</span></div>
+    <div class="statbar-item"><span class="statbar-num">{{ download_counts.get('skipped', 0) }}</span><span class="statbar-lab">Skipped</span></div>
+  </div>
+  {% if recoverable %}
+  <form class="dl-summary-action" method="post" action="/settings/downloads/retry-all"
+        hx-post="/settings/downloads/retry-all" hx-target="#downloads-table" hx-swap="innerHTML"
+        hx-include="#dl-filters, #dl-page">
+    <button type="submit" class="btn btn-sm">Retry all recoverable ({{ recoverable }})</button>
+  </form>
+  {% endif %}
+</div>

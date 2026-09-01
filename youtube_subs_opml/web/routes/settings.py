@@ -1,25 +1,96 @@
 from __future__ import annotations
 
+import logging
 import secrets
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ...downloader.naming import CANONICAL_SUBDIR, LIBRARIES_SUBDIR
 from ..config import get_settings
 from ..db import get_db
 from ..deps import get_current_user
-from ..models import Category, OpmlToken, User, YoutubeAccount
+from ..models import Category, JellyfinAccount, OpmlToken, User, YoutubeAccount
+from ..services import downloads as downloads_service
+from ..services.crypto import decrypt_token, encrypt_token
+from ..services.jellyfin import JellyfinClient
+from ..services.prefs import (
+    LINK_TARGETS,
+    parse_link_target,
+    parse_required_int,
+)
 from ..services.sync import sync_account
 from ..templating import templates
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["settings"])
+
+
+def _int_or_none(value) -> int | None:  # noqa: ANN001 — form/query values are str
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean(value) -> str | None:  # noqa: ANN001
+    text = (value or "").strip()
+    return text or None
+
+
+def _status_or_none(value) -> str | None:  # noqa: ANN001
+    text = _clean(value)
+    return text if text in downloads_service.DOWNLOAD_STATUSES else None
+
+
+def _table_context(db: Session, user: User, params) -> dict:  # noqa: ANN001
+    """Build the download-history table context from query/form params.
+
+    Shared by the initial page render, the htmx filter/pagination endpoint, and
+    the retry endpoints, so filters and the current page survive a retry.
+    """
+    channel_id = _clean(params.get("channel_id"))
+    category_id = _int_or_none(params.get("category_id"))
+    status = _status_or_none(params.get("status"))
+    q = _clean(params.get("q"))
+    page = _int_or_none(params.get("page")) or 1
+
+    data = downloads_service.list_downloads(
+        db, user.id,
+        channel_id=channel_id, category_id=category_id, status=status, q=q, page=page,
+    )
+    active = {
+        k: v
+        for k, v in (
+            ("channel_id", channel_id), ("category_id", category_id),
+            ("status", status), ("q", q),
+        )
+        if v not in (None, "")
+    }
+    return {
+        "user": user,
+        **data,
+        "f_channel_id": channel_id or "",
+        "f_category_id": category_id or "",
+        "f_status": status or "",
+        "f_q": q or "",
+        # Current filters as a query string, for pagination links to preserve.
+        "filter_qs": urlencode(active),
+    }
 
 
 @router.get("/settings")
 def settings_page(
     request: Request,
+    tab: str | None = None,
+    jellyfin_test: str | None = None,
+    jellyfin_sync: str | None = None,
+    dl: str | None = None,
+    dl_n: int | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
@@ -38,17 +109,51 @@ def settings_page(
         .order_by(Category.name)
     ).scalars().all()
 
-    return templates.TemplateResponse(
-        request,
-        "settings.html",
-        context={
-            "user": user,
-            "accounts": accounts,
-            "opml_token": opml_token,
-            "categories": categories,
-            "base_url": get_settings().base_url,
-        },
-    )
+    jellyfin = db.execute(
+        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
+    ).scalar_one_or_none()
+
+    from ..services.stats import shell_stats
+
+    settings = get_settings()
+    # The subtree an admin points this user's Jellyfin library at. The relative
+    # subpath is the only structure the app imposes; the absolute path just shows
+    # where it lands inside the container's media root. Kept in sync with the
+    # worker's layout via the shared naming constants.
+    library_subpath = f"{LIBRARIES_SUBDIR}/{user.id}"
+    library_path = f"{settings.media_root}/{library_subpath}"
+
+    active_tab = "downloads" if tab in ("downloads", "downloader") else "settings"
+
+    context = {
+        "user": user,
+        "accounts": accounts,
+        "opml_token": opml_token,
+        "categories": categories,
+        "base_url": settings.base_url,
+        "jellyfin": jellyfin,
+        "jellyfin_test": jellyfin_test,
+        "jellyfin_sync": jellyfin_sync,
+        "library_path": library_path,
+        "library_subpath": library_subpath,
+        "canonical_subdir": CANONICAL_SUBDIR,
+        "media_root": settings.media_root,
+        "link_targets": LINK_TARGETS,
+        "max_duration_minutes": user.max_duration_seconds // 60,
+        "active_nav": "settings",
+        "active_tab": active_tab,
+        "stats": shell_stats(user, db),
+        # Downloader tab: summary counts, retry-all count, filter options, and
+        # the first page of the (unfiltered) history table.
+        "download_counts": downloads_service.status_counts(db, user.id),
+        "recoverable": downloads_service.recoverable_count(db, user.id),
+        "filter_channels": downloads_service.subscribed_channels(db, user.id),
+        "download_statuses": downloads_service.DOWNLOAD_STATUSES,
+        "dl": dl,
+        "dl_n": dl_n,
+    }
+    context.update(_table_context(db, user, request.query_params))
+    return templates.TemplateResponse(request, "settings.html", context=context)
 
 
 @router.post("/sync/{account_id}")
@@ -68,6 +173,12 @@ def trigger_sync(
 
     sync_account(account, db, get_settings())
     db.commit()
+
+    # Newly-synced subscriptions have no cached feed yet; nudge a poll so their
+    # feed URLs warm in seconds rather than 503ing until the next interval.
+    from ..services.scheduler import trigger_poll_soon
+    trigger_poll_soon()
+
     return RedirectResponse("/settings", status_code=303)
 
 
@@ -80,8 +191,183 @@ async def update_defaults(
     form = await request.form()
     user.include_shorts = "include_shorts" in form
     user.include_live = "include_live" in form
+
+    # Archive defaults (the root of the cascade — never NULL).
+    user.download_enabled = "download_enabled" in form
+    user.generate_podcast = "generate_podcast" in form
+    user.keep_last_n = parse_required_int(form.get("keep_last_n"), 15)
+    user.max_duration_seconds = (
+        parse_required_int(form.get("max_duration_minutes"), 0) * 60
+    )
+    user.link_target = parse_link_target(form.get("link_target"), allow_inherit=False)
     db.commit()
     return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/jellyfin")
+async def update_jellyfin(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Save the user's Jellyfin connection.
+
+    The API key is write-only in the UI: a blank field on an existing account
+    leaves the stored key untouched, so the page can render without echoing the
+    secret back. Creating a new account requires a key.
+    """
+    form = await request.form()
+    base_url = str(form.get("base_url", "")).strip()
+    api_key = str(form.get("api_key", "")).strip()
+    jellyfin_user_id = str(form.get("jellyfin_user_id", "")).strip()
+
+    if not base_url:
+        raise HTTPException(status_code=400, detail="Jellyfin base URL is required")
+
+    account = db.execute(
+        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
+    ).scalar_one_or_none()
+
+    if account is None:
+        if not api_key:
+            raise HTTPException(status_code=400, detail="An API key is required")
+        db.add(
+            JellyfinAccount(
+                user_id=user.id,
+                base_url=base_url,
+                api_key_encrypted=encrypt_token(api_key),
+                jellyfin_user_id=jellyfin_user_id,
+            )
+        )
+    else:
+        account.base_url = base_url
+        account.jellyfin_user_id = jellyfin_user_id
+        if api_key:
+            account.api_key_encrypted = encrypt_token(api_key)
+
+    db.commit()
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/jellyfin/test")
+def test_jellyfin(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Verify stored Jellyfin credentials against the live instance."""
+    account = db.execute(
+        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
+    ).scalar_one_or_none()
+    if account is None:
+        return RedirectResponse("/settings?jellyfin_test=missing", status_code=303)
+
+    client = JellyfinClient(
+        base_url=account.base_url,
+        api_key=decrypt_token(account.api_key_encrypted),
+    )
+    if client.verify():
+        account.last_verified_at = func.now()
+        db.commit()
+        return RedirectResponse("/settings?jellyfin_test=ok", status_code=303)
+    return RedirectResponse("/settings?jellyfin_test=fail", status_code=303)
+
+
+@router.post("/settings/jellyfin/sync")
+def sync_jellyfin_now(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Run the Jellyfin playlist sync for this user on demand.
+
+    The same work the scheduled job does — resolve item ids for downloaded
+    files and reconcile each category's playlist — but triggered from the
+    settings page so a user isn't waiting on the next interval. Needs the user
+    GUID: without it item ids can't be scoped and playlists can't be created.
+    """
+    account = db.execute(
+        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
+    ).scalar_one_or_none()
+    if account is None:
+        return RedirectResponse("/settings?jellyfin_sync=missing", status_code=303)
+    if not account.jellyfin_user_id:
+        return RedirectResponse("/settings?jellyfin_sync=no_guid", status_code=303)
+
+    from ..services.jellyfin_sync import sync_user
+
+    client = JellyfinClient(
+        base_url=account.base_url,
+        api_key=decrypt_token(account.api_key_encrypted),
+    )
+    try:
+        sync_user(db, user.id, account.jellyfin_user_id, client)
+    except Exception:
+        logger.exception("Manual Jellyfin sync failed for user %s", user.id)
+        db.rollback()
+        return RedirectResponse("/settings?jellyfin_sync=fail", status_code=303)
+    return RedirectResponse("/settings?jellyfin_sync=ok", status_code=303)
+
+
+@router.get("/settings/downloads/table")
+def downloads_table(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """htmx partial: a filtered, paginated page of the download history table."""
+    ctx = _table_context(db, user, request.query_params)
+    return templates.TemplateResponse(request, "partials/downloads_table.html", ctx)
+
+
+def _retry_response(
+    request: Request, db: Session, user: User, form, *, dl: str, dl_n: int
+):  # noqa: ANN001
+    """Refresh the table + summary in place for htmx; redirect otherwise.
+
+    Retry buttons send the current filters and page (via hx-include), so the
+    table re-renders on the same page the user was looking at, and the summary
+    (which drives the stat tiles and the 'retry all' count) is swapped
+    out-of-band so it stays in sync.
+    """
+    if request.headers.get("HX-Request"):
+        ctx = _table_context(db, user, form)
+        ctx["download_counts"] = downloads_service.status_counts(db, user.id)
+        ctx["recoverable"] = downloads_service.recoverable_count(db, user.id)
+        return templates.TemplateResponse(
+            request, "partials/downloads_refresh.html", ctx
+        )
+    return RedirectResponse(
+        f"/settings?tab=downloads&dl={dl}&dl_n={dl_n}", status_code=303
+    )
+
+
+@router.post("/settings/downloads/{video_id}/retry")
+async def retry_download(
+    video_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Requeue a single failed/skipped download for this user."""
+    ok = downloads_service.retry_one(db, user.id, video_id)
+    form = await request.form()
+    return _retry_response(
+        request, db, user, form,
+        dl="retried" if ok else "notfound", dl_n=1 if ok else 0,
+    )
+
+
+@router.post("/settings/downloads/retry-all")
+async def retry_all_downloads(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Requeue every recoverable (failed / unavailable) download for this user."""
+    n = downloads_service.retry_all_recoverable(db, user.id)
+    form = await request.form()
+    return _retry_response(
+        request, db, user, form, dl="retried" if n else "none", dl_n=n
+    )
 
 
 @router.post("/settings/opml-token/rotate")

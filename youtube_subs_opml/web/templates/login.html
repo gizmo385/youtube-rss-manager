@@ -1,13 +1,14 @@
 {% extends "base.html" %}
-
 {% block title %}Log in — YouTube Subs OPML{% endblock %}
 
-{% block content %}
-<article class="login-card">
-  <hgroup>
+{% block body %}
+<div class="login-wrap">
+  <article class="login-card">
+    <div class="eyebrow" style="margin-bottom:8px">Subscription &amp; archive manager</div>
     <h1>YouTube Subs OPML</h1>
-    <p>Organize your YouTube subscriptions into categories and export them as OPML feeds for your RSS reader.</p>
-  </hgroup>
-  <a href="/auth/login" role="button">Log in</a>
-</article>
+    <p>Organize your YouTube subscriptions into categories, archive videos into Jellyfin,
+       and export everything as OPML and podcast feeds for your reader.</p>
+    <a href="/auth/login" class="btn-primary">Log in</a>
+  </article>
+</div>
 {% endblock %}

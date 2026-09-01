@@ -1,0 +1,76 @@
+{# Inner content of #downloads-table: results meta, the table, and the pager.
+   The hidden page field travels with retry requests (hx-include) so a retry
+   re-renders the same page the user was on. #}
+<input type="hidden" id="dl-page" name="page" value="{{ page }}">
+{% if rows %}
+<div class="dtable-meta">Showing {{ start }}–{{ end }} of {{ total }}</div>
+<div class="dtable-wrap">
+  <table class="dtable">
+    <thead>
+      <tr>
+        <th>Video</th>
+        <th>Status</th>
+        <th class="col-num">Attempts</th>
+        <th class="col-err">Last error</th>
+        <th class="col-date">Published</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in rows %}
+      <tr>
+        <td>
+          <div class="dtable-title">{{ p.title }}</div>
+          <div class="dtable-sub">{{ p.channel_title }}</div>
+        </td>
+        <td>
+          {% if p.status == 'failed' %}
+          <span class="dl-pill fail" title="The download failed; retry to requeue it.">Failed</span>
+          {% elif p.status == 'skipped' %}
+          <span class="dl-pill" title="Skipped — {{ SKIP_REASON_HELP.get(p.skip_reason, 'not downloaded.') }}">{{ SKIP_REASON_LABELS.get(p.skip_reason, 'Skipped') }}</span>
+          {% elif p.status == 'complete' %}
+          <span class="dl-pill ok" title="Downloaded and available in the library.">Archived</span>
+          {% else %}
+          <span class="dl-pill">{{ STATUS_LABELS.get(p.status, p.status) }}</span>
+          {% endif %}
+        </td>
+        <td class="col-num">{{ p.attempts }}</td>
+        <td class="dtable-err col-err">
+          {% if p.last_error %}
+          <span title="{{ p.last_error }}">{{ p.last_error | truncate(140) }}</span>
+          {% else %}
+          <span class="none">—</span>
+          {% endif %}
+        </td>
+        <td class="col-date">{{ p.published_at.strftime('%Y-%m-%d') if p.published_at else '—' }}</td>
+        <td>
+          <div class="dtable-acts">
+            <a class="btn btn-sm btn-ghost" href="https://www.youtube.com/watch?v={{ p.video_id }}" target="_blank" rel="noopener">Open</a>
+            {% if p.status in ('failed', 'skipped') %}
+            <form method="post" action="/settings/downloads/{{ p.video_id }}/retry"
+                  hx-post="/settings/downloads/{{ p.video_id }}/retry"
+                  hx-target="#downloads-table" hx-swap="innerHTML" hx-include="#dl-filters, #dl-page">
+              <button type="submit" class="btn btn-sm">Retry</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if pages > 1 %}
+<div class="pager">
+  <button type="button" class="btn btn-sm btn-ghost"{% if not has_prev %} disabled{% endif %}
+          hx-get="/settings/downloads/table?{{ filter_qs }}{% if filter_qs %}&{% endif %}page={{ page - 1 }}"
+          hx-target="#downloads-table" hx-swap="innerHTML">« Prev</button>
+  <span class="pager-info">Page {{ page }} of {{ pages }}</span>
+  <button type="button" class="btn btn-sm btn-ghost"{% if not has_next %} disabled{% endif %}
+          hx-get="/settings/downloads/table?{{ filter_qs }}{% if filter_qs %}&{% endif %}page={{ page + 1 }}"
+          hx-target="#downloads-table" hx-swap="innerHTML">Next »</button>
+</div>
+{% endif %}
+{% else %}
+<p class="empty" style="margin-top:12px">No downloads match these filters.</p>
+{% endif %}
