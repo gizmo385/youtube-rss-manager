@@ -9,12 +9,6 @@
         <div class="list-search-row">
           <input type="search" id="channel-search" placeholder="Search {{ total }} channels…"
                  oninput="filterChannels(this.value)">
-          <button type="button" class="btn-primary" onclick="document.getElementById('add-row').classList.toggle('hidden')">+ Add</button>
-        </div>
-        <div id="add-row" class="list-search-row hidden">
-          <input type="text" id="add-channel-input" placeholder="URL, @handle, or UC…"
-                 onkeydown="if(event.key==='Enter'){event.preventDefault();addManualChannel();}">
-          <button type="button" class="btn" onclick="addManualChannel()">Add</button>
         </div>
         <div class="list-filters">
           {% for f in filters %}
@@ -23,7 +17,8 @@
           {% endfor %}
         </div>
       </div>
-      <div id="add-error" class="add-error hidden" role="alert"></div>
+
+      <div id="list-error" class="add-error hidden" role="alert"></div>
 
       <div id="channel-groups" class="list-scroll sb">
         {% include "partials/channel_list.html" %}
@@ -34,16 +29,49 @@
         <div class="bulk-actions">
           <button type="button" class="btn btn-sm" onclick="togglePicker('assign')">Add to category…</button>
           <button type="button" class="btn btn-sm btn-ghost" onclick="togglePicker('unassign')">Remove from…</button>
+          <button type="button" class="btn btn-sm btn-ghost" onclick="bulkIgnore(true)">Ignore</button>
+          <button type="button" class="btn btn-sm btn-ghost" onclick="bulkIgnore(false)">Unignore</button>
           <button type="button" class="btn btn-sm btn-ghost" onclick="clearSelection()">Clear</button>
           <div id="picker-assign" class="bulk-picker hidden"></div>
           <div id="picker-unassign" class="bulk-picker hidden"></div>
         </div>
       </div>
+
+      {# Adding lives in its own footer, away from search — the two used to sit
+         side by side and read as one control. #}
+      <div class="list-foot">
+        <button type="button" class="btn btn-dashed btn-block" onclick="openAddModal()">
+          + Add a channel
+        </button>
+      </div>
     </section>
 
     <section id="channel-detail" class="detail-pane sb">
-      {% include "partials/channel_detail.html" %}
+      {% if detail %}
+        {% include "partials/channel_detail.html" %}
+      {% else %}
+        {% include "partials/overview.html" %}
+      {% endif %}
     </section>
+  </div>
+</div>
+
+<div id="add-modal" class="modal-overlay" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="add-modal-title">
+    <h2 class="modal-title" id="add-modal-title">Add a channel</h2>
+    <p class="modal-help">
+      Paste a YouTube channel URL, an <span class="mono">@handle</span>, or a
+      <span class="mono">UC…</span> channel ID. It's added as a manual
+      subscription — one you can remove again from its detail pane.
+    </p>
+    <input type="text" id="add-channel-input" class="modal-input"
+           placeholder="https://www.youtube.com/@veritasium" autocomplete="off" spellcheck="false"
+           onkeydown="if(event.key==='Enter'){event.preventDefault();addManualChannel();}">
+    <div id="add-error" class="add-error hidden" role="alert"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" onclick="closeAddModal()">Cancel</button>
+      <button type="button" class="btn btn-primary" id="add-submit" onclick="addManualChannel()">Add channel</button>
+    </div>
   </div>
 </div>
 
@@ -58,6 +86,12 @@ var currentFilter = {{ active_filter|tojson }};
 function selectRow(el) {
   document.querySelectorAll('.chan-row.selected').forEach(function(r){ r.classList.remove('selected'); });
   el.classList.add('selected');
+}
+
+// '' when the Overview row is selected, so writes don't re-select a channel.
+function currentSelectedId() {
+  var row = document.querySelector('.chan-row.selected');
+  return (row && row.getAttribute('data-channel-id')) || '';
 }
 
 function toggleCheck(event, box) {
@@ -105,7 +139,7 @@ function togglePicker(type) {
   picker.classList.toggle('hidden');
 }
 
-function postForm(url, params, cb) {
+function postForm(url, params, cb, always) {
   var fd = new FormData();
   Object.keys(params).forEach(function(k){
     if (Array.isArray(params[k])) params[k].forEach(function(v){ fd.append(k, v); });
@@ -114,7 +148,8 @@ function postForm(url, params, cb) {
   fetch(url, {method:'POST', body:fd, headers:{'HX-Request':'true'}})
     .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error(parseErr(t)); }); return r.text(); })
     .then(function(html){ swapGroups(html); if (cb) cb(); })
-    .catch(function(e){ showAddError(e.message); });
+    .catch(function(e){ showError(e.message); })
+    .then(function(){ if (always) always(); });
 }
 
 function parseErr(text) {
@@ -126,23 +161,46 @@ function swapGroups(html) {
   g.innerHTML = html;
   htmx.process(g);
   reapplySearch();
+  updateBulk();  // the swap dropped the checkboxes; the bar follows
+}
+
+function loadDetail(channelId) {
+  var url = channelId ? '/channels/' + encodeURIComponent(channelId) + '/detail' : '/channels/overview';
+  htmx.ajax('GET', url, {target:'#channel-detail', swap:'innerHTML'});
 }
 
 function bulkAction(type, categoryId) {
   var ids = selectedIds();
   if (!ids.length) return;
   var url = type === 'assign' ? '/channels/assign' : '/channels/unassign';
-  postForm(url, {channel_ids: ids, category_id: categoryId, filter: currentFilter}, function(){
+  postForm(url, {channel_ids: ids, category_id: categoryId, filter: currentFilter,
+                 selected: currentSelectedId()}, function(){
     closePickers();
   });
+}
+
+function bulkIgnore(ignored) {
+  var ids = selectedIds();
+  if (!ids.length) return;
+  postForm('/channels/ignore', {channel_ids: ids, ignored: ignored ? 'true' : 'false',
+                                filter: currentFilter, selected: currentSelectedId()});
 }
 
 function setFilter(name, btn) {
   currentFilter = name;
   document.querySelectorAll('.list-filters .chip-btn').forEach(function(b){ b.classList.remove('on'); });
   btn.classList.add('on');
-  htmx.ajax('GET', '/channels/list?filter=' + encodeURIComponent(name), {target:'#channel-groups', swap:'innerHTML'})
-    .then(reapplySearch);
+  // Carry the current selection so the refreshed list still highlights what
+  // the detail pane is showing (or the Overview row, when nothing is).
+  var url = '/channels/list?filter=' + encodeURIComponent(name)
+          + '&selected=' + encodeURIComponent(currentSelectedId());
+  htmx.ajax('GET', url, {target:'#channel-groups', swap:'innerHTML'}).then(reapplySearch);
+}
+
+// Used by the overview's tiles to jump straight into a list filter.
+function jumpFilter(name) {
+  var btn = document.querySelector('.list-filters .chip-btn[data-filter="' + name + '"]');
+  if (btn) btn.click();
 }
 
 function filterChannels(query) {
@@ -157,24 +215,62 @@ function reapplySearch() {
   if (s && s.value) filterChannels(s.value);
 }
 
-function showAddError(msg) {
-  var box = document.getElementById('add-error');
+// Errors land in the add dialog while it's open, and in the list otherwise
+// (bulk actions), so a failure is always shown next to what caused it.
+function showError(msg) {
+  var inModal = !document.getElementById('add-modal').hidden;
+  var box = document.getElementById(inModal ? 'add-error' : 'list-error');
   box.textContent = msg;
   box.classList.remove('hidden');
+  if (!inModal) setTimeout(function(){ box.classList.add('hidden'); }, 8000);
+}
+
+function openAddModal() {
+  var modal = document.getElementById('add-modal');
+  var input = document.getElementById('add-channel-input');
+  document.getElementById('add-error').classList.add('hidden');
+  input.value = '';
+  modal.hidden = false;
+  input.focus();
+}
+
+function closeAddModal() {
+  document.getElementById('add-modal').hidden = true;
 }
 
 function addManualChannel() {
   var input = document.getElementById('add-channel-input');
+  var submit = document.getElementById('add-submit');
   var value = input.value.trim();
   document.getElementById('add-error').classList.add('hidden');
-  if (!value) return;
-  postForm('/channels/add', {channel_input: value, filter: currentFilter}, function(){ input.value = ''; });
+  if (!value || submit.disabled) return;
+  submit.disabled = true;
+  submit.textContent = 'Looking up…';
+  postForm('/channels/add', {channel_input: value, filter: currentFilter},
+    function(){
+      closeAddModal();
+      // The list came back with the new channel selected; show it.
+      loadDetail(currentSelectedId());
+    },
+    function(){
+      submit.disabled = false;
+      submit.textContent = 'Add channel';
+    });
 }
 
 function removeManualChannel(channelId) {
   if (!confirm('Remove this manually-added channel?')) return;
-  postForm('/channels/remove', {channel_id: channelId, filter: currentFilter});
+  postForm('/channels/remove', {channel_id: channelId, filter: currentFilter}, function(){
+    loadDetail('');
+  });
 }
+
+document.getElementById('add-modal').addEventListener('mousedown', function(e){
+  if (e.target === this) closeAddModal();
+});
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape' && !document.getElementById('add-modal').hidden) closeAddModal();
+});
 
 // Keep the detail pane's hidden filter field in sync so its writes group correctly.
 document.body.addEventListener('htmx:afterSwap', function(evt){
@@ -182,7 +278,7 @@ document.body.addEventListener('htmx:afterSwap', function(evt){
     var f = evt.detail.target.querySelector('[data-detail-filter]');
     if (f) f.value = currentFilter;
   }
-  if (evt.detail.target.id === 'channel-groups') reapplySearch();
+  if (evt.detail.target.id === 'channel-groups') { reapplySearch(); updateBulk(); }
 });
 </script>
 {% endblock %}

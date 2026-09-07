@@ -125,15 +125,12 @@ def _channel_ids_with_failures(user: User, db: Session) -> set[str]:
 # --- list context -----------------------------------------------------------
 
 
-def _build_list_context(user: User, db: Session, selected: str | None, filt: str) -> dict:
-    """Groups of channels for the master list, honouring the active filter.
+def _channel_records(user: User, db: Session) -> tuple[list[dict], list[Category]]:
+    """Light per-channel records plus the user's categories, in one pass.
 
-    Channels are grouped Uncategorized-first, then by category (a channel in
-    several categories appears under each). Empty groups are dropped.
+    Shared by the master list and the overview so the two can't disagree about
+    what's uncategorized, ignored or archiving.
     """
-    if filt not in _FILTERS:
-        filt = "All"
-
     rows = db.execute(
         select(Subscription, Channel)
         .join(Channel, Subscription.channel_id == Channel.channel_id)
@@ -141,9 +138,9 @@ def _build_list_context(user: User, db: Session, selected: str | None, filt: str
         .order_by(Channel.title)
     ).all()
 
-    categories = db.execute(
+    categories = list(db.execute(
         select(Category).where(Category.user_id == user.id).order_by(Category.name)
-    ).scalars().all()
+    ).scalars().all())
     cat_by_id = {c.id: c for c in categories}
 
     assignments = db.execute(
@@ -159,7 +156,6 @@ def _build_list_context(user: User, db: Session, selected: str | None, filt: str
 
     failures = _channel_ids_with_failures(user, db)
 
-    # Build a light per-channel record for the list.
     records = []
     for sub, ch in rows:
         cats = channel_cats.get(ch.channel_id, [])
@@ -174,6 +170,22 @@ def _build_list_context(user: User, db: Session, selected: str | None, filt: str
             "has_failure": ch.channel_id in failures,
             "is_manual": sub.account_id is None,
         })
+    return records, categories
+
+
+def _build_list_context(user: User, db: Session, selected: str | None, filt: str) -> dict:
+    """Groups of channels for the master list, honouring the active filter.
+
+    Channels are grouped Uncategorized-first, then by category (a channel in
+    several categories appears under each). Ignored channels are pulled out of
+    those groups entirely and collected in one Ignored group pinned to the
+    bottom, so they don't clutter the categories they're still assigned to.
+    Empty groups are dropped.
+    """
+    if filt not in _FILTERS:
+        filt = "All"
+
+    records, categories = _channel_records(user, db)
 
     # Apply the active filter to the pool before grouping.
     if filt == "Uncategorized":
@@ -187,14 +199,25 @@ def _build_list_context(user: User, db: Session, selected: str | None, filt: str
     else:
         pool = records
 
+    live = [r for r in pool if not r["ignored"]]
+
     groups = []
-    uncat = [r for r in pool if not r["cats"]]
+    uncat = [r for r in live if not r["cats"]]
     if uncat:
         groups.append({"name": "Uncategorized", "count": len(uncat), "channels": uncat})
     for cat in categories:
-        members = [r for r in pool if cat in r["cats"]]
+        members = [r for r in live if cat in r["cats"]]
         if members:
             groups.append({"name": cat.name, "count": len(members), "channels": members})
+
+    ignored = [r for r in pool if r["ignored"]]
+    if ignored:
+        groups.append({
+            "name": "Ignored",
+            "count": len(ignored),
+            "channels": ignored,
+            "is_ignored": True,
+        })
 
     return {
         "groups": groups,
@@ -205,13 +228,6 @@ def _build_list_context(user: User, db: Session, selected: str | None, filt: str
         "categories": categories,
         "link_targets": LINK_TARGETS,
     }
-
-
-def _first_channel_id(list_ctx: dict) -> str | None:
-    for g in list_ctx["groups"]:
-        if g["channels"]:
-            return g["channels"][0]["channel_id"]
-    return None
 
 
 # --- detail context ---------------------------------------------------------
@@ -284,6 +300,37 @@ def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False):
     }
 
 
+def _activity_item(dl: Download, vid: Video, channel_title: str | None = None) -> dict:
+    """One download rendered as an activity row (status dot, meta line, size)."""
+    dur = f"{vid.duration_seconds // 60} min" if vid.duration_seconds else None
+    if dl.status == "complete":
+        status = "ok"
+        when = dl.completed_at.strftime("%Y-%m-%d") if dl.completed_at else "recently"
+        meta = f"Downloaded {when}" + (f" · {dur}" if dur else "")
+        size = format_bytes(dl.file_size_bytes or 0)
+    elif dl.status == "failed":
+        status = "fail"
+        err = (dl.last_error or "download error").splitlines()[0][:60]
+        meta = f"Failed — {err}" + (f" ({dl.attempts} attempts)" if dl.attempts else "")
+        size = "—"
+    elif dl.status == "skipped":
+        status = "skip"
+        meta = f"Skipped — {dl.skip_reason or 'excluded'}"
+        size = "—"
+    else:
+        status = "idle"
+        meta = dl.status.capitalize()
+        size = "—"
+    if channel_title:
+        meta = f"{channel_title} · {meta}"
+    return {
+        "title": vid.title or vid.video_id,
+        "meta": meta,
+        "size": size,
+        "status": status,
+    }
+
+
 def _archive_activity(channel_id: str, db: Session) -> list[dict]:
     """Recent download rows for a channel, newest first, as activity items."""
     rows = db.execute(
@@ -293,35 +340,21 @@ def _archive_activity(channel_id: str, db: Session) -> list[dict]:
         .order_by(Download.created_at.desc())
         .limit(15)
     ).all()
+    return [_activity_item(dl, vid) for dl, vid in rows]
 
-    items = []
-    for dl, vid in rows:
-        dur = f"{vid.duration_seconds // 60} min" if vid.duration_seconds else None
-        if dl.status == "complete":
-            status = "ok"
-            when = dl.completed_at.strftime("%Y-%m-%d") if dl.completed_at else "recently"
-            meta = f"Downloaded {when}" + (f" · {dur}" if dur else "")
-            size = format_bytes(dl.file_size_bytes or 0)
-        elif dl.status == "failed":
-            status = "fail"
-            err = (dl.last_error or "download error").splitlines()[0][:60]
-            meta = f"Failed — {err}" + (f" ({dl.attempts} attempts)" if dl.attempts else "")
-            size = "—"
-        elif dl.status == "skipped":
-            status = "skip"
-            meta = f"Skipped — {dl.skip_reason or 'excluded'}"
-            size = "—"
-        else:
-            status = "idle"
-            meta = dl.status.capitalize()
-            size = "—"
-        items.append({
-            "title": vid.title or vid.video_id,
-            "meta": meta,
-            "size": size,
-            "status": status,
-        })
-    return items
+
+def _recent_activity(user: User, db: Session, limit: int = 12) -> list[dict]:
+    """Recent downloads across every channel this user subscribes to."""
+    rows = db.execute(
+        select(Download, Video, Channel.title)
+        .join(Video, Video.video_id == Download.video_id)
+        .join(Channel, Channel.channel_id == Video.channel_id)
+        .join(Subscription, Subscription.channel_id == Video.channel_id)
+        .where(Subscription.user_id == user.id)
+        .order_by(Download.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [_activity_item(dl, vid, title) for dl, vid, title in rows]
 
 
 def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
@@ -388,6 +421,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         "channel_id": ch.channel_id,
         "title": ch.title,
         "is_manual": sub.account_id is None,
+        "ignored": sub.ignored,
         "youtube_url": f"https://www.youtube.com/channel/{ch.channel_id}",
         "cats": cats,
         "assignable_categories": assignable,
@@ -413,6 +447,117 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
             _pref_choice(sub, cats, user, "link_target", "Feed link target", link_opts),
         ],
         "activity": _archive_activity(channel_id, db),
+    }
+
+
+# --- overview context ---------------------------------------------------------
+
+
+def _overview_context(user: User, db: Session) -> dict:
+    """Library-wide summary shown in the detail pane when nothing is selected.
+
+    The landing view: totals, a per-category breakdown, what needs attention,
+    and recent archive activity. Deliberately read-only — opening the app can't
+    change a channel by accident.
+    """
+    records, categories = _channel_records(user, db)
+
+    live = [r for r in records if not r["ignored"]]
+    ignored = [r for r in records if r["ignored"]]
+    uncategorized = [r for r in live if not r["cats"]]
+    archiving = [r for r in live if r["archive_on"]]
+    failing = [r for r in records if r["has_failure"]]
+
+    # Download totals across this user's channels, one grouped query.
+    status_rows = db.execute(
+        select(
+            Download.status,
+            func.count(),
+            func.coalesce(func.sum(Download.file_size_bytes), 0),
+        )
+        .select_from(Download)
+        .join(Video, Video.video_id == Download.video_id)
+        .join(Subscription, Subscription.channel_id == Video.channel_id)
+        .where(Subscription.user_id == user.id)
+        .group_by(Download.status)
+    ).all()
+    counts = {status: count for status, count, _ in status_rows}
+    disk = sum(size for status, _, size in status_rows if status == "complete")
+    pending = sum(
+        count for status, count, _ in status_rows
+        if status not in ("complete", "failed", "skipped")
+    )
+
+    # Category breakdown, biggest first, with a bar width relative to the
+    # largest category so the shape of the library reads at a glance.
+    breakdown = [
+        {"name": cat.name, "count": len([r for r in live if cat in r["cats"]])}
+        for cat in categories
+    ]
+    breakdown.sort(key=lambda c: (-c["count"], c["name"].lower()))
+    widest = max([c["count"] for c in breakdown] + [1])
+    for row in breakdown:
+        row["pct"] = round(100 * row["count"] / widest)
+
+    # Actionable items, each a jump into the matching list filter.
+    attention = []
+    if failing:
+        attention.append({
+            "filter": "Failed",
+            "label": f"{len(failing)} channel{'' if len(failing) == 1 else 's'} with a failed download",
+            "hint": "Retry or inspect them in Settings › Downloads.",
+            "urgent": True,
+        })
+    if uncategorized:
+        attention.append({
+            "filter": "Uncategorized",
+            "label": f"{len(uncategorized)} channel{'' if len(uncategorized) == 1 else 's'} not in a category",
+            "hint": "Uncategorized channels only appear in the all-channels feed.",
+            "urgent": False,
+        })
+    if not categories:
+        attention.append({
+            "filter": None,
+            "label": "No categories yet",
+            "hint": "Categories become per-topic OPML feeds and group archive settings.",
+            "urgent": False,
+        })
+
+    last_video = db.execute(
+        select(func.max(Video.published_at))
+        .select_from(Video)
+        .join(Subscription, Subscription.channel_id == Video.channel_id)
+        .where(Subscription.user_id == user.id)
+    ).scalar_one_or_none()
+
+    last_synced = db.execute(
+        select(func.max(YoutubeAccount.last_synced_at))
+        .where(YoutubeAccount.user_id == user.id)
+    ).scalar_one_or_none()
+
+    token = db.execute(
+        select(OpmlToken).where(OpmlToken.user_id == user.id)
+    ).scalar_one_or_none()
+    base_url = get_settings().base_url
+
+    return {
+        "channel_count": len(live),
+        "ignored_count": len(ignored),
+        "total_count": len(records),
+        "category_count": len(categories),
+        "uncategorized_count": len(uncategorized),
+        "archiving_count": len(archiving),
+        "archived_videos": counts.get("complete", 0),
+        "failed_downloads": counts.get("failed", 0),
+        "pending_downloads": pending,
+        "disk_human": format_bytes(int(disk)),
+        "breakdown": breakdown,
+        "attention": attention,
+        "activity": _recent_activity(user, db),
+        # None rather than "—" so the header can drop the clause entirely.
+        "last_video": _ago(last_video) if last_video else None,
+        "last_synced": _ago(last_synced) if last_synced else None,
+        "opml_url": f"{base_url}/opml/{token.token}/all.opml" if token else None,
     }
 
 
@@ -444,10 +589,18 @@ def _detail_response(
 
 
 def _stage_response_args(form) -> tuple[str, str | None]:
-    """Extract (filter, selected) from a write request's form."""
+    """Extract (filter, selected) from a write request's form.
+
+    An explicitly blank ``selected`` means "nothing is selected" (the overview
+    is showing) and is honoured; only its absence falls back to the first
+    channel written to.
+    """
     filt = form.get("filter") or "All"
     channel_ids = form.getlist("channel_ids")
-    selected = form.get("selected") or (channel_ids[0] if channel_ids else None)
+    if "selected" in form:
+        selected = form.get("selected") or None
+    else:
+        selected = channel_ids[0] if channel_ids else None
     return filt, selected
 
 
@@ -516,21 +669,40 @@ def list_channels(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """The channels stage. With no ``selected``, the detail pane shows the
+    library overview rather than auto-selecting a channel — landing on a real
+    channel made it easy to edit one by accident."""
     list_ctx = _build_list_context(user, db, selected, filter)
-    if not selected:
-        selected = _first_channel_id(list_ctx)
-        list_ctx["selected_id"] = selected
 
     if _is_htmx(request):
         list_ctx["user"] = user
         return templates.TemplateResponse(request, "partials/channel_list.html", context=list_ctx)
 
+    detail = _channel_detail(user, db, selected) if selected else None
+    if detail is None:
+        list_ctx["selected_id"] = None
+
     ctx = dict(list_ctx)
     ctx["user"] = user
     ctx["active_nav"] = "channels"
     ctx["stats"] = shell_stats(user, db)
-    ctx["detail"] = _channel_detail(user, db, selected) if selected else None
+    ctx["detail"] = detail
+    ctx["overview"] = None if detail else _overview_context(user, db)
     return templates.TemplateResponse(request, "channels.html", context=ctx)
+
+
+@router.get("/overview")
+def channel_overview_partial(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """The overview partial, for swapping back into the detail pane."""
+    return templates.TemplateResponse(
+        request,
+        "partials/overview.html",
+        context={"user": user, "overview": _overview_context(user, db)},
+    )
 
 
 @router.get("/list")

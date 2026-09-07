@@ -1,0 +1,119 @@
+{# Library overview: what the detail pane shows when no channel is selected.
+   Read-only by design — opening the app shouldn't be able to edit a channel. #}
+{% set o = overview %}
+<div class="detail-head">
+  <div class="detail-head-top">
+    <div>
+      <div class="eyebrow">Library</div>
+      <h1 class="detail-title">Overview</h1>
+      <div class="detail-sub">
+        <span>{{ o.channel_count }} active channel{{ '' if o.channel_count == 1 else 's' }}</span>
+        {% if o.last_video %}<span>·</span><span>newest video {{ o.last_video }} ago</span>{% endif %}
+        {% if o.last_synced %}<span>·</span><span>synced {{ o.last_synced }} ago</span>{% endif %}
+      </div>
+    </div>
+    <div class="detail-stats">
+      <div>
+        <div class="stat-k">Archived</div>
+        <div class="stat-v tabular">{{ o.archived_videos }}</div>
+      </div>
+      <div>
+        <div class="stat-k">Disk</div>
+        <div class="stat-v tabular">{{ o.disk_human }}</div>
+      </div>
+      <div>
+        <div class="stat-k">Categories</div>
+        <div class="stat-v tabular">{{ o.category_count }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="detail-grid">
+  <div class="detail-col-l">
+    <h2 class="section-label">At a glance</h2>
+    <div class="ov-tiles">
+      <button type="button" class="ov-tile" onclick="jumpFilter('All')">
+        <span class="ov-tile-v tabular">{{ o.channel_count }}</span>
+        <span class="ov-tile-k">Active channels</span>
+      </button>
+      <button type="button" class="ov-tile{% if o.uncategorized_count %} warn{% endif %}"
+              onclick="jumpFilter('Uncategorized')">
+        <span class="ov-tile-v tabular">{{ o.uncategorized_count }}</span>
+        <span class="ov-tile-k">Uncategorized</span>
+      </button>
+      <button type="button" class="ov-tile" onclick="jumpFilter('Archiving')">
+        <span class="ov-tile-v tabular">{{ o.archiving_count }}</span>
+        <span class="ov-tile-k">Archiving</span>
+      </button>
+      <button type="button" class="ov-tile" onclick="jumpFilter('Ignored')">
+        <span class="ov-tile-v tabular">{{ o.ignored_count }}</span>
+        <span class="ov-tile-k">Ignored</span>
+      </button>
+      <button type="button" class="ov-tile{% if o.failed_downloads %} warn{% endif %}"
+              onclick="jumpFilter('Failed')">
+        <span class="ov-tile-v tabular">{{ o.failed_downloads }}</span>
+        <span class="ov-tile-k">Failed downloads</span>
+      </button>
+      <div class="ov-tile static">
+        <span class="ov-tile-v tabular">{{ o.pending_downloads }}</span>
+        <span class="ov-tile-k">Queued downloads</span>
+      </div>
+    </div>
+
+    {% if o.attention %}
+    <h2 class="section-label spaced">Needs attention</h2>
+    {% for item in o.attention %}
+    <div class="ov-attn{% if item.urgent %} urgent{% endif %}">
+      <div>
+        <div class="ov-attn-label">{{ item.label }}</div>
+        <div class="ov-attn-hint">{{ item.hint }}</div>
+      </div>
+      {% if item.filter %}
+      <button type="button" class="btn btn-sm" onclick="jumpFilter('{{ item.filter }}')">Show</button>
+      {% else %}
+      <a class="btn btn-sm" href="/categories">Categories</a>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <h2 class="section-label spaced">Channels per category</h2>
+    {% for row in o.breakdown %}
+    <div class="ov-bar-row">
+      <div class="ov-bar-name">{{ row.name }}</div>
+      <div class="ov-bar"><span style="width: {{ row.pct }}%"></span></div>
+      <div class="ov-bar-n tabular">{{ row.count }}</div>
+    </div>
+    {% else %}
+    <div class="empty">No categories yet — create some on the <a href="/categories">Categories</a> page.</div>
+    {% endfor %}
+  </div>
+
+  <div class="detail-col-r">
+    <div class="activity-head">
+      <h2 class="section-label" style="margin:0">Recent archive activity</h2>
+    </div>
+    {% for v in o.activity %}
+    <div class="activity-item">
+      <span class="activity-dot {{ v.status }}"></span>
+      <div style="min-width:0">
+        <div class="activity-title">{{ v.title }}</div>
+        <div class="activity-meta">{{ v.meta }}</div>
+      </div>
+      <span class="activity-size">{{ v.size }}</span>
+    </div>
+    {% else %}
+    <div class="empty" style="padding:8px 0">Nothing archived yet.</div>
+    {% endfor %}
+
+    <div class="callout">
+      <div class="callout-k">All-channels OPML</div>
+      {% if o.opml_url %}
+      <div class="callout-url mono">{{ o.opml_url }}</div>
+      {% else %}
+      <div class="help-text">Generate an OPML token in <a href="/settings">Settings</a> to get feed URLs.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>

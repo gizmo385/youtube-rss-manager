@@ -35,7 +35,28 @@
       </div>
     </div>
   </div>
+  <div class="detail-actions">
+    {# Ignoring drops a channel out of feeds, downloads and the board, and
+       moves its row to the Ignored group at the bottom of the list. #}
+    <button type="button" class="btn btn-sm{% if d.ignored %} btn-primary{% endif %}"
+            hx-post="/channels/ignore" hx-include="#channel-detail [type=hidden]"
+            hx-vals='{"ignored": "{{ 'false' if d.ignored else 'true' }}"}'
+            hx-target="#channel-detail" hx-swap="innerHTML">
+      {{ 'Stop ignoring' if d.ignored else 'Ignore channel' }}
+    </button>
+    {% if d.is_manual %}
+    <button type="button" class="btn btn-sm btn-danger"
+            onclick="removeManualChannel('{{ d.channel_id }}')">Remove channel</button>
+    {% endif %}
+  </div>
 </div>
+
+{% if d.ignored %}
+<div class="detail-banner">
+  <strong>Ignored.</strong> This channel is left out of every feed, the archive
+  and the board. Its settings below are kept for when you stop ignoring it.
+</div>
+{% endif %}
 
 <div class="detail-grid">
   <div class="detail-col-l">

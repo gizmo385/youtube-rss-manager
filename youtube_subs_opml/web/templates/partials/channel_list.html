@@ -1,8 +1,16 @@
 {# Grouped channel list (rows only). Wrapped in #channel-groups by the page or
-   an OOB block. Row click loads the detail pane; the small box multi-selects. #}
+   an OOB block. Row click loads the detail pane; the small box multi-selects.
+   The Overview row at the top is selected whenever no channel is. #}
+<div class="chan-row overview-row{% if not selected_id %} selected{% endif %}"
+     data-title="overview" data-overview="1"
+     hx-get="/channels/overview" hx-target="#channel-detail" hx-swap="innerHTML"
+     onclick="selectRow(this)">
+  <span class="chan-title">Overview</span>
+  <span class="chan-badges"><span class="badge" title="Total channels">{{ total }}</span></span>
+</div>
 {% for group in groups %}
 <div class="chan-group">
-  <div class="group-head">
+  <div class="group-head{% if group.is_ignored %} ignored{% endif %}">
     <span class="group-name">{{ group.name }}</span>
     <span class="group-count">{{ group.count }}</span>
   </div>
@@ -17,7 +25,7 @@
       {% if ch.cat_count > 1 %}
       <span class="badge" title="In {{ ch.cat_count }} categories">+{{ ch.cat_count - 1 }}</span>
       {% endif %}
-      {% if ch.archive_on %}
+      {% if ch.archive_on and not ch.ignored %}
       <span class="badge-arc" title="Archiving enabled">ARC</span>
       {% endif %}
       {% if ch.has_failure %}
