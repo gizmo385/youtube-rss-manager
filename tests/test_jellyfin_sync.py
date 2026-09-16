@@ -6,6 +6,8 @@ add/remove reconcile — which is where the logic lives.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -95,9 +97,14 @@ class FakeJellyfin:
     def items_in(self, playlist_id) -> set[str]:
         return set(self.playlists.get(playlist_id, {}).values())
 
+    def order_in(self, playlist_id) -> list[str]:
+        """Item ids in playlist order — dict insertion order stands in for it."""
+        return list(self.playlists.get(playlist_id, {}).values())
 
-def seed_link(db, video_id, channel_id, link_path, item_id=None):
-    db.add(Video(video_id=video_id, channel_id=channel_id, title=video_id))
+
+def seed_link(db, video_id, channel_id, link_path, item_id=None, published_at=None):
+    db.add(Video(video_id=video_id, channel_id=channel_id, title=video_id,
+                 published_at=published_at))
     db.add(Download(video_id=video_id, status="complete", file_path="/c/" + video_id))
     db.add(DownloadLink(
         user_id=USER, video_id=video_id, link_path=link_path, jellyfin_item_id=item_id
@@ -210,6 +217,95 @@ def test_reconcile_removal_failure_is_nonfatal(db):
     # Should not raise; the wanted item is still added.
     jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
     assert "itemA" in fake.items_in("plX")
+
+
+# --- playlist ordering ---------------------------------------------------
+
+def _dated(day: int) -> datetime:
+    return datetime(2026, 3, day, tzinfo=timezone.utc)
+
+
+def test_reconcile_orders_newest_upload_first(db):
+    """A fresh playlist is built in upload order, not item-id order."""
+    add_category(db, 1, "Tech", ["chanA"])
+    # Item ids deliberately sort the opposite way to the upload dates, so an
+    # id-ordered playlist and a date-ordered one can't be confused.
+    seed_link(db, "vid1", "chanA", "/p/ep1.mkv", item_id="itemA", published_at=_dated(1))
+    seed_link(db, "vid2", "chanA", "/p/ep2.mkv", item_id="itemB", published_at=_dated(9))
+    seed_link(db, "vid3", "chanA", "/p/ep3.mkv", item_id="itemC", published_at=_dated(5))
+
+    fake = FakeJellyfin()
+    jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
+
+    pid = db.get(CategoryPlaylist, (USER, 1)).playlist_id
+    assert fake.order_in(pid) == ["itemB", "itemC", "itemA"]
+
+
+def test_reconcile_rewrites_an_out_of_order_playlist(db):
+    """An existing scrambled playlist is emptied and rebuilt in order."""
+    add_category(db, 1, "Tech", ["chanA"])
+    seed_link(db, "vid1", "chanA", "/p/ep1.mkv", item_id="itemA", published_at=_dated(1))
+    seed_link(db, "vid2", "chanA", "/p/ep2.mkv", item_id="itemB", published_at=_dated(9))
+
+    fake = FakeJellyfin()
+    fake.playlists["plX"] = {"plX:a": "itemA", "plX:b": "itemB"}  # oldest first
+    db.add(CategoryPlaylist(user_id=USER, category_id=1, playlist_id="plX"))
+    db.commit()
+
+    jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
+
+    assert fake.order_in("plX") == ["itemB", "itemA"]
+    # And a second pass leaves the corrected order alone.
+    jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
+    assert fake.order_in("plX") == ["itemB", "itemA"]
+
+
+def test_new_episode_lands_at_the_top(db):
+    add_category(db, 1, "Tech", ["chanA"])
+    seed_link(db, "vid1", "chanA", "/p/ep1.mkv", item_id="itemA", published_at=_dated(1))
+    fake = FakeJellyfin()
+    jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
+    pid = db.get(CategoryPlaylist, (USER, 1)).playlist_id
+
+    seed_link(db, "vid2", "chanA", "/p/ep2.mkv", item_id="itemB", published_at=_dated(9))
+    jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
+
+    assert fake.order_in(pid) == ["itemB", "itemA"]
+
+
+def test_undated_videos_sort_last(db):
+    add_category(db, 1, "Tech", ["chanA"])
+    seed_link(db, "vid1", "chanA", "/p/ep1.mkv", item_id="itemA")  # no publish date
+    seed_link(db, "vid2", "chanA", "/p/ep2.mkv", item_id="itemB", published_at=_dated(1))
+
+    fake = FakeJellyfin()
+    jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
+    pid = db.get(CategoryPlaylist, (USER, 1)).playlist_id
+    assert fake.order_in(pid) == ["itemB", "itemA"]
+
+
+def test_reorder_without_removal_support_keeps_membership_intact(db):
+    """No delete support: order stays wrong, but nothing is lost or duplicated."""
+    from youtube_subs_opml.web.services.jellyfin import JellyfinError
+
+    add_category(db, 1, "Tech", ["chanA"])
+    seed_link(db, "vid1", "chanA", "/p/ep1.mkv", item_id="itemA", published_at=_dated(1))
+    seed_link(db, "vid2", "chanA", "/p/ep2.mkv", item_id="itemB", published_at=_dated(9))
+
+    fake = FakeJellyfin()
+    fake.playlists["plX"] = {"plX:a": "itemA"}
+    db.add(CategoryPlaylist(user_id=USER, category_id=1, playlist_id="plX"))
+    db.commit()
+
+    def boom(*a, **k):
+        raise JellyfinError("400")
+    fake.remove_from_playlist = boom
+
+    jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
+    # itemB appended (membership converges); itemA not duplicated.
+    assert fake.order_in("plX") == ["itemA", "itemB"]
+    jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
+    assert fake.order_in("plX") == ["itemA", "itemB"]
 
 
 # --- sync_user + sync_all -----------------------------------------------

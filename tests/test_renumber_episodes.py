@@ -116,6 +116,99 @@ def test_renumber_renames_files_patches_nfo_and_backfills_description(db, tmp_pa
                 / f"{CHAN_TITLE} - S2026E07 - Ep One.mkv").exists()
 
 
+def test_renumber_follows_the_extracted_audio(db, tmp_path):
+    """The .m4a is renamed with the rest of the stem, so audio_path must move too.
+
+    A stale audio_path is what a podcast client sees as an episode that plays
+    404 — the feed still lists it, but the enclosure points at a dead name.
+    """
+    media_root = str(tmp_path)
+    old_mkv = _seed_old_style_episode(db, media_root)
+    old_m4a = old_mkv.with_suffix(".m4a")
+    old_m4a.write_bytes(b"audio-bytes")
+    download = db.get(Download, "vid00000001")
+    download.audio_path = str(old_m4a)
+    download.audio_size_bytes = old_m4a.stat().st_size
+    db.commit()
+
+    worker.renumber_episodes(db, media_root)
+
+    new_m4a = old_mkv.parent / f"{CHAN_TITLE} - S2026E0315 - Ep One.m4a"
+    assert new_m4a.exists() and not old_m4a.exists()
+    assert db.get(Download, "vid00000001").audio_path == str(new_m4a)
+
+
+def test_repair_repoints_audio_left_behind_by_an_earlier_renumber(db, tmp_path):
+    """Archives migrated before the fix have a stale audio_path and no rename left
+    to do — the repair pass reconciles the column against the disk instead."""
+    media_root = str(tmp_path)
+    old_mkv = _seed_old_style_episode(db, media_root)
+    download = db.get(Download, "vid00000001")
+    download.audio_path = str(old_mkv.with_suffix(".m4a"))  # pre-rename name
+    db.commit()
+
+    # Renumber first, writing the audio out under its post-rename name only.
+    worker.renumber_episodes(db, media_root)
+    new_mkv = Path(db.get(Download, "vid00000001").file_path)
+    new_m4a = new_mkv.with_suffix(".m4a")
+    new_m4a.write_bytes(b"audio-bytes")
+    download = db.get(Download, "vid00000001")
+    download.audio_path = str(old_mkv.with_suffix(".m4a"))
+    db.commit()
+
+    assert worker.repair_audio_paths(db) == 1
+
+    download = db.get(Download, "vid00000001")
+    assert download.audio_path == str(new_m4a)
+    assert download.audio_size_bytes == len(b"audio-bytes")
+
+
+def test_repair_clears_audio_that_is_really_gone(db, tmp_path):
+    """No file to point at: clear the column so backfill_audio re-extracts it."""
+    media_root = str(tmp_path)
+    old_mkv = _seed_old_style_episode(db, media_root)
+    download = db.get(Download, "vid00000001")
+    download.audio_path = str(old_mkv.with_suffix(".m4a"))  # never existed
+    download.audio_size_bytes = 10
+    db.commit()
+
+    assert worker.repair_audio_paths(db) == 1
+
+    download = db.get(Download, "vid00000001")
+    assert download.audio_path is None
+    assert download.audio_size_bytes is None
+    assert download.status == "complete"  # the video is still there
+
+
+def test_repair_requeues_an_audio_only_row_with_nothing_left(db, tmp_path):
+    """An audio-only download has no video for backfill_audio to work from, so a
+    missing .m4a means the row goes back through the queue."""
+    db.add(Video(video_id="vid00000002", channel_id=CHAN, title="Audio Only",
+                 published_at=PUB))
+    db.add(Download(video_id="vid00000002", status="complete", file_path=None,
+                    audio_path=str(tmp_path / "gone.m4a"), attempts=3))
+    db.commit()
+
+    assert worker.repair_audio_paths(db) == 1
+
+    download = db.get(Download, "vid00000002")
+    assert download.audio_path is None
+    assert download.status == "pending"
+    assert download.attempts == 0
+
+
+def test_repair_leaves_present_audio_alone(db, tmp_path):
+    media_root = str(tmp_path)
+    old_mkv = _seed_old_style_episode(db, media_root)
+    m4a = old_mkv.with_suffix(".m4a")
+    m4a.write_bytes(b"audio-bytes")
+    download = db.get(Download, "vid00000001")
+    download.audio_path = str(m4a)
+    db.commit()
+
+    assert worker.repair_audio_paths(db) == 0
+
+
 def test_renumber_is_idempotent(db, tmp_path):
     media_root = str(tmp_path)
     _seed_old_style_episode(db, media_root)

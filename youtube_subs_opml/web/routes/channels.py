@@ -47,12 +47,17 @@ _ARCHIVE_FIELD_KINDS = {
     "download_enabled": "bool",
     "generate_podcast": "bool",
     "keep_last_n": "int",
+    "keep_last_n_audio": "int",
     "max_duration_seconds": "minutes",
+    "min_duration_seconds": "minutes",
     "link_target": "link",
 }
 
 # Filter chips on the channel list. "All" is the default (no filtering).
 _FILTERS = ("All", "Uncategorized", "Archiving", "Failed", "Ignored")
+
+# Distinguishes "caller passed no inherited value" from a legitimate None.
+_UNSET = object()
 
 
 def _parse_archive_value(field: str, value: str | None):
@@ -280,11 +285,36 @@ def _pref_choice(sub, cats, user, key, label, opts):
     }
 
 
-def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False):
+def _inherited_audio_keep(cats, user):
+    """What the audio window resolves to when this channel doesn't set one.
+
+    Mirrors ``_inherited_value`` but applies the audio column's fallback to the
+    video column at each level, matching ``archive._audio_keep`` — otherwise the
+    placeholder would read 0 ("unlimited") for the common case of nobody having
+    set an audio window at all.
+    """
+    for cat in cats:
+        value = _or(cat.keep_last_n_audio, cat.keep_last_n)
+        if value is not None:
+            return value
+    return _or(user.keep_last_n_audio, user.keep_last_n)
+
+
+def _or(value, fallback):
+    return fallback if value is None else value
+
+
+def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False,
+                 inherited=_UNSET):
     """A numeric pref row. Blank means inherit; the placeholder shows the
-    inherited value so the effective number is visible without extra subtext."""
+    inherited value so the effective number is visible without extra subtext.
+
+    ``inherited`` overrides the plain category-then-account walk for prefs whose
+    inheritance isn't a straight lookup of the same column.
+    """
     own = getattr(sub, key)
-    inherited = _inherited_value(cats, user, key)
+    if inherited is _UNSET:
+        inherited = _inherited_value(cats, user, key)
     if minutes:
         own_display = "" if own is None else str(own // 60)
         placeholder = "0" if inherited is None else str(inherited // 60)
@@ -293,6 +323,7 @@ def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False):
         placeholder = "0" if inherited is None else str(inherited)
     return {
         "label": label,
+        "field": key,  # the archive-pref the input PATCHes
         "unit": unit,
         "value": own_display,
         "placeholder": placeholder,
@@ -439,8 +470,13 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         ],
         "archive_numbers": [
             _pref_number(sub, cats, user, "keep_last_n", "Keep last N", "videos", "Blank inherits"),
+            _pref_number(sub, cats, user, "keep_last_n_audio", "Keep audio", "episodes",
+                         "Blank matches the video window, 0 = keep everything",
+                         inherited=_inherited_audio_keep(cats, user)),
             _pref_number(sub, cats, user, "max_duration_seconds", "Max duration", "min",
                          "Blank inherits, 0 = no limit", minutes=True),
+            _pref_number(sub, cats, user, "min_duration_seconds", "Min duration", "min",
+                         "Blank inherits, 0 = no floor", minutes=True),
         ],
         "archive_choices": [
             _pref_choice(sub, cats, user, "generate_podcast", "Podcast audio", tri),

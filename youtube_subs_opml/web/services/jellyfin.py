@@ -19,6 +19,12 @@ Endpoint shapes verified against the Jellyfin 10.11 API (August 2026):
   item id), passed as ``entryIds``. API-key support for the DELETE landed in
   jellyfin/jellyfin#14154; on older 10.11.x builds it can 400, so removal is
   treated as best-effort by the caller.
+- There is **no** API-key-usable way to reorder a playlist in place. Both
+  ``POST /Playlists/{id}/Items/{itemId}/Move/{index}`` and the bulk
+  ``POST /Playlists/{id}`` update authorise against the calling *user* — with an
+  API key that's the empty GUID, which owns nothing, so they ``403``. Only the
+  append-only add and the remove above are available, which is why
+  ``jellyfin_sync`` reorders by rewriting the list.
 """
 
 from __future__ import annotations
@@ -32,6 +38,16 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 30.0
+
+# Playlist ids are passed in the query string, so they go out in batches rather
+# than one enormous URL. 50 ids is ~1.7 KB of query — comfortably under any
+# server or proxy limit, and few enough requests that a full playlist rewrite
+# stays cheap.
+_ID_BATCH = 50
+
+
+def _batched(ids: list[str]) -> list[list[str]]:
+    return [ids[i:i + _ID_BATCH] for i in range(0, len(ids), _ID_BATCH)]
 
 
 class JellyfinError(RuntimeError):
@@ -141,18 +157,27 @@ class JellyfinClient:
     def add_to_playlist(
         self, playlist_id: str, item_ids: list[str], user_id: str
     ) -> None:
+        """Append items to a playlist, in the order given.
+
+        Jellyfin has no insert-at-index; adds always go on the end, which is why
+        the caller controls order by controlling what it sends. Ids travel in the
+        query string, so they're sent in batches — a whole playlist's worth in one
+        URL would run into server limits — and the batches go in sequence so the
+        overall order is preserved.
+        """
         if not item_ids:
             return
-        try:
-            resp = httpx.post(
-                self._url(f"/Playlists/{playlist_id}/Items"),
-                headers=self._headers(),
-                params={"ids": ",".join(item_ids), "userId": user_id},
-                timeout=_TIMEOUT,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise JellyfinError(f"playlist add failed: {exc}") from exc
+        for batch in _batched(item_ids):
+            try:
+                resp = httpx.post(
+                    self._url(f"/Playlists/{playlist_id}/Items"),
+                    headers=self._headers(),
+                    params={"ids": ",".join(batch), "userId": user_id},
+                    timeout=_TIMEOUT,
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise JellyfinError(f"playlist add failed: {exc}") from exc
 
     def playlist_entries(self, playlist_id: str, user_id: str) -> list[PlaylistEntry]:
         try:
@@ -178,18 +203,20 @@ class JellyfinClient:
     def remove_from_playlist(
         self, playlist_id: str, entry_ids: list[str], user_id: str
     ) -> None:
+        """Remove entries by ``PlaylistItemId``, batched like the add."""
         if not entry_ids:
             return
-        try:
-            resp = httpx.delete(
-                self._url(f"/Playlists/{playlist_id}/Items"),
-                headers=self._headers(),
-                params={"entryIds": ",".join(entry_ids), "userId": user_id},
-                timeout=_TIMEOUT,
-            )
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise JellyfinError(f"playlist remove failed: {exc}") from exc
+        for batch in _batched(entry_ids):
+            try:
+                resp = httpx.delete(
+                    self._url(f"/Playlists/{playlist_id}/Items"),
+                    headers=self._headers(),
+                    params={"entryIds": ",".join(batch), "userId": user_id},
+                    timeout=_TIMEOUT,
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise JellyfinError(f"playlist remove failed: {exc}") from exc
 
 
 def normalise_path(path: str) -> str:

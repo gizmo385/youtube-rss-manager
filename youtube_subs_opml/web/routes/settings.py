@@ -19,6 +19,7 @@ from ..services.crypto import decrypt_token, encrypt_token
 from ..services.jellyfin import JellyfinClient
 from ..services.prefs import (
     LINK_TARGETS,
+    parse_inherit_int,
     parse_link_target,
     parse_required_int,
 )
@@ -140,6 +141,7 @@ def settings_page(
         "media_root": settings.media_root,
         "link_targets": LINK_TARGETS,
         "max_duration_minutes": user.max_duration_seconds // 60,
+        "min_duration_minutes": user.min_duration_seconds // 60,
         "active_nav": "settings",
         "active_tab": active_tab,
         "stats": shell_stats(user, db),
@@ -196,8 +198,14 @@ async def update_defaults(
     user.download_enabled = "download_enabled" in form
     user.generate_podcast = "generate_podcast" in form
     user.keep_last_n = parse_required_int(form.get("keep_last_n"), 15)
+    # Blank means "same window as the video" rather than "inherit from a level
+    # above" — there is no level above the user.
+    user.keep_last_n_audio = parse_inherit_int(form.get("keep_last_n_audio"))
     user.max_duration_seconds = (
         parse_required_int(form.get("max_duration_minutes"), 0) * 60
+    )
+    user.min_duration_seconds = (
+        parse_required_int(form.get("min_duration_minutes"), 0) * 60
     )
     user.link_target = parse_link_target(form.get("link_target"), allow_inherit=False)
     db.commit()

@@ -85,6 +85,35 @@ def test_selected_channel_still_opens_its_detail(client):
     assert "Ignore channel" in html
 
 
+def test_detail_offers_a_separate_audio_retention_field(client):
+    """Both keep rows PATCH their own field — the template used to infer the
+    field name from the label, which two "Keep" rows would have collided on."""
+    html = client.get("/channels?selected=UCa").text
+    assert '"field": "keep_last_n"' in html
+    assert '"field": "keep_last_n_audio"' in html
+    # Blank audio window shows the video window it defaults to (user default 15).
+    assert 'placeholder="15"' in html
+
+
+def test_audio_retention_saves_per_subscription(client):
+    resp = client.post(
+        "/channels/archive-pref",
+        data={"channel_ids": "UCa", "selected": "UCa", "return": "detail",
+              "field": "keep_last_n_audio", "value": "30", "filter": "All"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    assert 'value="30"' in resp.text
+    # And blanking it goes back to inheriting.
+    resp = client.post(
+        "/channels/archive-pref",
+        data={"channel_ids": "UCa", "selected": "UCa", "return": "detail",
+              "field": "keep_last_n_audio", "value": "", "filter": "All"},
+        headers={"HX-Request": "true"},
+    )
+    assert 'value="30"' not in resp.text
+
+
 def test_ignored_channels_group_at_the_bottom(client):
     html = client.get("/channels/list").text
     groups = [line for line in html.splitlines() if "group-name" in line]

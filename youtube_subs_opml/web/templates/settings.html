@@ -71,9 +71,21 @@
             <span class="field-hint">0 = keep everything</span>
           </label>
           <label class="field">
+            <span class="field-label">Keep last N podcast episodes</span>
+            <input type="number" name="keep_last_n_audio" min="0" step="1"
+                   placeholder="{{ user.keep_last_n }}"
+                   value="{{ user.keep_last_n_audio if user.keep_last_n_audio is not none else '' }}">
+            <span class="field-hint">Audio is ~12&times; smaller than video, so it can be kept far longer. Blank = same as videos, 0 = keep everything</span>
+          </label>
+          <label class="field">
             <span class="field-label">Max duration (min)</span>
             <input type="number" name="max_duration_minutes" min="0" step="1" value="{{ max_duration_minutes }}">
             <span class="field-hint">0 = no limit</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Min duration (min)</span>
+            <input type="number" name="min_duration_minutes" min="0" step="1" value="{{ min_duration_minutes }}">
+            <span class="field-hint">0 = no floor. Skips anything shorter — clips, quick updates</span>
           </label>
           <label class="field">
             <span class="field-label">Feed link target</span>

@@ -42,7 +42,7 @@ from ..web.services.archive import (
     retained_video_ids,
     user_retained_video_ids,
 )
-from ..web.services.prefs import is_within_duration_limit
+from ..web.services.prefs import is_within_duration_limit, meets_duration_floor
 from ..web.services.shorts import classify_videos
 from . import naming, ytdlp
 
@@ -202,6 +202,20 @@ def process(row: Download, db: Session) -> None:
         db.commit()
         return
 
+    # The channel intent says which media kinds are wanted *at all*; the
+    # retention sets say whether this particular episode is still inside each
+    # window. They differ once the audio window is wider than the video one —
+    # without this, a channel keeping 5 videos and 30 podcast episodes would
+    # fetch a 500 MiB .mkv for episode 30 only for run_prune to delete it
+    # minutes later. Also covers a window tightened after the row was enqueued.
+    wants_video = row.video_id in retained_video_ids(db)
+    wants_audio = row.video_id in retained_podcast_ids(db)
+    if not (wants_video or wants_audio):
+        row.status = "skipped"
+        row.skip_reason = "no_subscribers"
+        db.commit()
+        return
+
     if not is_within_duration_limit(
         video.duration_seconds, intent.max_duration_seconds
     ):
@@ -213,6 +227,20 @@ def process(row: Download, db: Session) -> None:
         )
         row.status = "skipped"
         row.skip_reason = "too_long"
+        db.commit()
+        return
+
+    if not meets_duration_floor(
+        video.duration_seconds, intent.min_duration_seconds
+    ):
+        logger.info(
+            "Skipping %s: %ss is under the floor of %ss",
+            row.video_id,
+            video.duration_seconds,
+            intent.min_duration_seconds,
+        )
+        row.status = "skipped"
+        row.skip_reason = "too_short"
         db.commit()
         return
 
@@ -229,7 +257,9 @@ def process(row: Download, db: Session) -> None:
 
     # --- Fetch: the video if archived, the audio if a podcast is wanted -----
     # A channel wanted only as a podcast (archive off, podcasts on) fetches just
-    # the audio: no .mkv, no Jellyfin sidecars, never linked into a library.
+    # the audio: no .mkv, no Jellyfin sidecars, never linked into a library. An
+    # episode that has aged out of the video window but not the audio one takes
+    # the same path.
     episode_number = naming.date_episode_number(video.published_at)
     basename = naming.episode_basename(
         channel_title, video.published_at, episode_number, video.title or meta.title
@@ -239,7 +269,7 @@ def process(row: Download, db: Session) -> None:
     )
     target = target_dir / basename
 
-    if intent.download:
+    if wants_video:
         try:
             produced = ytdlp.download(
                 row.video_id,
@@ -271,7 +301,7 @@ def process(row: Download, db: Session) -> None:
         row.file_path = str(produced)
         row.file_size_bytes = produced.stat().st_size
 
-    if intent.generate_podcast:
+    if wants_audio:
         try:
             audio = ytdlp.extract_audio(
                 row.video_id,
@@ -281,7 +311,7 @@ def process(row: Download, db: Session) -> None:
             row.audio_path = str(audio)
             row.audio_size_bytes = audio.stat().st_size
         except ytdlp.DownloadError as exc:
-            if intent.download:
+            if wants_video:
                 # The video already succeeded; the podcast item just won't
                 # appear until a later backfill_audio pass retries the audio.
                 logger.warning("Audio extraction failed for %s: %s", row.video_id, exc)
@@ -302,8 +332,8 @@ def process(row: Download, db: Session) -> None:
     row.completed_at = datetime.now(timezone.utc)
     row.last_error = None
     db.commit()
-    kind = ("video+audio" if intent.download and intent.generate_podcast
-            else "video" if intent.download else "audio")
+    kind = ("video+audio" if wants_video and wants_audio
+            else "video" if wants_video else "audio")
     logger.info("Fetched %s (%s)", row.video_id, kind)
 
 
@@ -419,22 +449,24 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
 _EPISODE_TOKEN = re.compile(r"(S\d{4}E)\d+")
 
 
-def _rename_episode_files(old_mkv: Path, new_stem: str) -> Path:
+def _rename_episode_files(old_mkv: Path, new_stem: str) -> dict[Path, Path]:
     """Rename an episode's .mkv and its sidecars to ``new_stem`` in place.
 
-    Returns the new .mkv path. Sidecars keep their suffix (``.nfo``,
-    ``-thumb.jpg``) — only the shared stem changes.
+    Returns ``{old path: new path}`` for every file moved, so callers can update
+    *all* the columns that point into the tree — the ``.mkv`` is only one of
+    them; the extracted ``.m4a`` a podcast feed serves is renamed here too, and
+    a stale ``audio_path`` is an episode that 404s in a podcast app. Sidecars
+    keep their suffix (``.nfo``, ``-thumb.jpg``) — only the shared stem changes.
     """
     old_stem = old_mkv.stem
-    new_mkv = old_mkv
+    moved: dict[Path, Path] = {}
     for f in naming.episode_files(old_mkv):
         target = f.with_name(new_stem + f.name[len(old_stem):])
         if target == f:
             continue
         f.rename(target)
-        if f == old_mkv:
-            new_mkv = target
-    return new_mkv
+        moved[f] = target
+    return moved
 
 
 def renumber_episodes(db: Session, media_root: str) -> int:
@@ -474,8 +506,15 @@ def renumber_episodes(db: Session, media_root: str) -> int:
             if not old_mkv.exists():
                 logger.warning("Canonical file missing, skipping renumber: %s", old_mkv)
                 continue
-            new_mkv = _rename_episode_files(old_mkv, new_stem)
+            moved = _rename_episode_files(old_mkv, new_stem)
+            new_mkv = moved.get(old_mkv, old_mkv)
             download.file_path = str(new_mkv)
+            # The .m4a moved with the rest of the stem; follow it, or the
+            # podcast enclosure points at a name that no longer exists.
+            if download.audio_path:
+                new_audio = moved.get(Path(download.audio_path))
+                if new_audio is not None:
+                    download.audio_path = str(new_audio)
             relinked.add(download.video_id)
             renamed += 1
         else:
@@ -512,6 +551,71 @@ def renumber_episodes(db: Session, media_root: str) -> int:
     if renamed:
         logger.info("Renumbered %d episode(s) to date-based numbering", renamed)
     return renamed
+
+
+def repair_audio_paths(db: Session) -> int:
+    """Re-point ``audio_path`` rows whose ``.m4a`` isn't where the DB says.
+
+    An earlier renumber pass renamed each episode's files (the ``.m4a``
+    included) but only wrote the new ``.mkv`` name back, so any archive migrated
+    before that was fixed still has podcast enclosures pointing at names that no
+    longer exist — the episode is listed in the feed and 404s on play. Renumber
+    can't heal that itself: the files already carry their final names, so it has
+    nothing left to rename.
+
+    So reconcile the column against the disk directly. The audio for an episode
+    always sits beside its video under the same stem (``extract_audio`` is given
+    the same target), which is the candidate we look for. Failing that the audio
+    is genuinely gone and the column is cleared, which puts the row back in
+    ``backfill_audio``'s sights; a row left with no media at all is requeued
+    outright. Only safe to call when the media root is mounted — otherwise every
+    file looks missing.
+
+    Returns the number of rows changed.
+    """
+    rows = db.execute(
+        select(Download).where(
+            Download.status == "complete",
+            Download.audio_path.is_not(None),
+        )
+    ).scalars().all()
+
+    repaired = 0
+    cleared = 0
+    for download in rows:
+        if Path(download.audio_path).is_file():
+            continue
+
+        candidate = (
+            Path(download.file_path).with_suffix(".m4a")
+            if download.file_path
+            else None
+        )
+        if candidate is not None and candidate.is_file():
+            download.audio_path = str(candidate)
+            download.audio_size_bytes = candidate.stat().st_size
+            repaired += 1
+            continue
+
+        download.audio_path = None
+        download.audio_size_bytes = None
+        cleared += 1
+        if not download.file_path:
+            # Nothing left on disk for this row at all (an audio-only channel):
+            # backfill_audio only tops up rows that still have a video, so send
+            # it back through the queue instead of leaving it "complete".
+            download.status = "pending"
+            download.attempts = 0
+            download.next_attempt_at = None
+
+    if repaired or cleared:
+        db.commit()
+        logger.info(
+            "Audio paths: %d re-pointed after rename, %d cleared for refetch",
+            repaired,
+            cleared,
+        )
+    return repaired + cleared
 
 
 def _unlink_video_files(mkv_path: Path) -> None:
@@ -601,16 +705,20 @@ def run_prune(db: Session) -> int:
 def backfill_audio(db: Session, settings) -> int:
     """Extract audio for completed downloads that should have a podcast but don't.
 
-    So enabling ``generate_podcast`` on an already-archived channel produces
-    audio without re-downloading the video: on each idle pass we look for
-    ``complete`` downloads whose resolved intent now wants a podcast but which
-    have no ``audio_path`` yet, and extract audio from YouTube for them. A
+    So enabling ``generate_podcast`` on an already-archived channel — or widening
+    the audio window over an archive that already holds the video — produces
+    audio without re-downloading it: on each idle pass we look for ``complete``
+    downloads that the podcast retention set wants but which have no
+    ``audio_path`` yet, and extract audio from YouTube for them. A
     failure (e.g. throttling) is non-fatal and simply retried on a later pass,
     since ``audio_path`` stays NULL.
 
     Returns the number of downloads given audio this pass.
     """
-    intents = channel_intents(db)
+    # Gated on the retention set, not the channel intent: an episode outside the
+    # audio window would otherwise be extracted here and deleted by the very next
+    # run_prune, forever.
+    audio_keep = retained_podcast_ids(db)
     rows = db.execute(
         select(Download).where(
             Download.status == "complete",
@@ -621,11 +729,7 @@ def backfill_audio(db: Session, settings) -> int:
 
     done = 0
     for download in rows:
-        video = db.get(Video, download.video_id)
-        if video is None:
-            continue
-        intent = intents.get(video.channel_id)
-        if intent is None or not intent.generate_podcast:
+        if download.video_id not in audio_keep:
             continue
         output = Path(download.file_path).with_suffix("")
         try:
@@ -859,9 +963,11 @@ def run_forever() -> None:
 
     # Edge-triggered so we log the transition once, not every idle tick.
     media_ready_last: bool | None = None
-    # One-off migration to date-based episode numbering, run the first time we
-    # see ready media (so files are actually reachable). Idempotent, but there's
-    # no reason to re-scan every download on each iteration once it's done.
+    # One-off migration to date-based episode numbering plus the audio-path
+    # repair that goes with it, run the first time we see ready media (so files
+    # are actually reachable — and so a missing file means missing, not
+    # unmounted). Idempotent, but there's no reason to re-scan every download on
+    # each iteration once it's done.
     renumbered = False
 
     while not _shutdown:
@@ -888,6 +994,9 @@ def run_forever() -> None:
             db = session_factory()
             try:
                 renumber_episodes(db, media_root)
+                # Heals archives migrated by an earlier renumber that left
+                # audio_path pointing at the pre-rename name.
+                repair_audio_paths(db)
             except Exception:
                 logger.exception("Episode renumber pass failed")
                 db.rollback()

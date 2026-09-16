@@ -46,9 +46,21 @@ class User(Base):
     keep_last_n: Mapped[int] = mapped_column(
         Integer, server_default=text("15"), default=15
     )
+    # The same window for podcast audio, which is ~12x cheaper per episode than
+    # the video and so usually wants keeping for longer. NULL means "same as
+    # keep_last_n" — the one place a user-level archive pref may be NULL,
+    # because here NULL resolves against a sibling column rather than needing a
+    # level above it to terminate the cascade.
+    keep_last_n_audio: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 0 means "no limit". Videos longer than this are marked skipped rather
     # than downloaded, so six-hour streams don't eat the disk.
     max_duration_seconds: Mapped[int] = mapped_column(
+        Integer, server_default=text("0"), default=0
+    )
+    # 0 means "no floor" — the default, so nothing is filtered out by length.
+    # Non-zero skips anything shorter, for keeping clips and quick updates out
+    # of an archive (or a podcast feed) meant for longer-form content.
+    min_duration_seconds: Mapped[int] = mapped_column(
         Integer, server_default=text("0"), default=0
     )
     generate_podcast: Mapped[bool] = mapped_column(
@@ -136,7 +148,11 @@ class Subscription(Base):
     # NULL == inherit from category, then user.
     download_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     keep_last_n: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # NULL == inherit; falls back to this level's keep_last_n before the level
+    # above is consulted (see services/archive._audio_keep).
+    keep_last_n_audio: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     generate_podcast: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     link_target: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -161,7 +177,11 @@ class Category(Base):
     # NULL == inherit from user.
     download_enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     keep_last_n: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # NULL == inherit; falls back to this level's keep_last_n before the level
+    # above is consulted (see services/archive._audio_keep).
+    keep_last_n_audio: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     generate_podcast: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     link_target: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

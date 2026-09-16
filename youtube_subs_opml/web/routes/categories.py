@@ -34,7 +34,9 @@ _ARCHIVE_FIELD_KINDS = {
     "download_enabled": "bool",
     "generate_podcast": "bool",
     "keep_last_n": "int",
+    "keep_last_n_audio": "int",
     "max_duration_seconds": "minutes",
+    "min_duration_seconds": "minutes",
     "link_target": "link",
 }
 

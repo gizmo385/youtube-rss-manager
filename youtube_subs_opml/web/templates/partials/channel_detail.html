@@ -127,7 +127,7 @@
         <input class="pref-num" type="number" min="0" step="1" value="{{ s.value }}"
                placeholder="{{ s.placeholder }}" title="{{ s.note }}"
                name="value" hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
-               hx-vals='{"field": "{{ 'keep_last_n' if 'Keep' in s.label else 'max_duration_seconds' }}"}'
+               hx-vals='{"field": "{{ s.field }}"}'
                hx-trigger="change" hx-target="#channel-detail" hx-swap="innerHTML">
         <span class="pref-unit">{{ s.unit }}</span>
       </div>

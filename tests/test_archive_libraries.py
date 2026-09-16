@@ -30,6 +30,7 @@ from youtube_subs_opml.web.models import (
     Video,
     VideoShort,
 )
+from youtube_subs_opml.web.services.prefs import meets_duration_floor
 from youtube_subs_opml.web.services.archive import (
     channel_intents,
     enqueue_pending,
@@ -257,6 +258,164 @@ def test_worker_skips_short_when_channel_excludes_shorts(db, monkeypatch):
 
     assert row.status == "skipped"
     assert row.skip_reason == "short"
+
+
+# --- minimum duration ----------------------------------------------------
+
+def test_duration_floor_defaults_to_letting_everything_through(db):
+    add_user(db, 1, download_enabled=True)
+    add_sub(db, 1)
+    add_videos(db, 1)
+
+    assert channel_intents(db)[CHAN].min_duration_seconds == 0
+    assert meets_duration_floor(5, 0) is True
+
+
+def test_duration_floor_boundaries():
+    assert meets_duration_floor(300, 300) is True   # exactly at the floor
+    assert meets_duration_floor(299, 300) is False
+    assert meets_duration_floor(None, 300) is True  # unknown length fails open
+
+
+def test_lowest_floor_wins_across_subscribers(db):
+    """Permissive for a floor is the *smallest* number, mirroring how the
+    ceiling takes the largest — one user's strict filter can't hide a video
+    another user wants."""
+    add_user(db, 1, download_enabled=True, min_duration_seconds=600)
+    add_user(db, 2, download_enabled=True, min_duration_seconds=60)
+    add_sub(db, 1)
+    add_sub(db, 2)
+    add_videos(db, 1)
+
+    assert channel_intents(db)[CHAN].min_duration_seconds == 60
+
+
+def test_no_floor_beats_a_floor_across_subscribers(db):
+    add_user(db, 1, download_enabled=True, min_duration_seconds=600)
+    add_user(db, 2, download_enabled=True, min_duration_seconds=0)
+    add_sub(db, 1)
+    add_sub(db, 2)
+    add_videos(db, 1)
+
+    assert channel_intents(db)[CHAN].min_duration_seconds == 0
+
+
+def test_subscription_floor_overrides_category_and_user(db):
+    add_user(db, 1, download_enabled=True, min_duration_seconds=600)
+    add_sub(db, 1, min_duration_seconds=120)
+    db.add(Category(id=10, user_id=1, name="Long", slug="long",
+                    min_duration_seconds=900))
+    db.add(ChannelCategory(user_id=1, channel_id=CHAN, category_id=10))
+    db.commit()
+    add_videos(db, 1)
+
+    assert channel_intents(db)[CHAN].min_duration_seconds == 120
+
+
+def test_least_restrictive_floor_across_categories(db):
+    add_user(db, 1, download_enabled=True, min_duration_seconds=900)
+    add_sub(db, 1)
+    db.add(Category(id=10, user_id=1, name="A", slug="a", min_duration_seconds=600))
+    db.add(Category(id=11, user_id=1, name="B", slug="b", min_duration_seconds=120))
+    db.add(ChannelCategory(user_id=1, channel_id=CHAN, category_id=10))
+    db.add(ChannelCategory(user_id=1, channel_id=CHAN, category_id=11))
+    db.commit()
+    add_videos(db, 1)
+
+    assert channel_intents(db)[CHAN].min_duration_seconds == 120
+
+
+def test_worker_skips_a_video_under_the_duration_floor(db, monkeypatch):
+    add_user(db, 1, download_enabled=True, min_duration_seconds=300)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    row = Download(video_id=ids[0], status="downloading")
+    db.add(row)
+    db.commit()
+
+    monkeypatch.setattr(worker, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        worker.ytdlp, "probe",
+        lambda vid: SimpleNamespace(duration_seconds=90, title="t", description="d"),
+    )
+
+    def _no_download(*a, **k):
+        raise AssertionError("must not download a video under the floor")
+
+    monkeypatch.setattr(worker.ytdlp, "download", _no_download)
+    # classify_videos probes YouTube over the network; stub it so the test
+    # exercises the duration check and nothing else.
+    monkeypatch.setattr(worker, "classify_videos", lambda video_ids, db: {})
+
+    worker.process(row, db)
+
+    assert row.status == "skipped"
+    assert row.skip_reason == "too_short"
+
+
+def test_worker_keeps_a_video_at_exactly_the_floor(db, tmp_path, monkeypatch):
+    add_user(db, 1, download_enabled=False, generate_podcast=True,
+             min_duration_seconds=300)
+    add_sub(db, 1)
+    ids = add_videos(db, 1)
+    row = Download(video_id=ids[0], status="downloading")
+    db.add(row)
+    db.commit()
+
+    monkeypatch.setattr(
+        worker, "get_settings",
+        lambda: SimpleNamespace(media_root=str(tmp_path), ytdlp_format="best",
+                                ytdlp_sleep_interval=0, ytdlp_max_retries=1),
+    )
+    monkeypatch.setattr(
+        worker.ytdlp, "probe",
+        lambda vid: SimpleNamespace(duration_seconds=300, title="t", description="d"),
+    )
+    monkeypatch.setattr(worker.ytdlp, "extract_audio", _fake_extract_audio)
+    # classify_videos probes YouTube over the network; stub it so the test
+    # exercises the duration check and nothing else.
+    monkeypatch.setattr(worker, "classify_videos", lambda video_ids, db: {})
+
+    worker.process(row, db)
+
+    assert (row.status, row.skip_reason) == ("complete", None)
+
+
+def test_worker_fetches_audio_only_for_an_episode_past_the_video_window(db, tmp_path, monkeypatch):
+    """The expensive mistake this guards: a wider audio window must not pull a
+    500 MiB .mkv that run_prune deletes minutes later."""
+    add_user(db, 1, download_enabled=True, generate_podcast=True,
+             keep_last_n=1, keep_last_n_audio=3)
+    add_sub(db, 1)
+    ids = add_videos(db, 3)
+    row = Download(video_id=ids[0], status="downloading")  # oldest: audio only
+    db.add(row)
+    db.commit()
+
+    monkeypatch.setattr(
+        worker, "get_settings",
+        lambda: SimpleNamespace(media_root=str(tmp_path), ytdlp_format="best",
+                                ytdlp_sleep_interval=0, ytdlp_max_retries=1),
+    )
+    monkeypatch.setattr(
+        worker.ytdlp, "probe",
+        lambda vid: SimpleNamespace(duration_seconds=30, title="t", description="d"),
+    )
+
+    def _no_download(*a, **k):
+        raise AssertionError("must not fetch video outside the video window")
+
+    monkeypatch.setattr(worker.ytdlp, "download", _no_download)
+    monkeypatch.setattr(worker.ytdlp, "extract_audio", _fake_extract_audio)
+    # classify_videos probes YouTube over the network; stub it so the test
+    # exercises the duration check and nothing else.
+    monkeypatch.setattr(worker, "classify_videos", lambda video_ids, db: {})
+
+    worker.process(row, db)
+
+    assert row.status == "complete"
+    assert row.file_path is None
+    assert row.audio_path.endswith(".m4a")
 
 
 # --- download spacing ----------------------------------------------------
@@ -580,6 +739,153 @@ def test_episode_files_matches_sidecars_not_prefix_siblings(tmp_path):
     }
 
 
+# --- separate audio retention --------------------------------------------
+
+def test_audio_window_matches_video_window_when_unset(db):
+    """The pre-existing behaviour: one number governs both media kinds."""
+    add_user(db, 1, download_enabled=True, generate_podcast=True, keep_last_n=2)
+    add_sub(db, 1)
+    ids = add_videos(db, 5)
+
+    assert retained_video_ids(db) == {ids[4], ids[3]}
+    assert retained_podcast_ids(db) == {ids[4], ids[3]}
+
+
+def test_audio_window_can_outlive_the_video_window(db):
+    """The point of the column: keep 2 videos but 4 podcast episodes."""
+    add_user(db, 1, download_enabled=True, generate_podcast=True,
+             keep_last_n=2, keep_last_n_audio=4)
+    add_sub(db, 1)
+    ids = add_videos(db, 6)
+
+    assert retained_video_ids(db) == {ids[5], ids[4]}
+    assert retained_podcast_ids(db) == {ids[5], ids[4], ids[3], ids[2]}
+
+
+def test_audio_window_can_be_narrower_than_the_video_window(db):
+    add_user(db, 1, download_enabled=True, generate_podcast=True,
+             keep_last_n=4, keep_last_n_audio=1)
+    add_sub(db, 1)
+    ids = add_videos(db, 5)
+
+    assert len(retained_video_ids(db)) == 4
+    assert retained_podcast_ids(db) == {ids[4]}
+
+
+def test_audio_window_zero_means_unlimited(db):
+    add_user(db, 1, download_enabled=True, generate_podcast=True,
+             keep_last_n=1, keep_last_n_audio=0)
+    add_sub(db, 1)
+    ids = add_videos(db, 4)
+
+    assert retained_video_ids(db) == {ids[3]}
+    assert retained_podcast_ids(db) == set(ids)
+
+
+def test_subscription_keep_governs_both_kinds_over_a_global_audio_default(db):
+    """Specificity beats media kind: a number typed on the channel wins.
+
+    Otherwise setting a generous global audio default would silently override
+    every per-channel window a user had already tuned.
+    """
+    add_user(db, 1, download_enabled=True, generate_podcast=True,
+             keep_last_n=2, keep_last_n_audio=10)
+    add_sub(db, 1, keep_last_n=1)
+    ids = add_videos(db, 6)
+
+    assert retained_video_ids(db) == {ids[5]}
+    assert retained_podcast_ids(db) == {ids[5]}
+
+
+def test_subscription_audio_override_beats_its_own_video_window(db):
+    add_user(db, 1, download_enabled=True, generate_podcast=True, keep_last_n=2)
+    add_sub(db, 1, keep_last_n=1, keep_last_n_audio=3)
+    ids = add_videos(db, 6)
+
+    assert retained_video_ids(db) == {ids[5]}
+    assert retained_podcast_ids(db) == {ids[5], ids[4], ids[3]}
+
+
+def test_category_audio_window_applies(db):
+    add_user(db, 1, download_enabled=True, generate_podcast=True, keep_last_n=1)
+    add_sub(db, 1)
+    db.add(Category(id=10, user_id=1, name="Pods", slug="pods", keep_last_n_audio=3))
+    db.add(ChannelCategory(user_id=1, channel_id=CHAN, category_id=10))
+    db.commit()
+    ids = add_videos(db, 5)
+
+    assert retained_video_ids(db) == {ids[4]}
+    assert retained_podcast_ids(db) == {ids[4], ids[3], ids[2]}
+
+
+def test_category_video_window_still_shapes_audio_when_it_sets_no_audio(db):
+    """A category setting only keep_last_n governs both kinds, as before."""
+    add_user(db, 1, download_enabled=True, generate_podcast=True, keep_last_n=1)
+    add_sub(db, 1)
+    db.add(Category(id=10, user_id=1, name="Deep", slug="deep", keep_last_n=3))
+    db.add(ChannelCategory(user_id=1, channel_id=CHAN, category_id=10))
+    db.commit()
+    ids = add_videos(db, 5)
+
+    assert retained_podcast_ids(db) == {ids[4], ids[3], ids[2]}
+
+
+def test_most_permissive_audio_window_wins_across_categories(db):
+    """Two categories, one setting audio and one only video: widest wins."""
+    add_user(db, 1, download_enabled=True, generate_podcast=True, keep_last_n=1)
+    add_sub(db, 1)
+    db.add(Category(id=10, user_id=1, name="A", slug="a", keep_last_n_audio=2))
+    db.add(Category(id=11, user_id=1, name="B", slug="b", keep_last_n=4))
+    db.add(ChannelCategory(user_id=1, channel_id=CHAN, category_id=10))
+    db.add(ChannelCategory(user_id=1, channel_id=CHAN, category_id=11))
+    db.commit()
+    ids = add_videos(db, 6)
+
+    assert retained_podcast_ids(db) == {ids[5], ids[4], ids[3], ids[2]}
+
+
+def test_wider_audio_window_prunes_the_video_but_keeps_the_audio(db, tmp_path):
+    """End to end: the .mkv goes, the .m4a stays, the row survives."""
+    media_root = str(tmp_path)
+    add_user(db, 1, download_enabled=True, generate_podcast=True,
+             keep_last_n=1, keep_last_n_audio=2)
+    add_sub(db, 1)
+    ids = add_videos(db, 2)
+    mkv = complete_download(db, media_root, ids[0], 1)  # the older one
+    complete_download(db, media_root, ids[1], 2)
+    audio = mkv.with_suffix(".m4a")
+    audio.write_bytes(b"audio")
+    d0 = db.get(Download, ids[0])
+    d0.audio_path = str(audio)
+    d0.audio_size_bytes = audio.stat().st_size
+    db.commit()
+
+    run_prune(db)
+
+    d0 = db.get(Download, ids[0])
+    assert d0 is not None            # row kept — the audio is still wanted
+    assert d0.file_path is None      # video pruned out of its shorter window
+    assert not mkv.exists()
+    assert audio.exists()            # audio still inside its own window
+    assert d0.audio_path == str(audio)
+
+
+def test_backfill_audio_ignores_episodes_outside_the_audio_window(db, tmp_path, monkeypatch):
+    """Otherwise backfill and prune would fight: extract, delete, repeat."""
+    media_root = str(tmp_path)
+    add_user(db, 1, download_enabled=True, generate_podcast=True,
+             keep_last_n=3, keep_last_n_audio=1)
+    add_sub(db, 1)
+    ids = add_videos(db, 3)
+    for i, vid in enumerate(ids):
+        complete_download(db, media_root, vid, i + 1)
+    monkeypatch.setattr(worker.ytdlp, "extract_audio", _fake_extract_audio)
+
+    assert backfill_audio(db, SimpleNamespace(ytdlp_sleep_interval=0)) == 1
+    assert db.get(Download, ids[2]).audio_path is not None  # newest only
+    assert db.get(Download, ids[0]).audio_path is None
+
+
 # --- podcast audio backfill ----------------------------------------------
 
 def _fake_extract_audio(video_id, output_path, *, sleep_interval=5, timeout=3600):
@@ -690,6 +996,9 @@ def test_worker_audio_only_fetches_audio_and_skips_video(db, tmp_path, monkeypat
         raise AssertionError("audio-only must not download the full video")
     monkeypatch.setattr(worker.ytdlp, "download", _no_download)
     monkeypatch.setattr(worker.ytdlp, "extract_audio", _fake_extract_audio)
+    # classify_videos probes YouTube over the network; stub it so the test
+    # exercises the duration check and nothing else.
+    monkeypatch.setattr(worker, "classify_videos", lambda video_ids, db: {})
 
     worker.process(row, db)
 

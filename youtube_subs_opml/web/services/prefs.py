@@ -121,3 +121,20 @@ def is_within_duration_limit(
     if duration_seconds is None:
         return True
     return duration_seconds <= max_duration_seconds
+
+
+def meets_duration_floor(
+    duration_seconds: int | None, min_duration_seconds: int
+) -> bool:
+    """True if a video is long enough to be worth archiving.
+
+    The floor to ``is_within_duration_limit``'s ceiling, for keeping clips and
+    one-minute updates out of an archive meant for longer-form content. 0 — the
+    default — means no floor. Fails open on an unknown duration for the same
+    reason the ceiling does: a failed probe shouldn't silently drop a video.
+    """
+    if min_duration_seconds <= 0:
+        return True
+    if duration_seconds is None:
+        return True
+    return duration_seconds >= min_duration_seconds

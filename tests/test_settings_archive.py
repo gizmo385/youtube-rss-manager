@@ -95,7 +95,9 @@ def test_user_archive_defaults_persist(app_db):
             "download_enabled": "true",
             "generate_podcast": "true",
             "keep_last_n": "5",
+            "keep_last_n_audio": "30",
             "max_duration_minutes": "90",
+            "min_duration_minutes": "3",
             "link_target": "hold",
         },
         follow_redirects=False,
@@ -106,7 +108,9 @@ def test_user_archive_defaults_persist(app_db):
         assert user.download_enabled is True
         assert user.generate_podcast is True
         assert user.keep_last_n == 5
+        assert user.keep_last_n_audio == 30
         assert user.max_duration_seconds == 5400  # 90 minutes
+        assert user.min_duration_seconds == 180   # 3 minutes
         assert user.link_target == "hold"
 
 
@@ -123,7 +127,9 @@ def test_user_defaults_unchecked_and_bad_link_target(app_db):
         assert user.download_enabled is False
         assert user.generate_podcast is False
         assert user.keep_last_n == 15   # blank → default
+        assert user.keep_last_n_audio is None  # blank → same window as video
         assert user.max_duration_seconds == 0
+        assert user.min_duration_seconds == 0  # blank → no floor
         assert user.link_target == "youtube"
 
 
@@ -259,6 +265,14 @@ def test_channel_archive_pref_tristate_and_ints(app_db):
     assert sub().max_duration_seconds == 5400  # minutes → seconds
 
     client.post("/channels/archive-pref",
+                data={"channel_ids": CID, "field": "min_duration_seconds", "value": "2"})
+    assert sub().min_duration_seconds == 120  # minutes → seconds
+
+    client.post("/channels/archive-pref",
+                data={"channel_ids": CID, "field": "keep_last_n_audio", "value": "30"})
+    assert sub().keep_last_n_audio == 30
+
+    client.post("/channels/archive-pref",
                 data={"channel_ids": CID, "field": "link_target", "value": "when_ready"})
     assert sub().link_target == "when_ready"
 
@@ -284,6 +298,11 @@ def test_category_archive_pref_persists(app_db):
                  data={"field": "max_duration_seconds", "value": "30"})
     with Session_() as db:
         assert db.get(Category, 1).max_duration_seconds == 1800
+
+    client.patch("/categories/1/archive-pref",
+                 data={"field": "min_duration_seconds", "value": "4"})
+    with Session_() as db:
+        assert db.get(Category, 1).min_duration_seconds == 240
 
 
 # --- disk usage + failure surfacing -------------------------------------

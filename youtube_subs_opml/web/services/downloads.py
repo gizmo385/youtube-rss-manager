@@ -35,6 +35,7 @@ STATUS_LABELS: dict[str, str] = {
 # Skip reasons (Download.skip_reason) → short label + a plain-English tooltip.
 SKIP_REASON_LABELS: dict[str, str] = {
     "too_long": "Too long",
+    "too_short": "Too short",
     "unavailable": "Unavailable",
     "members_only": "Members only",
     "geo_blocked": "Region-blocked",
@@ -43,6 +44,7 @@ SKIP_REASON_LABELS: dict[str, str] = {
 }
 SKIP_REASON_HELP: dict[str, str] = {
     "too_long": "Longer than the max-duration cap set for this channel.",
+    "too_short": "Shorter than the min-duration floor set for this channel.",
     "unavailable": "Private, removed, age-restricted, or otherwise unfetchable.",
     "members_only": "Requires a paid channel membership to watch.",
     "geo_blocked": "Not available in this server's region.",

@@ -14,6 +14,15 @@ A second ambiguity: a subscription can belong to several categories, which may
 disagree. Resolution here is subscription-level value first if set, otherwise
 the most permissive value across the categories it belongs to, otherwise the
 user default.
+
+Retention is resolved separately for the two media kinds. ``keep_last_n``
+governs the video; ``keep_last_n_audio`` governs the podcast audio, which at
+~12x less per episode is usually worth keeping for much longer. The audio
+window falls back to the video window *at each level* before climbing: a
+channel you explicitly set to "keep 10" keeps 10 of both, rather than having a
+global audio default quietly override the number you typed on that channel.
+Nothing set anywhere means the two windows are identical, which is exactly the
+behaviour before the column existed.
 """
 
 from __future__ import annotations
@@ -49,6 +58,9 @@ class ChannelIntent:
     keep_last_n: int
     #: 0 means no limit. Otherwise the largest cap any subscriber asked for.
     max_duration_seconds: int
+    #: 0 means no floor. Otherwise the *lowest* floor any subscriber asked for —
+    #: permissive for a minimum means the smallest number, not the largest.
+    min_duration_seconds: int
     #: True if at least one subscriber wants a podcast feed for it.
     generate_podcast: bool
     #: True if at least one *downloading* subscriber wants Shorts. When False,
@@ -79,9 +91,36 @@ def _most_permissive_int(values: list[int | None]) -> int | None:
     return max(present)
 
 
-def _category_prefs(
-    db: Session, user_id: int, channel_id: str
-) -> tuple[bool | None, int | None, int | None, bool | None, bool | None]:
+def _least_restrictive_floor(values: list[int | None]) -> int | None:
+    """Smallest value — the mirror of ``_most_permissive_int`` for a floor.
+
+    Permissive means letting *more* through, so for a minimum duration that's
+    the lowest bar rather than the highest. 0 (no floor) needs no special case
+    here: it is already the smallest value there is.
+    """
+    present = [v for v in values if v is not None]
+    return min(present) if present else None
+
+
+@dataclass(frozen=True)
+class _CategoryPrefs:
+    """The most permissive value for each pref across a channel's categories.
+
+    ``None`` in any field means no category expressed an opinion, so the user
+    default decides. A record rather than a tuple because six positional
+    ``None``s at two call sites is a transposition waiting to happen.
+    """
+
+    download: bool | None = None
+    keep: int | None = None
+    keep_audio: int | None = None
+    max_duration: int | None = None
+    min_duration: int | None = None
+    podcast: bool | None = None
+    shorts: bool | None = None
+
+
+def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPrefs:
     """Most permissive preference across every category this channel is in."""
     categories = db.execute(
         select(Category)
@@ -92,17 +131,47 @@ def _category_prefs(
         )
     ).scalars().all()
     if not categories:
-        return None, None, None, None, None
+        return _CategoryPrefs()
 
     downloads = [c.download_enabled for c in categories if c.download_enabled is not None]
     podcasts = [c.generate_podcast for c in categories if c.generate_podcast is not None]
     shorts = [c.include_shorts for c in categories if c.include_shorts is not None]
-    return (
-        (True if any(downloads) else False) if downloads else None,
-        _most_permissive_int([c.keep_last_n for c in categories]),
-        _most_permissive_int([c.max_duration_seconds for c in categories]),
-        (True if any(podcasts) else False) if podcasts else None,
-        (True if any(shorts) else False) if shorts else None,
+    return _CategoryPrefs(
+        download=(True if any(downloads) else False) if downloads else None,
+        keep=_most_permissive_int([c.keep_last_n for c in categories]),
+        # Each category's audio window falls back to its own video window before
+        # they're compared, so a category that only sets keep_last_n still gets
+        # a say in the audio answer.
+        keep_audio=_most_permissive_int(
+            [_or(c.keep_last_n_audio, c.keep_last_n) for c in categories]
+        ),
+        max_duration=_most_permissive_int(
+            [c.max_duration_seconds for c in categories]
+        ),
+        min_duration=_least_restrictive_floor(
+            [c.min_duration_seconds for c in categories]
+        ),
+        podcast=(True if any(podcasts) else False) if podcasts else None,
+        shorts=(True if any(shorts) else False) if shorts else None,
+    )
+
+
+def _or(value: int | None, fallback: int | None) -> int | None:
+    """``value`` unless it's NULL (inherit), in which case ``fallback``."""
+    return fallback if value is None else value
+
+
+def _audio_keep(sub, cat_prefs: _CategoryPrefs, user) -> int:
+    """The retention window for this subscription's podcast audio.
+
+    The audio column wins at whichever level speaks first, falling back to that
+    same level's video window — so specificity beats media kind. Setting
+    ``keep_last_n_audio`` nowhere leaves this identical to ``keep_last_n``.
+    """
+    return resolve(
+        _or(sub.keep_last_n_audio, sub.keep_last_n),
+        cat_prefs.keep_audio,
+        _or(user.keep_last_n_audio, user.keep_last_n),
     )
 
 
@@ -120,20 +189,21 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
         if user is None:
             continue
 
-        cat_download, cat_keep, cat_max, cat_podcast, cat_shorts = _category_prefs(
-            db, sub.user_id, sub.channel_id
-        )
+        cat = _category_prefs(db, sub.user_id, sub.channel_id)
 
-        download = resolve(sub.download_enabled, cat_download, user.download_enabled)
-        keep = resolve(sub.keep_last_n, cat_keep, user.keep_last_n)
+        download = resolve(sub.download_enabled, cat.download, user.download_enabled)
+        keep = resolve(sub.keep_last_n, cat.keep, user.keep_last_n)
         max_dur = resolve(
-            sub.max_duration_seconds, cat_max, user.max_duration_seconds
+            sub.max_duration_seconds, cat.max_duration, user.max_duration_seconds
         )
-        podcast = resolve(sub.generate_podcast, cat_podcast, user.generate_podcast)
+        min_dur = resolve(
+            sub.min_duration_seconds, cat.min_duration, user.min_duration_seconds
+        )
+        podcast = resolve(sub.generate_podcast, cat.podcast, user.generate_podcast)
         # Only a subscriber who actually downloads this channel gets a say in
         # whether its Shorts are wanted on disk.
         wants_shorts = download and resolve(
-            sub.include_shorts, cat_shorts, user.include_shorts
+            sub.include_shorts, cat.shorts, user.include_shorts
         )
 
         existing = intents.get(sub.channel_id)
@@ -143,6 +213,7 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
                 download=download,
                 keep_last_n=keep,
                 max_duration_seconds=max_dur,
+                min_duration_seconds=min_dur,
                 generate_podcast=podcast,
                 include_shorts=wants_shorts,
             )
@@ -155,6 +226,10 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
             keep_last_n=_most_permissive_int([existing.keep_last_n, keep]) or 0,
             max_duration_seconds=_most_permissive_int(
                 [existing.max_duration_seconds, max_dur]
+            )
+            or 0,
+            min_duration_seconds=_least_restrictive_floor(
+                [existing.min_duration_seconds, min_dur]
             )
             or 0,
             generate_podcast=existing.generate_podcast or podcast,
@@ -170,10 +245,10 @@ def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
     ``podcast=False`` gates on ``download_enabled`` — the videos whose file is
     kept on disk and shown in the user's Jellyfin library. ``podcast=True`` gates
     on ``generate_podcast`` — the videos whose extracted audio is kept for the
-    user's podcast feed. Both apply the same ``keep_last_n`` window and Shorts
-    filtering; the only difference is which preference decides the user wants
-    this channel at all. One function so the window and Shorts handling can't
-    drift apart between the two media kinds.
+    user's podcast feed. Each applies its own retention window (``keep_last_n``
+    for video, ``keep_last_n_audio`` falling back to it for audio) with identical
+    Shorts filtering. One function so the two media kinds can't drift apart in
+    how a window is applied, only in how wide it is.
 
     All three preferences resolve via the cascade (subscription >
     most-permissive category > user). A user who wants neither contributes
@@ -190,17 +265,16 @@ def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
         if user is None:
             continue
 
-        cat_download, cat_keep, _cat_max, cat_podcast, cat_shorts = _category_prefs(
-            db, sub.user_id, sub.channel_id
-        )
+        cat = _category_prefs(db, sub.user_id, sub.channel_id)
         if podcast:
-            wanted = resolve(sub.generate_podcast, cat_podcast, user.generate_podcast)
+            wanted = resolve(sub.generate_podcast, cat.podcast, user.generate_podcast)
+            keep = _audio_keep(sub, cat, user)
         else:
-            wanted = resolve(sub.download_enabled, cat_download, user.download_enabled)
+            wanted = resolve(sub.download_enabled, cat.download, user.download_enabled)
+            keep = resolve(sub.keep_last_n, cat.keep, user.keep_last_n)
         if not wanted:
             continue
-        keep = resolve(sub.keep_last_n, cat_keep, user.keep_last_n)
-        include_shorts = resolve(sub.include_shorts, cat_shorts, user.include_shorts)
+        include_shorts = resolve(sub.include_shorts, cat.shorts, user.include_shorts)
 
         stmt = (
             select(Video.video_id)
@@ -240,10 +314,13 @@ def user_retained_podcast_ids(db: Session) -> dict[int, set[str]]:
     """Per user, the videos whose audio their podcast feed should keep.
 
     The audio analogue of ``user_retained_video_ids``, gated on
-    ``generate_podcast`` instead of ``download_enabled``. This is what lets a
-    channel be wanted as a podcast without keeping the full video: the id lands
-    here (so the audio is fetched and retained) but not in the video set (so no
-    ``.mkv`` is kept and it never enters Jellyfin).
+    ``generate_podcast`` instead of ``download_enabled`` and windowed by
+    ``keep_last_n_audio``. This is what lets a channel be wanted as a podcast
+    without keeping the full video: the id lands here (so the audio is fetched
+    and retained) but not in the video set (so no ``.mkv`` is kept and it never
+    enters Jellyfin). A wider audio window than video window puts an id here
+    only — the same mechanism, so old episodes keep their audio while the video
+    is pruned on the shorter schedule.
     """
     return _retained_ids(db, podcast=True)
 

@@ -38,10 +38,26 @@
                hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
       </div>
       <div class="cat-setting">
+        <span class="k">Keep audio</span>
+        <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
+               title="Blank matches this category's video window"
+               value="{{ cat.keep_last_n_audio if cat.keep_last_n_audio is not none else '' }}"
+               hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "keep_last_n_audio"}'
+               hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
+      </div>
+      <div class="cat-setting">
         <span class="k">Max min</span>
         <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
                value="{{ (cat.max_duration_seconds // 60) if cat.max_duration_seconds is not none else '' }}"
                hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "max_duration_seconds"}'
+               hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
+      </div>
+      <div class="cat-setting">
+        <span class="k">Min min</span>
+        <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
+               title="Skip anything shorter. Blank inherits, 0 = no floor"
+               value="{{ (cat.min_duration_seconds // 60) if cat.min_duration_seconds is not none else '' }}"
+               hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "min_duration_seconds"}'
                hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
       </div>
       <div class="cat-setting">
