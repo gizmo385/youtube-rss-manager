@@ -1024,27 +1024,40 @@ async def add_manual_channel(
         select(YoutubeAccount).where(YoutubeAccount.user_id == user.id).limit(1)
     ).scalar_one_or_none()
 
-    try:
-        if account is not None:
+    # A connected account gets us description and topics, so try the API first.
+    # Any failure there (revoked token, quota, a handle the API can't find) is
+    # not fatal: the public resolver needs no credentials and usually works.
+    resolved = None
+    if account is not None:
+        try:
             creds = build_google_credentials(
                 decrypt_token(account.refresh_token_encrypted), get_settings()
             )
             resolved = resolve_channel(creds, raw)
-        else:
+        except RefreshError:
+            logger.warning(
+                "Refresh token revoked for account %s; resolving %r publicly. "
+                "The account needs re-connecting in Settings.",
+                account.id,
+                raw,
+            )
+        except Exception:
+            logger.warning(
+                "API lookup of %r failed, falling back to public resolve",
+                raw,
+                exc_info=True,
+            )
+
+    if resolved is None:
+        try:
             resolved = resolve_channel_public(raw)
-    except ChannelLookupError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except RefreshError:
-        logger.error("Refresh token revoked for account %s", account.id)
-        raise HTTPException(
-            status_code=400,
-            detail="YouTube account needs to be re-connected in Settings.",
-        )
-    except httpx.HTTPError:
-        raise HTTPException(
-            status_code=400,
-            detail="Could not reach YouTube to look up that channel.",
-        )
+        except ChannelLookupError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except httpx.HTTPError:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not reach YouTube to look up that channel.",
+            )
 
     channel = db.get(Channel, resolved.channel_id)
     if channel is None:
@@ -1056,8 +1069,12 @@ async def add_manual_channel(
         ))
     else:
         channel.title = resolved.title
-        channel.description = resolved.description
-        channel.youtube_topics = resolved.topics
+        # The public resolver has no description or topics; keep whatever a
+        # previous API-backed lookup stored rather than blanking it.
+        if resolved.description:
+            channel.description = resolved.description
+        if resolved.topics:
+            channel.youtube_topics = resolved.topics
         channel.last_seen_at = func.now()
 
     existing = db.execute(
