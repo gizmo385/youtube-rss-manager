@@ -10,6 +10,7 @@ from google.auth.exceptions import RefreshError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from youtube_subs_opml import nebula
 from youtube_subs_opml.youtube import ChannelLookupError, resolve_channel
 
 from ..config import get_settings
@@ -27,6 +28,7 @@ from ..models import (
     YoutubeAccount,
 )
 from ..services.crypto import decrypt_token
+from ..services.feed_cache import load_feed
 from ..services.prefs import (
     LINK_TARGETS,
     parse_inherit_int,
@@ -164,6 +166,7 @@ def _channel_records(user: User, db: Session) -> tuple[list[dict], list[Category
     records = []
     for sub, ch in rows:
         cats = channel_cats.get(ch.channel_id, [])
+        is_nebula = ch.platform == nebula.PLATFORM
         archive_on, _ = _effective(sub, cats, user, "download_enabled")
         records.append({
             "channel_id": ch.channel_id,
@@ -171,7 +174,9 @@ def _channel_records(user: User, db: Session) -> tuple[list[dict], list[Category
             "ignored": sub.ignored,
             "cats": cats,
             "cat_count": len(cats),
-            "archive_on": bool(archive_on),
+            # Nebula can't be downloaded, whatever the inherited pref says.
+            "archive_on": bool(archive_on) and not is_nebula,
+            "is_nebula": is_nebula,
             "has_failure": ch.channel_id in failures,
             "is_manual": sub.account_id is None,
         })
@@ -424,9 +429,15 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         .where(Video.channel_id == channel_id, Download.status == "complete")
     ).one()
 
-    last_video = db.execute(
-        select(func.max(Video.published_at)).where(Video.channel_id == channel_id)
-    ).scalar_one_or_none()
+    is_nebula = ch.platform == nebula.PLATFORM
+    if is_nebula:
+        # Nebula entries aren't recorded as videos; read the cached feed.
+        cached = load_feed(db, channel_id)
+        last_video = nebula.latest_published(cached) if cached else None
+    else:
+        last_video = db.execute(
+            select(func.max(Video.published_at)).where(Video.channel_id == channel_id)
+        ).scalar_one_or_none()
 
     # Assignable categories (not already assigned).
     assigned_ids = {c.id for c in cats}
@@ -448,12 +459,27 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
     incl = [("Inherit", "inherit", None), ("Include", "true", True), ("Exclude", "false", False)]
     link_opts = [("Inherit", "inherit", None)] + [(lt, lt, lt) for lt in LINK_TARGETS]
 
+    if is_nebula:
+        platform = {
+            "is_nebula": True,
+            "platform_name": "Nebula",
+            "page_url": nebula.channel_url(ch.channel_id),
+            "topics_label": "Nebula categories",
+        }
+    else:
+        platform = {
+            "is_nebula": False,
+            "platform_name": "YouTube",
+            "page_url": f"https://www.youtube.com/channel/{ch.channel_id}",
+            "topics_label": "YouTube topics",
+        }
+
     return {
+        **platform,
         "channel_id": ch.channel_id,
         "title": ch.title,
         "is_manual": sub.account_id is None,
         "ignored": sub.ignored,
-        "youtube_url": f"https://www.youtube.com/channel/{ch.channel_id}",
         "cats": cats,
         "assignable_categories": assignable,
         "topics": ch.youtube_topics or [],
@@ -1020,6 +1046,88 @@ async def add_manual_channel(
     if not raw:
         raise HTTPException(status_code=400, detail="Enter a channel URL, handle, or ID")
 
+    try:
+        resolved = _resolve_nebula(raw)
+    except ChannelLookupError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not reach Nebula to look up that channel.",
+        )
+    if resolved is None:
+        resolved = _resolve_youtube(raw, user, db)
+
+    channel = db.get(Channel, resolved.channel_id)
+    if channel is None:
+        db.add(Channel(
+            channel_id=resolved.channel_id,
+            platform=resolved.platform,
+            title=resolved.title,
+            description=resolved.description,
+            youtube_topics=resolved.topics,
+            thumbnail_url=resolved.thumbnail_url,
+            banner_url=resolved.banner_url,
+        ))
+    else:
+        channel.title = resolved.title
+        # The public resolver has no description or topics; keep whatever a
+        # previous API-backed lookup stored rather than blanking it.
+        if resolved.description:
+            channel.description = resolved.description
+        if resolved.topics:
+            channel.youtube_topics = resolved.topics
+        if resolved.thumbnail_url:
+            channel.thumbnail_url = resolved.thumbnail_url
+            channel.banner_url = resolved.banner_url
+        channel.last_seen_at = func.now()
+
+    existing = db.execute(
+        select(Subscription).where(
+            Subscription.user_id == user.id,
+            Subscription.channel_id == resolved.channel_id,
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        db.add(Subscription(
+            user_id=user.id,
+            channel_id=resolved.channel_id,
+            account_id=None,
+        ))
+
+    db.commit()
+
+    if resolved.platform == nebula.PLATFORM:
+        # Nebula's feed is one cheap, unthrottled fetch, so warm the cache right
+        # here rather than waiting on a sweep that may be stuck behind YouTube.
+        # Best-effort: a failure just leaves it to the next sweep.
+        from ..services.poller import poll_channel
+        try:
+            poll_channel(resolved.channel_id, db)
+            db.commit()
+        except Exception:
+            logger.warning("Initial poll of %s failed", resolved.channel_id, exc_info=True)
+            db.rollback()
+    else:
+        # Warm the new channel's feed cache in a one-off job so its feed URL
+        # doesn't 503 until a sweep reaches it. Not inline: under throttling a
+        # YouTube fetch with retries can hold the request for tens of seconds.
+        from ..services.scheduler import warm_new_channels_soon
+        warm_new_channels_soon()
+
+    filt = form.get("filter") or "All"
+    return _list_response(request, user, db, resolved.channel_id, filt)
+
+
+def _resolve_nebula(raw: str):
+    """Resolve ``raw`` as a Nebula channel, or None if it isn't a Nebula URL."""
+    if nebula.parse_input(raw) is None:
+        return None
+    return nebula.resolve_channel(raw)
+
+
+def _resolve_youtube(raw: str, user: User, db: Session):
+    """Resolve ``raw`` as a YouTube channel, raising a 400 if it can't be."""
     account = db.execute(
         select(YoutubeAccount).where(YoutubeAccount.user_id == user.id).limit(1)
     ).scalar_one_or_none()
@@ -1048,58 +1156,17 @@ async def add_manual_channel(
                 exc_info=True,
             )
 
-    if resolved is None:
-        try:
-            resolved = resolve_channel_public(raw)
-        except ChannelLookupError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except httpx.HTTPError:
-            raise HTTPException(
-                status_code=400,
-                detail="Could not reach YouTube to look up that channel.",
-            )
-
-    channel = db.get(Channel, resolved.channel_id)
-    if channel is None:
-        db.add(Channel(
-            channel_id=resolved.channel_id,
-            title=resolved.title,
-            description=resolved.description,
-            youtube_topics=resolved.topics,
-        ))
-    else:
-        channel.title = resolved.title
-        # The public resolver has no description or topics; keep whatever a
-        # previous API-backed lookup stored rather than blanking it.
-        if resolved.description:
-            channel.description = resolved.description
-        if resolved.topics:
-            channel.youtube_topics = resolved.topics
-        channel.last_seen_at = func.now()
-
-    existing = db.execute(
-        select(Subscription).where(
-            Subscription.user_id == user.id,
-            Subscription.channel_id == resolved.channel_id,
+    if resolved is not None:
+        return resolved
+    try:
+        return resolve_channel_public(raw)
+    except ChannelLookupError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPError:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not reach YouTube to look up that channel.",
         )
-    ).scalar_one_or_none()
-    if existing is None:
-        db.add(Subscription(
-            user_id=user.id,
-            channel_id=resolved.channel_id,
-            account_id=None,
-        ))
-
-    db.commit()
-
-    # Warm the new channel's feed cache in a one-off job so its feed URL
-    # doesn't 503 until a sweep reaches it. Not inline: under throttling a
-    # YouTube fetch with retries can hold the request for tens of seconds.
-    from ..services.scheduler import warm_new_channels_soon
-    warm_new_channels_soon()
-
-    filt = form.get("filter") or "All"
-    return _list_response(request, user, db, resolved.channel_id, filt)
 
 
 @router.post("/remove")

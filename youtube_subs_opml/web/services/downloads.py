@@ -118,7 +118,9 @@ def recoverable_count(db: Session, user_id: int) -> int:
 
 
 def subscribed_channels(db: Session, user_id: int) -> list[dict]:
-    """The user's non-ignored channels, for the channel filter dropdown."""
+    """The user's non-ignored channels, for the channel filter dropdown.
+
+    Feed-only (Nebula) channels are left out: they never have downloads."""
     rows = db.execute(
         select(Channel.channel_id, Channel.title)
         .join(
@@ -129,6 +131,7 @@ def subscribed_channels(db: Session, user_id: int) -> list[dict]:
                 Subscription.ignored == False,  # noqa: E712
             ),
         )
+        .where(Channel.platform == "youtube")
         .order_by(func.lower(Channel.title))
     ).all()
     return [{"channel_id": cid, "title": title or cid} for cid, title in rows]

@@ -109,6 +109,12 @@ class Channel(Base):
     __tablename__ = "channels"
 
     channel_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # 'youtube' | 'nebula'. Nebula channels (ids ``nebula:{slug}``) are
+    # feed-only: no account sync, no Shorts/live filtering and no archive — see
+    # youtube_subs_opml.nebula.
+    platform: Mapped[str] = mapped_column(
+        String(16), server_default="youtube", default="youtube"
+    )
     title: Mapped[str] = mapped_column(String(255), server_default="")
     description: Mapped[str] = mapped_column(Text, server_default="")
     # Channel avatar and banner URLs, used as Jellyfin series/season posters and

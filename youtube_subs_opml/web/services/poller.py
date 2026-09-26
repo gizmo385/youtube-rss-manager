@@ -11,6 +11,9 @@ Known bound: YouTube's channel feed returns only the ~15 most recent entries.
 A channel publishing more than that between polls loses the overflow
 permanently, which is why ``poll_interval_minutes`` defaults to 20 rather than
 matching the 6-hour subscription sync.
+
+Nebula channels are polled on the same sweep, but only to warm the feed cache:
+nothing on Nebula is downloadable, so their entries aren't recorded as videos.
 """
 
 from __future__ import annotations
@@ -25,10 +28,11 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from youtube_subs_opml import nebula
 from youtube_subs_opml.opml import FEED_URL
 
 from ..config import get_settings
-from ..models import ChannelFeedCache, Subscription, Video
+from ..models import Channel, ChannelFeedCache, Subscription, Video
 from .archive import enqueue_pending
 from .feed_cache import store_feed
 
@@ -66,13 +70,12 @@ def _sleep_backoff(base_delay: float, attempt: int) -> None:
 
 
 def _fetch_feed(
-    channel_id: str, client: httpx.Client, *, max_retries: int, base_delay: float
+    url: str, client: httpx.Client, *, max_retries: int, base_delay: float
 ) -> httpx.Response:
     """Fetch one channel feed, retrying transient throttling responses.
 
     Raises ``httpx.HTTPError`` once retries are exhausted, for the caller to log.
     """
-    url = FEED_URL.format(channel_id=channel_id)
     for attempt in range(max_retries + 1):
         try:
             resp = client.get(url)
@@ -118,11 +121,18 @@ def poll_channel(
     one is created so callers (e.g. a manual single-channel poll) stay simple.
     """
     settings = get_settings()
+    channel = db.get(Channel, channel_id)
+    is_nebula = channel is not None and channel.platform == nebula.PLATFORM
+    url = (
+        nebula.feed_url(channel_id)
+        if is_nebula
+        else FEED_URL.format(channel_id=channel_id)
+    )
     owns_client = client is None
     client = client or _new_client()
     try:
         resp = _fetch_feed(
-            channel_id,
+            url,
             client,
             max_retries=settings.poll_max_retries,
             base_delay=settings.poll_channel_delay_seconds,
@@ -138,6 +148,8 @@ def poll_channel(
     # Cached regardless of whether there are new videos — an unchanged feed is
     # still what a reader should get. store_feed skips the write when unchanged.
     store_feed(db, channel_id, resp.content)
+    if is_nebula:
+        return 0
 
     entries = _parse_entries(resp.content)
     if not entries:
@@ -250,21 +262,26 @@ def poll_all_channels(db: Session) -> int:
     settings = get_settings()
     delay = settings.poll_channel_delay_seconds
 
-    channel_ids = set(
-        db.execute(
-            select(Subscription.channel_id).where(
-                Subscription.ignored == False  # noqa: E712
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = db.execute(
+        select(Subscription.channel_id, Channel.platform)
+        .outerjoin(Channel, Channel.channel_id == Subscription.channel_id)
+        .where(Subscription.ignored == False)  # noqa: E712
+        .distinct()
+    ).all()
+    # Nebula first: its feeds are cheap and never throttled, so they shouldn't
+    # queue behind a YouTube sweep that can take half an hour when YouTube is
+    # 404ing every request.
+    nebula_ids = sorted(cid for cid, platform in rows if platform == nebula.PLATFORM)
+    youtube_ids = sorted(cid for cid, platform in rows if platform != nebula.PLATFORM)
 
     total = 0
     client = _new_client()
     try:
-        for i, channel_id in enumerate(sorted(channel_ids)):
-            # Space out the sweep so ~50 channels don't look like a burst.
+        for channel_id in nebula_ids:
+            total += _poll_one(channel_id, db, client)
+        for i, channel_id in enumerate(youtube_ids):
+            # Space out the YouTube sweep so ~50 channels don't look like a
+            # burst. Nebula needs none of this, so it isn't spaced.
             if i and delay > 0:
                 time.sleep(delay + random.uniform(0, delay))
             total += _poll_one(channel_id, db, client)
@@ -278,5 +295,5 @@ def poll_all_channels(db: Session) -> int:
         logger.exception("Enqueue failed")
         db.rollback()
 
-    logger.info("Polled %d channels, %d new videos", len(channel_ids), total)
+    logger.info("Polled %d channels, %d new videos", len(rows), total)
     return total

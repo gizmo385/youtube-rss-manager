@@ -5,6 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
+from youtube_subs_opml import nebula
 from youtube_subs_opml.opml import build_opml
 from youtube_subs_opml.youtube import Subscription as SubData
 
@@ -13,6 +14,16 @@ from ..db import get_db
 from ..models import Category, Channel, ChannelCategory, OpmlToken, Subscription
 
 router = APIRouter(prefix="/opml", tags=["opml"])
+
+
+def _sub_data(ch: Channel) -> SubData:
+    html_url = nebula.channel_url(ch.channel_id) if ch.platform == nebula.PLATFORM else None
+    return SubData(
+        channel_id=ch.channel_id,
+        title=ch.title,
+        description=ch.description,
+        html_url=html_url,
+    )
 
 
 def _validate_token(token: str, db: Session) -> OpmlToken:
@@ -43,10 +54,7 @@ def opml_all(
         .order_by(Channel.title)
     ).scalars().all()
 
-    subs = [
-        SubData(channel_id=ch.channel_id, title=ch.title, description=ch.description)
-        for ch in channels
-    ]
+    subs = [_sub_data(ch) for ch in channels]
     xml = build_opml(
         subs,
         title="All Subscriptions",
@@ -94,10 +102,7 @@ def opml_by_category(
         .order_by(Channel.title)
     ).scalars().all()
 
-    subs = [
-        SubData(channel_id=ch.channel_id, title=ch.title, description=ch.description)
-        for ch in channels
-    ]
+    subs = [_sub_data(ch) for ch in channels]
     xml = build_opml(
         subs,
         title=category.name,

@@ -68,7 +68,7 @@ def build_opml(
                 "text": sub.title,
                 "title": sub.title,
                 "xmlUrl": xml_url,
-                "htmlUrl": CHANNEL_URL.format(channel_id=sub.channel_id),
+                "htmlUrl": sub.html_url or CHANNEL_URL.format(channel_id=sub.channel_id),
             },
         )
     rough = ET.tostring(opml, encoding="utf-8")

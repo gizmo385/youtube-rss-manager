@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     Category,
+    Channel,
     ChannelCategory,
     Download,
     Subscription,
@@ -156,6 +157,23 @@ def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPref
     )
 
 
+def _archivable_subscriptions(db: Session) -> list[Subscription]:
+    """Non-ignored subscriptions to channels that can be downloaded at all.
+
+    Only YouTube channels qualify. A Nebula channel sitting in a category (or
+    under an account default) with downloads on must not produce an intent —
+    there's nothing the downloader could fetch for it.
+    """
+    return list(db.execute(
+        select(Subscription)
+        .join(Channel, Channel.channel_id == Subscription.channel_id)
+        .where(
+            Subscription.ignored == False,  # noqa: E712
+            Channel.platform == "youtube",
+        )
+    ).scalars().all())
+
+
 def _or(value: int | None, fallback: int | None) -> int | None:
     """``value`` unless it's NULL (inherit), in which case ``fallback``."""
     return fallback if value is None else value
@@ -177,9 +195,7 @@ def _audio_keep(sub, cat_prefs: _CategoryPrefs, user) -> int:
 
 def channel_intents(db: Session) -> dict[str, ChannelIntent]:
     """Resolve every subscribed channel into a single global intent."""
-    subs = db.execute(
-        select(Subscription).where(Subscription.ignored == False)  # noqa: E712
-    ).scalars().all()
+    subs = _archivable_subscriptions(db)
 
     users = {u.id: u for u in db.execute(select(User)).scalars().all()}
     intents: dict[str, ChannelIntent] = {}
@@ -254,9 +270,7 @@ def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
     most-permissive category > user). A user who wants neither contributes
     nothing — their ``keep_last_n`` never inflates anyone else's retention.
     """
-    subs = db.execute(
-        select(Subscription).where(Subscription.ignored == False)  # noqa: E712
-    ).scalars().all()
+    subs = _archivable_subscriptions(db)
     users = {u.id: u for u in db.execute(select(User)).scalars().all()}
 
     retained: dict[int, set[str]] = {}

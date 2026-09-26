@@ -31,7 +31,9 @@
       {% if ch.has_failure %}
       <span class="badge-fail" title="A download failed">!</span>
       {% endif %}
-      {% if ch.is_manual %}
+      {% if ch.is_nebula %}
+      <span class="badge-nebula" title="Nebula channel">NEB</span>
+      {% elif ch.is_manual %}
       <span class="badge-manual" title="Added manually">M</span>
       {% endif %}
     </span>

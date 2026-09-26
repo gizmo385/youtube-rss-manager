@@ -463,6 +463,10 @@ label { display: block; }
   font-size: 9px; font-weight: 700;
   color: var(--muted); border: 1px solid var(--faint); padding: 1px 4px;
 }
+.badge-nebula {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--ink-2); border: 1px solid var(--line); padding: 1px 4px;
+}
 
 .list-end {
   padding: 14px 12px;
@@ -1080,6 +1084,7 @@ label { display: block; }
 .acct-row .acct-meta { font-size: 11px; color: var(--muted-2); }
 
 .help-text { font-size: 12px; color: var(--muted); }
+.unsupported-note { font-size: 12px; color: var(--muted); margin: 4px 0 0; max-width: 60ch; }
 .help-text code { color: var(--ink-2); font-size: 0.92em; }
 
 /* Downloader panel ----------------------------------------------------- */

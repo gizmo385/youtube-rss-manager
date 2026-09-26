@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from youtube_subs_opml.opml import FEED_URL
 from youtube_subs_opml.web.db import Base
-from youtube_subs_opml.web.models import ChannelFeedCache, Subscription, Video
+from youtube_subs_opml.web.models import Channel, ChannelFeedCache, Subscription, Video
 from youtube_subs_opml.web.services import poller
 
 FEED = (
@@ -41,7 +41,12 @@ def db():
     )
     Base.metadata.create_all(
         engine,
-        tables=[Video.__table__, Subscription.__table__, ChannelFeedCache.__table__],
+        tables=[
+            Channel.__table__,
+            Video.__table__,
+            Subscription.__table__,
+            ChannelFeedCache.__table__,
+        ],
     )
     session = sessionmaker(bind=engine)()
     try:
@@ -147,7 +152,6 @@ def test_poll_all_spaces_out_requests(db, monkeypatch):
     # Two channels -> exactly one inter-channel sleep, and it respects the delay.
     assert len(sleeps) == 1
     assert sleeps[0] >= 3.0
-
 
 
 def test_warm_polls_only_uncached_channels(db, monkeypatch):

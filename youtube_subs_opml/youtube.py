@@ -14,6 +14,8 @@ class Subscription:
     title: str
     description: str
     include_shorts: bool = True
+    # The channel's web page for OPML ``htmlUrl``. None means YouTube's.
+    html_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,11 @@ class ResolvedChannel:
     title: str
     description: str
     topics: list[str] | None
+    platform: str = "youtube"
+    # Only Nebula lookups supply art up front; YouTube's is probed later by
+    # the downloader (see downloader.worker.backfill_channel_art).
+    thumbnail_url: str | None = None
+    banner_url: str | None = None
 
 
 class ChannelLookupError(ValueError):

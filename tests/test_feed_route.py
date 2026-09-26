@@ -12,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 from youtube_subs_opml.web.db import Base, get_db
 from youtube_subs_opml.web.models import (
     Category,
+    Channel,
     ChannelFeedCache,
     OpmlToken,
     Subscription,
@@ -39,13 +40,13 @@ def client(monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    # Only the tables the feed route reads — skips Channel's Postgres ARRAY col.
+    # Only the tables the feed route reads.
     Base.metadata.create_all(
         engine,
         tables=[
             t.__table__
             for t in (
-                User, Subscription, Category, OpmlToken,
+                User, Channel, Subscription, Category, OpmlToken,
                 VideoShort, VideoLiveStatus, ChannelFeedCache,
             )
         ],

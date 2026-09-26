@@ -14,13 +14,19 @@
       <div class="eyebrow">Channel</div>
       <h1 class="detail-title">{{ d.title }}</h1>
       <div class="detail-sub">
-        <a href="{{ d.youtube_url }}" target="_blank" rel="noopener">Open on YouTube</a>
+        <a href="{{ d.page_url }}" target="_blank" rel="noopener">Open on {{ d.platform_name }}</a>
         <span>·</span>
         <span class="mono tabular">{{ d.channel_id }}</span>
         {% if d.is_manual %}<span class="badge-manual">Manual</span>{% endif %}
       </div>
     </div>
     <div class="detail-stats">
+      {% if d.is_nebula %}
+      <div>
+        <div class="stat-k">Platform</div>
+        <div class="stat-v">Nebula</div>
+      </div>
+      {% else %}
       <div>
         <div class="stat-k">Archived</div>
         <div class="stat-v tabular">{{ d.video_count }}</div>
@@ -29,6 +35,7 @@
         <div class="stat-k">Disk</div>
         <div class="stat-v tabular">{{ d.disk_human }}</div>
       </div>
+      {% endif %}
       <div>
         <div class="stat-k">Last video</div>
         <div class="stat-v tabular">{{ d.last_video }}</div>
@@ -84,6 +91,10 @@
     </div>
 
     <h2 class="section-label spaced">Feed</h2>
+    {% if d.is_nebula %}
+    <p class="unsupported-note">Shorts and livestream filters don't apply: Nebula has
+      no Shorts, and its feed doesn't mark livestreams. The feed is passed through as-is.</p>
+    {% else %}
     {% for s in d.feed_settings %}
     <div class="pref-row">
       <div class="pref-name">
@@ -101,8 +112,14 @@
       </div>
     </div>
     {% endfor %}
+    {% endif %}
 
     <h2 class="section-label spaced">Video archive</h2>
+    {% if d.is_nebula %}
+    <p class="unsupported-note">Unavailable for Nebula channels — their videos can't be
+      downloaded, so there's no Jellyfin archive, podcast audio or Jellyfin feed links.
+      Archive defaults inherited from categories or your account are ignored here.</p>
+    {% else %}
     {% for s in d.archive_settings %}
     <div class="pref-row">
       <div class="pref-name">
@@ -149,8 +166,9 @@
       </div>
     </div>
     {% endfor %}
+    {% endif %}
 
-    <h2 class="section-label spaced">YouTube topics</h2>
+    <h2 class="section-label spaced">{{ d.topics_label }}</h2>
     <div class="topic-row">
       {% for t in d.topics %}
       <span class="topic-tag">{{ t }}</span>
@@ -161,6 +179,7 @@
   </div>
 
   <div class="detail-col-r">
+    {% if not d.is_nebula %}
     <div class="activity-head">
       <h2 class="section-label" style="margin:0">Archive activity</h2>
     </div>
@@ -176,6 +195,7 @@
     {% else %}
     <div class="empty" style="padding:8px 0">Nothing archived yet for this channel.</div>
     {% endfor %}
+    {% endif %}
 
     {% if d.feed_url %}
     <div class="callout">

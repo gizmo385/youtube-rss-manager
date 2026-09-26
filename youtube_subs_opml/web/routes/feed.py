@@ -9,9 +9,12 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from youtube_subs_opml import nebula
+
 from ..db import get_db
 from ..models import (
     Category,
+    Channel,
     Download,
     DownloadLink,
     JellyfinAccount,
@@ -186,6 +189,10 @@ def _serve_feed(
     if sub is None:
         raise HTTPException(status_code=404)
 
+    channel = db.get(Channel, channel_id)
+    if channel is not None and channel.platform == nebula.PLATFORM:
+        return _serve_nebula_feed(db, channel_id)
+
     cat_shorts_pref: bool | None = None
     cat_live_pref: bool | None = None
     cat_link_pref: str | None = None
@@ -234,14 +241,7 @@ def _serve_feed(
     # before the first sweep, or a just-added channel). Return a retryable 503
     # rather than fetching — fetching is exactly what caused the throttling. An
     # add/sync nudges a poll, and startup warms the cache, so misses are brief.
-    content = load_feed(db, channel_id)
-    if content is None:
-        logger.info("Feed cache miss for %s (not polled yet); returning 503", channel_id)
-        raise HTTPException(
-            status_code=503,
-            detail="Feed not ready yet; retry shortly.",
-            headers={"Retry-After": "120"},
-        )
+    content = _load_cached(db, channel_id)
 
     headers = {"X-Feed-Cache": "hit"}
     if not drop_shorts and not drop_live and link_target == "youtube":
@@ -258,6 +258,34 @@ def _serve_feed(
         jellyfin_base=jellyfin_base,
     )
     return Response(content=filtered, media_type="application/xml", headers=headers)
+
+
+def _load_cached(db: Session, channel_id: str) -> bytes:
+    """The poller-warmed feed XML, or a retryable 503 if it isn't warm yet."""
+    content = load_feed(db, channel_id)
+    if content is None:
+        logger.info("Feed cache miss for %s (not polled yet); returning 503", channel_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Feed not ready yet; retry shortly.",
+            headers={"Retry-After": "120"},
+        )
+    return content
+
+
+def _serve_nebula_feed(db: Session, channel_id: str) -> Response:
+    """A Nebula channel's RSS, passed through untouched.
+
+    None of the filters apply: Nebula has no Shorts, its feed doesn't mark
+    livestreams, and with nothing downloadable there's never a Jellyfin link to
+    rewrite to. Still served from the cache (not fetched here) so a reader's
+    burst of requests stays off the upstream.
+    """
+    return Response(
+        content=_load_cached(db, channel_id),
+        media_type="application/rss+xml",
+        headers={"X-Feed-Cache": "hit"},
+    )
 
 
 @router.get("/{token}/{channel_id}.xml")
