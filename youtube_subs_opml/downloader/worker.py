@@ -45,6 +45,7 @@ from ..web.services.archive import (
 )
 from ..web.services.prefs import is_within_duration_limit, meets_duration_floor
 from ..web.services.shorts import classify_videos
+from .. import metrics
 from ..tracing import tracer
 from . import naming, ytdlp
 
@@ -951,6 +952,35 @@ def _sleep_between_downloads(settings) -> None:
     time.sleep(delay + random.uniform(0, delay))
 
 
+def _record_download(row: Download, seconds: float) -> str:
+    """Count one ``process()`` attempt from the state it left the row in.
+
+    Returns the outcome: 'complete', 'skipped', 'failed', 'retry' (back to
+    pending with a backoff) or 'error' (``process()`` raised mid-way).
+    """
+    try:
+        status, reason = row.status, row.skip_reason
+        video_bytes, audio_bytes = row.file_size_bytes, row.audio_size_bytes
+    except Exception:
+        # The session can be unusable after process() failed; don't let
+        # bookkeeping mask the original error.
+        status = reason = video_bytes = audio_bytes = None
+    if status in ("complete", "skipped", "failed"):
+        outcome = status
+    elif status == "pending":
+        outcome = "retry"
+    else:
+        outcome = "error"
+    metrics.downloads.add(1, {"outcome": outcome, "reason": reason or ""})
+    metrics.download_duration.record(seconds, {"outcome": outcome})
+    if outcome == "complete":
+        if video_bytes:
+            metrics.downloaded_bytes.add(video_bytes, {"kind": "video"})
+        if audio_bytes:
+            metrics.downloaded_bytes.add(audio_bytes, {"kind": "audio"})
+    return outcome
+
+
 def run_forever() -> None:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -1035,7 +1065,12 @@ def run_forever() -> None:
                 else:
                     span.update_name("download")
                     span.set_attribute("video.id", row.video_id)
-                    process(row, db)
+                    started = time.monotonic()
+                    try:
+                        process(row, db)
+                    finally:
+                        outcome = _record_download(row, time.monotonic() - started)
+                        span.set_attribute("download.outcome", outcome)
                     # Link the freshly downloaded file into its subscribers'
                     # libraries immediately, rather than waiting for the next
                     # idle pass.

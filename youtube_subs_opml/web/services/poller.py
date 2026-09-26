@@ -28,7 +28,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from youtube_subs_opml import nebula
+from youtube_subs_opml import metrics, nebula
 from youtube_subs_opml.opml import FEED_URL
 
 from ..config import get_settings
@@ -70,9 +70,17 @@ def _sleep_backoff(base_delay: float, attempt: int) -> None:
 
 
 def _fetch_feed(
-    url: str, client: httpx.Client, *, max_retries: int, base_delay: float
+    url: str,
+    client: httpx.Client,
+    *,
+    max_retries: int,
+    base_delay: float,
+    platform: str = "youtube",
 ) -> httpx.Response:
     """Fetch one channel feed, retrying transient throttling responses.
+
+    Every attempt is counted in ``yt_rss_feed_fetch_attempts``, so throttling
+    that a retry papers over still shows up.
 
     Raises ``httpx.HTTPError`` once retries are exhausted, for the caller to log.
     """
@@ -80,10 +88,16 @@ def _fetch_feed(
         try:
             resp = client.get(url)
         except httpx.RequestError:
+            metrics.feed_fetch_attempts.add(
+                1, {"platform": platform, "status": "network_error", "attempt": attempt + 1}
+            )
             if attempt >= max_retries:
                 raise
             _sleep_backoff(base_delay, attempt)
             continue
+        metrics.feed_fetch_attempts.add(
+            1, {"platform": platform, "status": str(resp.status_code), "attempt": attempt + 1}
+        )
         if resp.status_code in _RETRY_STATUSES and attempt < max_retries:
             _sleep_backoff(base_delay, attempt)
             continue
@@ -128,21 +142,35 @@ def poll_channel(
         if is_nebula
         else FEED_URL.format(channel_id=channel_id)
     )
+    platform = nebula.PLATFORM if is_nebula else "youtube"
+    channel_attrs = {
+        "platform": platform,
+        "channel_id": channel_id,
+        "channel": (channel.title if channel is not None else "") or channel_id,
+    }
     owns_client = client is None
     client = client or _new_client()
+    started = time.monotonic()
     try:
         resp = _fetch_feed(
             url,
             client,
             max_retries=settings.poll_max_retries,
             base_delay=settings.poll_channel_delay_seconds,
+            platform=platform,
         )
     except httpx.HTTPError as exc:
         logger.warning("Poll failed for %s: %s", channel_id, exc)
+        if isinstance(exc, httpx.HTTPStatusError):
+            outcome, status = "http_error", str(exc.response.status_code)
+        else:
+            outcome, status = "network_error", "network_error"
+        _record_poll(channel_attrs, outcome, status, started)
         return 0
     finally:
         if owns_client:
             client.close()
+    _record_poll(channel_attrs, "ok", str(resp.status_code), started)
 
     # Warm the feed cache so the proxy can serve readers without hitting YouTube.
     # Cached regardless of whether there are new videos — an unchanged feed is
@@ -175,7 +203,19 @@ def poll_channel(
             )
         )
         new += 1
+    if new:
+        metrics.feed_new_videos.add(new, channel_attrs)
     return new
+
+
+def _record_poll(
+    channel_attrs: dict[str, str], outcome: str, status: str, started: float
+) -> None:
+    metrics.feed_polls.add(1, {**channel_attrs, "outcome": outcome, "status": status})
+    metrics.feed_poll_duration.record(
+        time.monotonic() - started,
+        {"platform": channel_attrs["platform"], "outcome": outcome},
+    )
 
 
 def _poll_one(channel_id: str, db: Session, client: httpx.Client) -> int:

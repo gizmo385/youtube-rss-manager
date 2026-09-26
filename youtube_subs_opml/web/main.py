@@ -21,6 +21,7 @@ from .routes.opml import router as opml_router
 from .routes.podcast import router as podcast_router
 from .routes.quickswitch import router as quickswitch_router
 from .routes.settings import router as settings_router
+from .services import library_metrics
 from .services.scheduler import start_scheduler, stop_scheduler
 
 
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         register_oauth_clients(settings)
     start_scheduler()
+    library_metrics.register()
     yield
     stop_scheduler()
 
