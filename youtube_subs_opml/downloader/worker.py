@@ -30,6 +30,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import httpx
+from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -44,6 +45,7 @@ from ..web.services.archive import (
 )
 from ..web.services.prefs import is_within_duration_limit, meets_duration_floor
 from ..web.services.shorts import classify_videos
+from ..tracing import tracer
 from . import naming, ytdlp
 
 logger = logging.getLogger(__name__)
@@ -1006,38 +1008,51 @@ def run_forever() -> None:
 
         db = session_factory()
         processed = False
-        try:
-            reap_stale(db)
-            row = claim_one(db)
-            if row is None:
-                # Idle: classify any archived Shorts on channels that now
-                # exclude them, reconcile per-user libraries against current
-                # subscriptions, backfill podcast audio for channels newly
-                # opted in, and prune anything no user retains (including those
-                # freshly-identified Shorts).
-                backfill_shorts(db)
-                reconcile_links(db, media_root)
-                backfill_audio(db, settings)
-                # Give channels their avatars/banners, then materialise
-                # series/season posters into each user's library so Jellyfin
-                # views don't blend together.
-                backfill_channel_art(db)
-                sync_library_art(db, media_root)
-                run_prune(db)
+        # Set on the idle and error paths, which sleep once the iteration's
+        # span has ended so the trace covers the work rather than the wait.
+        back_off = False
+        with tracer.start_as_current_span("worker iteration") as span:
+            try:
+                reap_stale(db)
+                row = claim_one(db)
+                if row is None:
+                    span.update_name("maintenance")
+                    # Idle: classify any archived Shorts on channels that now
+                    # exclude them, reconcile per-user libraries against current
+                    # subscriptions, backfill podcast audio for channels newly
+                    # opted in, and prune anything no user retains (including
+                    # those freshly-identified Shorts).
+                    backfill_shorts(db)
+                    reconcile_links(db, media_root)
+                    backfill_audio(db, settings)
+                    # Give channels their avatars/banners, then materialise
+                    # series/season posters into each user's library so Jellyfin
+                    # views don't blend together.
+                    backfill_channel_art(db)
+                    sync_library_art(db, media_root)
+                    run_prune(db)
+                    back_off = True
+                else:
+                    span.update_name("download")
+                    span.set_attribute("video.id", row.video_id)
+                    process(row, db)
+                    # Link the freshly downloaded file into its subscribers'
+                    # libraries immediately, rather than waiting for the next
+                    # idle pass.
+                    reconcile_links(db, media_root)
+                    processed = True
+            except Exception as exc:
+                logger.exception("Worker iteration failed")
+                span.record_exception(exc)
+                span.set_status(StatusCode.ERROR)
+                db.rollback()
+                back_off = True
+            finally:
                 db.close()
-                time.sleep(_IDLE_SLEEP)
-                continue
-            process(row, db)
-            # Link the freshly downloaded file into its subscribers' libraries
-            # immediately, rather than waiting for the next idle pass.
-            reconcile_links(db, media_root)
-            processed = True
-        except Exception:
-            logger.exception("Worker iteration failed")
-            db.rollback()
+
+        if back_off:
             time.sleep(_IDLE_SLEEP)
-        finally:
-            db.close()
+            continue
 
         # Space out real downloads (session closed first, so we don't hold it
         # open while sleeping). Only after an actual attempt — the idle path

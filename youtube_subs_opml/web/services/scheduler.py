@@ -9,6 +9,7 @@ from sqlalchemy import select
 from ..config import get_settings
 from ..db import get_session_factory
 from ..models import YoutubeAccount
+from ...tracing import tracer
 from .sync import sync_account
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 scheduler = BackgroundScheduler()
 
 
+@tracer.start_as_current_span("job sync_all_accounts")
 def sync_all_accounts() -> None:
     """Scheduled job: sync every YoutubeAccount."""
     db = get_session_factory()()
@@ -39,6 +41,7 @@ def sync_all_accounts() -> None:
         db.close()
 
 
+@tracer.start_as_current_span("job poll_videos")
 def poll_videos() -> None:
     """Scheduled job: persist new videos from channel RSS and enqueue downloads.
 
@@ -57,6 +60,7 @@ def poll_videos() -> None:
         db.close()
 
 
+@tracer.start_as_current_span("job sync_jellyfin")
 def sync_jellyfin() -> None:
     """Scheduled job: resolve item ids and reconcile Jellyfin playlists.
 
@@ -116,6 +120,7 @@ def start_scheduler() -> None:
     )
 
 
+@tracer.start_as_current_span("job warm_new_channels")
 def warm_new_channels() -> None:
     """One-off job: poll channels that have no cached feed yet."""
     from .poller import warm_uncached_channels

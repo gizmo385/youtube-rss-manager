@@ -5,7 +5,14 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # OpenTelemetry auto-instrumentation is wired in but exports nothing unless
+    # the deployment points it at a collector (OTEL_TRACES_EXPORTER=otlp plus
+    # OTEL_EXPORTER_OTLP_ENDPOINT).
+    OTEL_TRACES_EXPORTER=none \
+    OTEL_METRICS_EXPORTER=none \
+    OTEL_LOGS_EXPORTER=none \
+    OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
@@ -23,4 +30,4 @@ RUN uv pip install --system --no-cache ".[downloader]"
 # yt-dlp is pinned via the "downloader" extra above. YouTube breaks extraction
 # every few months; when that happens, bump the pin (or just rebuild this image)
 # to pick up a fresh yt-dlp release.
-CMD ["python", "-m", "youtube_subs_opml.downloader.worker"]
+CMD ["opentelemetry-instrument", "python", "-m", "youtube_subs_opml.downloader.worker"]
