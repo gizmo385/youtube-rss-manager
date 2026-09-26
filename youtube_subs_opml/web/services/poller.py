@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from youtube_subs_opml.opml import FEED_URL
 
 from ..config import get_settings
-from ..models import Subscription, Video
+from ..models import ChannelFeedCache, Subscription, Video
 from .archive import enqueue_pending
 from .feed_cache import store_feed
 
@@ -166,6 +166,79 @@ def poll_channel(
     return new
 
 
+def _poll_one(channel_id: str, db: Session, client: httpx.Client) -> int:
+    """Poll one channel in its own transaction, so a failure can't sink the sweep."""
+    try:
+        new = poll_channel(channel_id, db, client)
+        db.commit()
+        return new
+    except Exception:
+        logger.exception("Poll failed for channel %s", channel_id)
+        db.rollback()
+        return 0
+
+
+def _uncached_channel_ids(db: Session) -> set[str]:
+    """Subscribed, non-ignored channels with no cached feed yet."""
+    return set(
+        db.execute(
+            select(Subscription.channel_id)
+            .outerjoin(
+                ChannelFeedCache,
+                ChannelFeedCache.channel_id == Subscription.channel_id,
+            )
+            .where(
+                Subscription.ignored == False,  # noqa: E712
+                ChannelFeedCache.channel_id.is_(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+def warm_uncached_channels(db: Session) -> int:
+    """Poll only the channels whose feed has never been cached.
+
+    Runs as a one-off job after a channel is added or an account synced, so a
+    new feed URL stops 503ing in seconds. The alternative, nudging the full
+    sweep, can't help while a sweep is already running: that sweep took its
+    channel list when it started, and a throttled sweep can run for half an hour.
+
+    Re-checks for uncached channels until none are left, so a channel added
+    while this job is running is picked up by it too. Each channel is tried at
+    most once per run; a failure is left to the regular sweep. Spaced like the
+    sweep, since it can run at the same time and YouTube sees both.
+    """
+    delay = get_settings().poll_channel_delay_seconds
+    attempted: set[str] = set()
+    total = 0
+    client = _new_client()
+    try:
+        while pending := sorted(_uncached_channel_ids(db) - attempted):
+            for channel_id in pending:
+                if attempted and delay > 0:
+                    time.sleep(delay + random.uniform(0, delay))
+                attempted.add(channel_id)
+                # The running sweep may have reached it since the query above.
+                if db.get(ChannelFeedCache, channel_id) is not None:
+                    continue
+                total += _poll_one(channel_id, db, client)
+    finally:
+        client.close()
+
+    if total:
+        try:
+            enqueue_pending(db)
+            db.commit()
+        except Exception:
+            logger.exception("Enqueue failed")
+            db.rollback()
+
+    logger.info("Warmed %d new channels, %d new videos", len(attempted), total)
+    return total
+
+
 def poll_all_channels(db: Session) -> int:
     """Poll every non-ignored subscribed channel, then enqueue downloads.
 
@@ -194,12 +267,7 @@ def poll_all_channels(db: Session) -> int:
             # Space out the sweep so ~50 channels don't look like a burst.
             if i and delay > 0:
                 time.sleep(delay + random.uniform(0, delay))
-            try:
-                total += poll_channel(channel_id, db, client)
-                db.commit()
-            except Exception:
-                logger.exception("Poll failed for channel %s", channel_id)
-                db.rollback()
+            total += _poll_one(channel_id, db, client)
     finally:
         client.close()
 

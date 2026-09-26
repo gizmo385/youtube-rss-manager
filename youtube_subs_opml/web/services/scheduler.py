@@ -116,21 +116,42 @@ def start_scheduler() -> None:
     )
 
 
-def trigger_poll_soon(delay_seconds: float = 5) -> None:
-    """Nudge the video poll to run shortly.
+def warm_new_channels() -> None:
+    """One-off job: poll channels that have no cached feed yet."""
+    from .poller import warm_uncached_channels
+
+    db = get_session_factory()()
+    try:
+        warm_uncached_channels(db)
+    except Exception:
+        logger.exception("Warming new channels failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def warm_new_channels_soon(delay_seconds: float = 1) -> None:
+    """Schedule a one-off poll of just the channels with no cached feed.
 
     Called after a channel is added or an account synced, so a freshly-visible
-    channel's feed cache warms in seconds rather than at the next interval —
-    otherwise its feed URL 503s until then. Best-effort: a no-op if the
-    scheduler isn't running (e.g. tests) or the job hasn't been registered.
+    channel's feed URL stops 503ing in seconds. It's a separate job rather than
+    a nudge of ``poll_videos`` so it isn't stuck behind a sweep that's already
+    running. Best-effort: a no-op if the scheduler isn't running (e.g. tests).
     """
     try:
-        scheduler.modify_job(
-            "poll_videos",
-            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=delay_seconds),
+        scheduler.add_job(
+            warm_new_channels,
+            "date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=delay_seconds),
+            id="warm_new_channels",
+            # A run already in progress re-checks for uncached channels before it
+            # exits, so replacing the pending run (or being skipped while one is
+            # in progress) doesn't drop a new channel.
+            replace_existing=True,
+            misfire_grace_time=60,
         )
     except Exception:
-        logger.debug("Could not nudge poll job (scheduler not running?)", exc_info=True)
+        logger.debug("Could not schedule warm job (scheduler not running?)", exc_info=True)
 
 
 def stop_scheduler() -> None:

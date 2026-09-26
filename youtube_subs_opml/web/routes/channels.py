@@ -1092,10 +1092,11 @@ async def add_manual_channel(
 
     db.commit()
 
-    # Warm the new channel's feed cache soon so its feed URL doesn't 503 until
-    # the next scheduled poll.
-    from ..services.scheduler import trigger_poll_soon
-    trigger_poll_soon()
+    # Warm the new channel's feed cache in a one-off job so its feed URL
+    # doesn't 503 until a sweep reaches it. Not inline: under throttling a
+    # YouTube fetch with retries can hold the request for tens of seconds.
+    from ..services.scheduler import warm_new_channels_soon
+    warm_new_channels_soon()
 
     filt = form.get("filter") or "All"
     return _list_response(request, user, db, resolved.channel_id, filt)

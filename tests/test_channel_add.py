@@ -51,10 +51,10 @@ def client(monkeypatch, calls, session_factory):
     monkeypatch.setattr(
         channels, "get_settings", lambda: SimpleNamespace(base_url="http://test")
     )
-    # Credentials and the poll nudge are irrelevant to what's under test.
+    # Credentials and the warm job are irrelevant to what's under test.
     monkeypatch.setattr(channels, "decrypt_token", lambda blob: "refresh-token")
     monkeypatch.setattr(channels, "build_google_credentials", lambda tok, s: object())
-    monkeypatch.setattr(scheduler, "trigger_poll_soon", lambda: None)
+    monkeypatch.setattr(scheduler, "warm_new_channels_soon", lambda: None)
 
     def public(value):
         calls.append("public")

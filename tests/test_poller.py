@@ -147,3 +147,57 @@ def test_poll_all_spaces_out_requests(db, monkeypatch):
     # Two channels -> exactly one inter-channel sleep, and it respects the delay.
     assert len(sleeps) == 1
     assert sleeps[0] >= 3.0
+
+
+
+def test_warm_polls_only_uncached_channels(db, monkeypatch):
+    cached, fresh, ignored = "UCcached", "UCfresh", "UCignored"
+    db.add(Subscription(user_id=1, channel_id=cached))
+    db.add(Subscription(user_id=1, channel_id=fresh))
+    db.add(Subscription(user_id=1, channel_id=ignored, ignored=True))
+    db.add(ChannelFeedCache(channel_id=cached, xml=FEED))
+    db.commit()
+
+    url = FEED_URL.format(channel_id=fresh)
+    fake = FakeClient({url: [_resp(200, url, FEED)]})
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+    monkeypatch.setattr(poller, "enqueue_pending", lambda db: 0)
+
+    assert poller.warm_uncached_channels(db) == 1
+
+    assert fake.calls == [url]
+    assert db.get(ChannelFeedCache, fresh).xml == FEED
+
+
+def test_warm_tries_a_failing_channel_once(db, monkeypatch):
+    cid = "UCchannel00000000000009"
+    db.add(Subscription(user_id=1, channel_id=cid))
+    db.commit()
+    url = FEED_URL.format(channel_id=cid)
+    fake = FakeClient({url: [_resp(500, url)] * 3})
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    # Still uncached afterwards, but not re-polled in a loop: the sweep owns it now.
+    assert poller.warm_uncached_channels(db) == 0
+    assert len(fake.calls) == 3  # initial + 2 retries, once
+
+
+def test_warm_picks_up_channels_added_mid_run(db, monkeypatch):
+    first, second = "UCfirst", "UCsecond"
+    db.add(Subscription(user_id=1, channel_id=first))
+    db.commit()
+
+    polled: list[str] = []
+
+    def poll(cid, db, client):
+        polled.append(cid)
+        if cid == first:
+            # Another request subscribes to a new channel while this job runs.
+            db.add(Subscription(user_id=1, channel_id=second))
+        db.add(ChannelFeedCache(channel_id=cid, xml=FEED))
+        return 0
+
+    monkeypatch.setattr(poller, "poll_channel", poll)
+    poller.warm_uncached_channels(db)
+
+    assert polled == [first, second]
