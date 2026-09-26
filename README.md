@@ -2,20 +2,44 @@
 
 A multi-user web app that syncs YouTube subscriptions via the YouTube Data API and exposes them as categorized OPML feeds. Designed for self-hosted setups where an RSS reader like FreshRSS pulls subscription feeds on a schedule.
 
-![YouTube Kanban Board](./images/opml_kanban_board.png)
+![Library overview](./images/overview.png)
 
 ## Features
 
+**Subscriptions**
+
 - OIDC login for providers such as Keycloak, Authentik, Authelia, etc.
-- Per-user YouTube OAuth
-- Automatic subscription sync (every 6 hours)
-- Organize channels into user-defined categories
-- Per-channel, per-category, and per-user shorts filtering (cascading preference: subscription > category > user)
+- Per-user YouTube OAuth, with automatic subscription sync (every 6 hours)
+- Add channels by hand from a URL, `@handle`, or channel ID, including Nebula channels
+- Ignore channels you don't want in any feed
+
+**Feeds**
+
+- Organize channels into user-defined categories, from a list view or a drag-and-drop board
 - Token-authenticated OPML endpoints for RSS readers (`/opml/<token>/all.opml`, `/opml/<token>/<category-slug>.opml`)
+- Feeds are served from a cache refreshed by a background poller, so a reader fetching every feed at once doesn't get the server throttled by YouTube
+- Filter out Shorts and premieres/livestreams per user, category, or channel (cascading preference: channel > category > user)
 
-![Channel list](./images/opml_channels_list.png)
+**Video archive**
 
-![Category management](./images/opml_categories_view.png)
+- Download new videos into Jellyfin, with per-user libraries that share files on disk via hardlinks
+- Retention and length limits: keep the last N videos per channel, skip videos over or under a set duration
+- Per-category Jellyfin playlists, and optionally point feed entries at the Jellyfin copy once it's downloaded
+- Podcast feeds (`/podcast/<token>/all.xml`, `/podcast/<token>/<category-slug>.xml`) with extracted audio, including audio-only channels that don't keep the video
+- A downloads view for failed and skipped items, with manual retry
+
+**Getting around**
+
+- A library overview with archive activity and anything that needs attention
+- A Ctrl/Cmd-K quick switcher for jumping to any channel
+
+![Channel detail](./images/channel_detail.png)
+
+![Category board](./images/board.png)
+
+![Category management](./images/categories.png)
+
+![Settings](./images/settings.png)
 
 ## Prerequisites
 
