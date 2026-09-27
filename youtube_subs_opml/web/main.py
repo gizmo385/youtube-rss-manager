@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
@@ -9,11 +9,11 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from .auth import register_oauth_clients, router as auth_router
+from .auth import register_oauth_clients
+from .auth import router as auth_router
 from .config import get_settings
 from .deps import get_optional_user
 from .models import User
-from .templating import templates
 from .routes.categories import router as categories_router
 from .routes.channels import router as channels_router
 from .routes.feed import router as feed_router
@@ -23,6 +23,7 @@ from .routes.quickswitch import router as quickswitch_router
 from .routes.settings import router as settings_router
 from .services import library_metrics
 from .services.scheduler import start_scheduler, stop_scheduler
+from .templating import templates
 
 
 @asynccontextmanager

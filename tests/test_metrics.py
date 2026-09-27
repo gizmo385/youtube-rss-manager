@@ -3,7 +3,7 @@ library snapshot behind the gauges."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -161,7 +161,7 @@ def _observed(snapshot: dict, name: str, **attrs: str) -> list[float]:
 
 
 def test_library_snapshot(db):
-    now = datetime(2026, 9, 26, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 26, tzinfo=UTC)
     db.add(User(id=1, oidc_sub="sub", email="me@example.com"))
     db.add_all(
         [

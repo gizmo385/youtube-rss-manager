@@ -7,15 +7,14 @@ inode behaviour is exercised for real — no Postgres, Keycloak, or network.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from types import SimpleNamespace
 
 from youtube_subs_opml.downloader import naming, worker
 from youtube_subs_opml.downloader.worker import backfill_audio, reconcile_links, run_prune
@@ -31,7 +30,6 @@ from youtube_subs_opml.web.models import (
     Video,
     VideoShort,
 )
-from youtube_subs_opml.web.services.prefs import meets_duration_floor
 from youtube_subs_opml.web.services.archive import (
     channel_intents,
     enqueue_pending,
@@ -40,10 +38,11 @@ from youtube_subs_opml.web.services.archive import (
     user_retained_podcast_ids,
     user_retained_video_ids,
 )
+from youtube_subs_opml.web.services.prefs import meets_duration_floor
 
 CHAN = "UCchannel0000000000000"
 CHAN_TITLE = "Test Chan"
-BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -67,15 +66,15 @@ def db() -> Session:
 
 
 def add_user(db: Session, uid: int, **prefs) -> User:
-    defaults = dict(
-        oidc_sub=f"sub{uid}",
-        email=f"u{uid}@e",
-        download_enabled=False,
-        keep_last_n=15,
-        max_duration_seconds=0,
-        generate_podcast=False,
-        link_target="youtube",
-    )
+    defaults = {
+        "oidc_sub": f"sub{uid}",
+        "email": f"u{uid}@e",
+        "download_enabled": False,
+        "keep_last_n": 15,
+        "max_duration_seconds": 0,
+        "generate_podcast": False,
+        "link_target": "youtube",
+    }
     defaults.update(prefs)
     user = User(id=uid, **defaults)
     db.add(user)
@@ -124,7 +123,7 @@ def complete_download(db: Session, media_root: str, vid: str, epnum: int) -> Pat
             status="complete",
             file_path=str(mkv),
             file_size_bytes=mkv.stat().st_size,
-            completed_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(UTC),
         )
     )
     db.commit()
@@ -530,8 +529,8 @@ def test_reconcile_creates_hardlinks(db, tmp_path):
     assert (created, removed) == (2, 0)
 
     links = db.query(DownloadLink).all()
-    assert {l.video_id for l in links} == set(ids)
-    for link, canon_mkv in zip(sorted(links, key=lambda l: l.video_id), canon):
+    assert {link.video_id for link in links} == set(ids)
+    for link, canon_mkv in zip(sorted(links, key=lambda link: link.video_id), canon, strict=True):
         lp = Path(link.link_path)
         assert lp.exists()
         # Same inode → one physical copy, two names.
@@ -570,7 +569,7 @@ def test_reconcile_removes_links_when_no_longer_retained(db, tmp_path):
     created, removed = reconcile_links(db, media)
     assert (created, removed) == (0, 1)
 
-    remaining = {l.video_id for l in db.query(DownloadLink).all()}
+    remaining = {link.video_id for link in db.query(DownloadLink).all()}
     assert remaining == {ids[1]}  # only newest kept
     # The dropped user's hardlink is gone, but the canonical file survives.
     assert not any(
@@ -616,7 +615,7 @@ def test_prune_keeps_file_a_second_user_still_wants(db, tmp_path):
     assert run_prune(db) == 0  # user 2 still wants the old one
     assert canon_old.exists()
 
-    links_old = {l.user_id for l in db.query(DownloadLink).filter_by(video_id=ids[0]).all()}
+    links_old = {link.user_id for link in db.query(DownloadLink).filter_by(video_id=ids[0]).all()}
     assert links_old == {2}  # only user 2 has the old video linked
 
 

@@ -7,7 +7,7 @@ add/remove reconcile — which is where the logic lives.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine
@@ -219,7 +219,7 @@ def test_reconcile_removal_failure_is_nonfatal(db):
 
 
 def _dated(day: int) -> datetime:
-    return datetime(2026, 3, day, tzinfo=timezone.utc)
+    return datetime(2026, 3, day, tzinfo=UTC)
 
 
 def test_reconcile_orders_newest_upload_first(db):

@@ -7,8 +7,6 @@ means no episode art. We assert the yt-dlp invocation carries the per-type
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from youtube_subs_opml.downloader import ytdlp
 
 

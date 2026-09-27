@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     podcast_cover_url: str = Field("")
 
     @model_validator(mode="after")
-    def _apply_mode_defaults(self) -> "Settings":
+    def _apply_mode_defaults(self) -> Settings:
         if self.local_mode:
             self.database_url = self.database_url or _LOCAL_DATABASE_URL
             self.session_secret = self.session_secret or _LOCAL_SESSION_SECRET

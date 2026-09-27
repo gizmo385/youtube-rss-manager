@@ -31,24 +31,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["settings"])
 
 
-def _int_or_none(value) -> int | None:  # noqa: ANN001 — form/query values are str
+def _int_or_none(value) -> int | None:
     try:
         return int(value) if value not in (None, "") else None
     except (TypeError, ValueError):
         return None
 
 
-def _clean(value) -> str | None:  # noqa: ANN001
+def _clean(value) -> str | None:
     text = (value or "").strip()
     return text or None
 
 
-def _status_or_none(value) -> str | None:  # noqa: ANN001
+def _status_or_none(value) -> str | None:
     text = _clean(value)
     return text if text in downloads_service.DOWNLOAD_STATUSES else None
 
 
-def _table_context(db: Session, user: User, params) -> dict:  # noqa: ANN001
+def _table_context(db: Session, user: User, params) -> dict:
     """Build the download-history table context from query/form params.
 
     Shared by the initial page render, the htmx filter/pagination endpoint, and
@@ -313,7 +313,7 @@ def downloads_table(
     return templates.TemplateResponse(request, "partials/downloads_table.html", ctx)
 
 
-def _retry_response(request: Request, db: Session, user: User, form, *, dl: str, dl_n: int):  # noqa: ANN001
+def _retry_response(request: Request, db: Session, user: User, form, *, dl: str, dl_n: int):
     """Refresh the table + summary in place for htmx; redirect otherwise.
 
     Retry buttons send the current filters and page (via hx-include), so the

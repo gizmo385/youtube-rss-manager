@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 
+from ...tracing import tracer
 from ..config import get_settings
 from ..db import get_session_factory
 from ..models import YoutubeAccount
-from ...tracing import tracer
 from .sync import sync_account
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ def start_scheduler() -> None:
         # Warm the feed cache right after startup instead of a full interval
         # later: the feed proxy now serves only from cache, so an empty cache
         # after a deploy means every feed 503s until the first sweep runs.
-        next_run_time=datetime.now(timezone.utc) + timedelta(seconds=10),
+        next_run_time=datetime.now(UTC) + timedelta(seconds=10),
         # A slow sweep must never overlap itself once the interval also fires.
         max_instances=1,
         coalesce=True,
@@ -146,7 +146,7 @@ def warm_new_channels_soon(delay_seconds: float = 1) -> None:
         scheduler.add_job(
             warm_new_channels,
             "date",
-            run_date=datetime.now(timezone.utc) + timedelta(seconds=delay_seconds),
+            run_date=datetime.now(UTC) + timedelta(seconds=delay_seconds),
             id="warm_new_channels",
             # A run already in progress re-checks for uncached channels before it
             # exits, so replacing the pending run (or being skipped while one is

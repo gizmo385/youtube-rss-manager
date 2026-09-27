@@ -6,7 +6,7 @@ range request exercises Starlette's FileResponse for real.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -84,7 +84,7 @@ def client(audio_file):
         seed.add(Category(id=1, user_id=1, name="Tech", slug="tech"))
         seed.add(ChannelCategory(user_id=1, channel_id=CID, category_id=1))
 
-        pub = datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc)
+        pub = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
         # Complete + audio -> appears in feed.
         seed.add(
             Video(
@@ -213,7 +213,7 @@ def test_category_feed_scopes_to_category(client):
 
 
 def test_unknown_token_404(client):
-    assert client.get(f"/podcast/bad/all.xml").status_code == 404
+    assert client.get("/podcast/bad/all.xml").status_code == 404
 
 
 def test_unknown_category_404(client):

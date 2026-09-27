@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from sqlalchemy import select
@@ -45,7 +45,7 @@ def resolve_include_live(
 
 def _is_stale(checked_at: datetime, now: datetime) -> bool:
     if checked_at.tzinfo is None:  # SQLite may return naive datetimes
-        checked_at = checked_at.replace(tzinfo=timezone.utc)
+        checked_at = checked_at.replace(tzinfo=UTC)
     return now - checked_at > _TRANSIENT_TTL
 
 
@@ -87,14 +87,12 @@ def classify_live(video_ids: list[str], db: Session) -> dict[str, str]:
     rows = db.execute(select(VideoLiveStatus).where(VideoLiveStatus.video_id.in_(video_ids))).scalars().all()
     cached = {row.video_id: row for row in rows}
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result: dict[str, str] = {}
     to_probe: list[str] = []
     for vid in video_ids:
         row = cached.get(vid)
-        if row is None:
-            to_probe.append(vid)
-        elif row.status in TRANSIENT_STATUSES and _is_stale(row.checked_at, now):
+        if row is None or (row.status in TRANSIENT_STATUSES and _is_stale(row.checked_at, now)):
             to_probe.append(vid)
         else:
             result[vid] = row.status

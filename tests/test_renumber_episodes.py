@@ -6,7 +6,7 @@ and NFO rewrites are exercised for real.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -27,7 +27,7 @@ from youtube_subs_opml.web.models import (
 
 CHAN = "UCchannel0000000000000"
 CHAN_TITLE = "Test Chan"
-PUB = datetime(2026, 3, 15, 9, 0, tzinfo=timezone.utc)  # -> MMDD 315 -> E0315
+PUB = datetime(2026, 3, 15, 9, 0, tzinfo=UTC)  # -> MMDD 315 -> E0315
 
 
 @pytest.fixture
@@ -46,8 +46,8 @@ def db() -> Session:
 
 def test_date_episode_number_encodes_mmdd():
     assert naming.date_episode_number(PUB) == 315
-    assert naming.date_episode_number(datetime(2026, 1, 5, tzinfo=timezone.utc)) == 105
-    assert naming.date_episode_number(datetime(2026, 12, 31, tzinfo=timezone.utc)) == 1231
+    assert naming.date_episode_number(datetime(2026, 1, 5, tzinfo=UTC)) == 105
+    assert naming.date_episode_number(datetime(2026, 12, 31, tzinfo=UTC)) == 1231
     assert naming.date_episode_number(None) == 0
 
 

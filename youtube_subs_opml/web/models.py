@@ -56,8 +56,8 @@ class User(Base):
     link_target: Mapped[str] = mapped_column(String(16), server_default="youtube", default="youtube")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    youtube_accounts: Mapped[list["YoutubeAccount"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    categories: Mapped[list["Category"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    youtube_accounts: Mapped[list[YoutubeAccount]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    categories: Mapped[list[Category]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class YoutubeAccount(Base):

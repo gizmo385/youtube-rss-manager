@@ -46,7 +46,7 @@ def sync_account(account: YoutubeAccount, db: Session, settings: Settings) -> in
     try:
         topics_map = fetch_channel_topics(creds, channel_ids)
     except Exception:
-        logger.warning("Failed to fetch channel topics, continuing without them")
+        logger.warning("Failed to fetch channel topics, continuing without them", exc_info=True)
         topics_map = {}
 
     # Upsert channels

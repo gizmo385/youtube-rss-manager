@@ -25,7 +25,7 @@ import random
 import re
 import signal
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -34,6 +34,8 @@ from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import metrics
+from ..tracing import tracer
 from ..web.config import get_settings
 from ..web.db import get_session_factory
 from ..web.models import Channel, Download, DownloadLink, Video, VideoShort
@@ -45,8 +47,6 @@ from ..web.services.archive import (
 )
 from ..web.services.prefs import is_within_duration_limit, meets_duration_floor
 from ..web.services.shorts import classify_videos
-from .. import metrics
-from ..tracing import tracer
 from . import naming, ytdlp
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ _MAX_ATTEMPTS = 5
 _shutdown = False
 
 
-def _handle_signal(signum, frame) -> None:  # noqa: ANN001
+def _handle_signal(signum, frame) -> None:
     global _shutdown
     logger.info("Received signal %s, finishing current job then exiting", signum)
     _shutdown = True
@@ -68,7 +68,7 @@ def _handle_signal(signum, frame) -> None:  # noqa: ANN001
 def _backoff(attempts: int) -> datetime:
     """Exponential backoff, capped at 6 hours."""
     delay = min(2**attempts * 60, 6 * 3600)
-    return datetime.now(timezone.utc) + timedelta(seconds=delay)
+    return datetime.now(UTC) + timedelta(seconds=delay)
 
 
 # yt-dlp probe errors that will never succeed from this IP/account. Skipping
@@ -123,7 +123,7 @@ def claim_one(db: Session) -> Download | None:
     container without a broker. Postgres-only; local SQLite development runs
     the loop single-threaded and the clause is dropped.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stmt = (
         select(Download)
         .where(
@@ -147,7 +147,7 @@ def claim_one(db: Session) -> Download | None:
 
 def reap_stale(db: Session) -> int:
     """Return crashed-mid-download rows to pending."""
-    cutoff = datetime.now(timezone.utc) - _STALE_CLAIM
+    cutoff = datetime.now(UTC) - _STALE_CLAIM
     stale = (
         db.execute(select(Download).where(Download.status == "downloading", Download.created_at < cutoff))
         .scalars()
@@ -331,7 +331,7 @@ def process(row: Download, db: Session) -> None:
                 return
 
     row.status = "complete"
-    row.completed_at = datetime.now(timezone.utc)
+    row.completed_at = datetime.now(UTC)
     row.last_error = None
     db.commit()
     kind = "video+audio" if wants_video and wants_audio else "video" if wants_video else "audio"
@@ -350,10 +350,7 @@ def _unlink_all(mkv_path: Path) -> None:
     holding other episodes (or a channel with other seasons) is left untouched.
     """
     for p in naming.episode_files(mkv_path):
-        try:
-            p.unlink()
-        except FileNotFoundError:
-            pass
+        p.unlink(missing_ok=True)
 
     season_dir = mkv_path.parent
     channel_dir = season_dir.parent
@@ -416,7 +413,7 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
                 user_id=user_id,
                 video_id=vid,
                 link_path=str(user_dir / src_mkv.name),
-                linked_at=datetime.now(timezone.utc),
+                linked_at=datetime.now(UTC),
             )
         )
         created += 1
@@ -614,10 +611,7 @@ def _unlink_video_files(mkv_path: Path) -> None:
     for p in naming.episode_files(mkv_path):
         if p.suffix == ".m4a":
             continue
-        try:
-            p.unlink()
-        except FileNotFoundError:
-            pass
+        p.unlink(missing_ok=True)
     season_dir = mkv_path.parent
     channel_dir = season_dir.parent
     for d in (season_dir, channel_dir):
@@ -670,10 +664,7 @@ def run_prune(db: Session) -> int:
 
         if not wants_audio and download.audio_path:
             # Video-only now: drop the extracted audio, keep the video.
-            try:
-                Path(download.audio_path).unlink()
-            except FileNotFoundError:
-                pass
+            Path(download.audio_path).unlink(missing_ok=True)
             download.audio_path = None
             download.audio_size_bytes = None
             modified += 1
@@ -934,7 +925,7 @@ def _record_download(row: Download, seconds: float) -> str:
     try:
         status, reason = row.status, row.skip_reason
         video_bytes, audio_bytes = row.file_size_bytes, row.audio_size_bytes
-    except Exception:
+    except Exception:  # noqa: BLE001
         # The session can be unusable after process() failed; don't let
         # bookkeeping mask the original error.
         status = reason = video_bytes = audio_bytes = None

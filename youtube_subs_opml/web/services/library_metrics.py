@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from opentelemetry.metrics import CallbackOptions, Observation
 from sqlalchemy import Integer, cast, func, literal, select
@@ -56,7 +56,7 @@ def _channel_attrs(channel_id: str, title: str | None, platform: str | None) -> 
 
 def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]:
     """Compute every gauge's observations. Pure DB reads; no commits."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     recent_cutoff = now - timedelta(days=30)
     out: dict[str, Observations] = {}
 
@@ -100,7 +100,7 @@ def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]
         out["yt_rss_channel_recent_uploads"].append((recent, attrs))
         if last is not None:
             if last.tzinfo is None:  # SQLite drops the zone
-                last = last.replace(tzinfo=timezone.utc)
+                last = last.replace(tzinfo=UTC)
             out["yt_rss_channel_days_since_upload"].append(((now - last).total_seconds() / 86400, attrs))
         if avg_duration is not None:
             out["yt_rss_channel_avg_video_duration"].append((float(avg_duration), attrs))

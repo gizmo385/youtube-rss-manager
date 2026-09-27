@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from xml.etree import ElementTree as ET
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -63,10 +63,10 @@ def _entry_published(entry: ET.Element) -> datetime | None:
     if el is None or not el.text:
         return None
     try:
-        dt = datetime.fromisoformat(el.text.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(el.text)
     except ValueError:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 def _filter_feed(
@@ -124,7 +124,7 @@ def _filter_feed(
             ).all()
             if item
         }
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
 
     for entry in entries:
         vid_el = entry.find(f"{{{_YT}}}videoId")

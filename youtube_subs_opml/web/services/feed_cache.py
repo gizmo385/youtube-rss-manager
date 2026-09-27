@@ -8,7 +8,7 @@ proxy commits its one-off seed).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -20,10 +20,10 @@ def store_feed(db: Session, channel_id: str, xml: bytes) -> None:
     with no new uploads doesn't churn a write on every poll."""
     row = db.get(ChannelFeedCache, channel_id)
     if row is None:
-        db.add(ChannelFeedCache(channel_id=channel_id, xml=xml, fetched_at=datetime.now(timezone.utc)))
+        db.add(ChannelFeedCache(channel_id=channel_id, xml=xml, fetched_at=datetime.now(UTC)))
     elif row.xml != xml:
         row.xml = xml
-        row.fetched_at = datetime.now(timezone.utc)
+        row.fetched_at = datetime.now(UTC)
 
 
 def load_feed(db: Session, channel_id: str) -> bytes | None:

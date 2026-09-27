@@ -6,7 +6,7 @@ Exercises ``feed._filter_feed`` directly with an explicit ``now`` so the
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -21,7 +21,7 @@ from youtube_subs_opml.web.routes import feed
 ATOM = "http://www.w3.org/2005/Atom"
 YT = "http://www.youtube.com/xml/schemas/2015"
 JF_BASE = "https://jf.example.com"
-NOW = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
 RECENT = "2026-08-28T06:00:00+00:00"  # 6h before NOW
 AGED = "2026-08-24T00:00:00+00:00"  # >48h before NOW
 YT_LINK = "https://www.youtube.com/watch?v={vid}"

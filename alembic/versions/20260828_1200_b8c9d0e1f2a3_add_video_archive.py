@@ -6,16 +6,15 @@ Create Date: 2026-08-28 12:00:00.000000+00:00
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 revision: str = "b8c9d0e1f2a3"
-down_revision: Union[str, None] = "a7b8c9d0e1f2"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "a7b8c9d0e1f2"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 # Cascading preferences, mirroring the include_shorts/include_live pattern:

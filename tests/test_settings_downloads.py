@@ -6,14 +6,14 @@ Keycloak, or network. Exercises both the service layer and the settings routes.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from datetime import datetime, timedelta, timezone
 
 from youtube_subs_opml.web.db import Base, get_db
 from youtube_subs_opml.web.deps import get_current_user
@@ -56,7 +56,7 @@ def _dl(seed, channel_id, vid, status, *, skip_reason=None, attempts=1, last_err
             attempts=attempts,
             last_error=last_error,
             file_size_bytes=size,
-            file_path="/c/%s.mkv" % vid if status == "complete" else None,
+            file_path=f"/c/{vid}.mkv" if status == "complete" else None,
         )
     )
 
@@ -228,7 +228,7 @@ def history_db():
         s.add(Category(id=1, user_id=1, name="Tech", slug="tech"))
         s.add(ChannelCategory(user_id=1, channel_id="UCa", category_id=1))
         s.commit()
-        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 1, tzinfo=UTC)
         statuses = ["complete", "failed", "skipped", "pending"]
         for i in range(60):
             cid = "UCa" if i % 2 else "UCb"

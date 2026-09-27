@@ -88,7 +88,7 @@ def status_counts(db: Session, user_id: int) -> dict[str, int]:
         )
         .group_by(Download.status)
     ).all()
-    return {status: count for status, count in rows}
+    return dict(rows)
 
 
 def recoverable_count(db: Session, user_id: int) -> int:

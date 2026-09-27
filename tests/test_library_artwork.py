@@ -7,7 +7,7 @@ stubbed — the point here is the on-disk layout and teardown, not YouTube.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -33,7 +33,7 @@ from youtube_subs_opml.web.models import (
 
 CHAN = "UCchannel0000000000000"
 CHAN_TITLE = "Test Chan"
-PUB = datetime(2026, 3, 2, tzinfo=timezone.utc)
+PUB = datetime(2026, 3, 2, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -84,7 +84,7 @@ def _complete_download(db, media_root, vid="vid00000001", epnum=1) -> Path:
             status="complete",
             file_path=str(mkv),
             file_size_bytes=mkv.stat().st_size,
-            completed_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(UTC),
         )
     )
     db.commit()

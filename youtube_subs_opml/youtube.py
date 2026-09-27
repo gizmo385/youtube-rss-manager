@@ -51,11 +51,7 @@ def _parse_channel_input(value: str) -> tuple[str, str]:
     if _CHANNEL_ID_RE.match(value):
         return "id", value
 
-    if (
-        value.startswith(("http://", "https://", "//"))
-        or value.startswith("youtube.com")
-        or value.startswith("www.youtube.com")
-    ):
+    if value.startswith(("http://", "https://", "//", "youtube.com", "www.youtube.com")):
         url = value if "://" in value else "https://" + value.lstrip("/")
         parsed = urlparse(url)
         path = parsed.path.strip("/")

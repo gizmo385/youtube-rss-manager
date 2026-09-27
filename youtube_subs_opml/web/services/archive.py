@@ -142,7 +142,7 @@ def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPref
     podcasts = [c.generate_podcast for c in categories if c.generate_podcast is not None]
     shorts = [c.include_shorts for c in categories if c.include_shorts is not None]
     return _CategoryPrefs(
-        download=(True if any(downloads) else False) if downloads else None,
+        download=any(downloads) if downloads else None,
         keep=_most_permissive_int([c.keep_last_n for c in categories]),
         # Each category's audio window falls back to its own video window before
         # they're compared, so a category that only sets keep_last_n still gets
@@ -150,8 +150,8 @@ def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPref
         keep_audio=_most_permissive_int([_or(c.keep_last_n_audio, c.keep_last_n) for c in categories]),
         max_duration=_most_permissive_int([c.max_duration_seconds for c in categories]),
         min_duration=_least_restrictive_floor([c.min_duration_seconds for c in categories]),
-        podcast=(True if any(podcasts) else False) if podcasts else None,
-        shorts=(True if any(shorts) else False) if shorts else None,
+        podcast=any(podcasts) if podcasts else None,
+        shorts=any(shorts) if shorts else None,
     )
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
 
@@ -36,7 +36,7 @@ def build_opml(
     opml = ET.Element("opml", version="2.0")
     head = ET.SubElement(opml, "head")
     ET.SubElement(head, "title").text = title
-    ET.SubElement(head, "dateCreated").text = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+    ET.SubElement(head, "dateCreated").text = datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S +0000")
     body = ET.SubElement(opml, "body")
     folder = ET.SubElement(body, "outline", text=title, title=title)
     for sub in sorted(subscriptions, key=lambda s: s.title.lower()):

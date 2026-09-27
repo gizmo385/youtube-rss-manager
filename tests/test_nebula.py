@@ -4,7 +4,7 @@ SQLite and mocked HTTP; no network."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import httpx
@@ -67,7 +67,7 @@ CONTENT = {
 
 
 @pytest.mark.parametrize(
-    "value, expected",
+    ("value", "expected"),
     [
         ("https://nebula.tv/tomscott", ("channel", "tomscott")),
         ("https://nebula.tv/tomscott/", ("channel", "tomscott")),
@@ -96,7 +96,7 @@ def test_parse_input_rejects_non_channel_rss():
 
 
 def test_latest_published_picks_newest_item():
-    assert nebula.latest_published(FEED) == datetime(2026, 9, 21, 15, 0, 18, tzinfo=timezone.utc)
+    assert nebula.latest_published(FEED) == datetime(2026, 9, 21, 15, 0, 18, tzinfo=UTC)
     assert nebula.latest_published(b"not xml") is None
 
 

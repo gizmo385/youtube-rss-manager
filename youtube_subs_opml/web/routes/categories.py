@@ -20,10 +20,10 @@ from ..models import (
 )
 from ..services.prefs import (
     LINK_TARGETS,
+    minutes_to_seconds,
     parse_inherit_int,
     parse_link_target,
     parse_tristate_bool,
-    minutes_to_seconds,
 )
 from ..templating import templates
 

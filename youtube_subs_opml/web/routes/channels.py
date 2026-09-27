@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -31,17 +31,15 @@ from ..services.crypto import decrypt_token
 from ..services.feed_cache import load_feed
 from ..services.prefs import (
     LINK_TARGETS,
+    minutes_to_seconds,
     parse_inherit_int,
     parse_link_target,
     parse_tristate_bool,
-    minutes_to_seconds,
-    resolve,
 )
 from ..services.resolve import resolve_channel_public
 from ..services.stats import format_bytes, shell_stats
 from ..services.sync import build_google_credentials
 from ..templating import templates
-from .categories import _categories_with_counts
 
 # Archive prefs editable per subscription, and how each form value is parsed.
 # "minutes" fields arrive from the UI in minutes and are stored as seconds.
@@ -87,8 +85,8 @@ def _ago(dt: datetime | None) -> str:
     if dt is None:
         return "—"
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    delta = datetime.now(timezone.utc) - dt
+        dt = dt.replace(tzinfo=UTC)
+    delta = datetime.now(UTC) - dt
     secs = int(delta.total_seconds())
     if secs < 3600:
         return f"{max(secs // 60, 1)}m"
@@ -682,10 +680,9 @@ def _stage_response_args(form) -> tuple[str, str | None]:
     """
     filt = form.get("filter") or "All"
     channel_ids = form.getlist("channel_ids")
+    selected = channel_ids[0] if channel_ids else None
     if "selected" in form:
         selected = form.get("selected") or None
-    else:
-        selected = channel_ids[0] if channel_ids else None
     return filt, selected
 
 
@@ -736,8 +733,7 @@ def _build_board_context(user: User, db: Session) -> dict:
                     cat_channels[cid].append({**card, "other_category_count": len(cat_ids) - 1})
 
     columns = [{"id": None, "name": "Uncategorized", "channels": uncategorized}]
-    for cat in categories:
-        columns.append({"id": cat.id, "name": cat.name, "channels": cat_channels.get(cat.id, [])})
+    columns.extend({"id": cat.id, "name": cat.name, "channels": cat_channels.get(cat.id, [])} for cat in categories)
     return {"columns": columns, "categories": categories}
 
 
@@ -1072,12 +1068,12 @@ async def add_manual_channel(
     try:
         resolved = _resolve_nebula(raw)
     except ChannelLookupError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except httpx.HTTPError:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except httpx.HTTPError as e:
         raise HTTPException(
             status_code=400,
             detail="Could not reach Nebula to look up that channel.",
-        )
+        ) from e
     if resolved is None:
         resolved = _resolve_youtube(raw, user, db)
 
@@ -1186,12 +1182,12 @@ def _resolve_youtube(raw: str, user: User, db: Session):
     try:
         return resolve_channel_public(raw)
     except ChannelLookupError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except httpx.HTTPError:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except httpx.HTTPError as e:
         raise HTTPException(
             status_code=400,
             detail="Could not reach YouTube to look up that channel.",
-        )
+        ) from e
 
 
 @router.post("/remove")
