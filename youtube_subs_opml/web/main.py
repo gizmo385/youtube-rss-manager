@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,7 +27,7 @@ from .templating import templates
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     if settings.local_mode:
         # No Keycloak/Postgres locally: build the schema and skip OIDC setup.

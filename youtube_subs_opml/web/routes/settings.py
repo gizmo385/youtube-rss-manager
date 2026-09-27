@@ -8,11 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.datastructures import FormData
 
 from ...downloader.naming import CANONICAL_SUBDIR, LIBRARIES_SUBDIR
 from ..config import get_settings
 from ..db import get_db
 from ..deps import get_current_user
+from ..forms import FormValues, form_text
 from ..models import Category, JellyfinAccount, OpmlToken, User, YoutubeAccount
 from ..services import downloads as downloads_service
 from ..services.crypto import decrypt_token, encrypt_token
@@ -31,34 +33,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["settings"])
 
 
-def _int_or_none(value) -> int | None:
+def _int_or_none(value: str | None) -> int | None:
     try:
-        return int(value) if value not in (None, "") else None
-    except (TypeError, ValueError):
+        return int(value) if value else None
+    except ValueError:
         return None
 
 
-def _clean(value) -> str | None:
+def _clean(value: str | None) -> str | None:
     text = (value or "").strip()
     return text or None
 
 
-def _status_or_none(value) -> str | None:
+def _status_or_none(value: str | None) -> str | None:
     text = _clean(value)
     return text if text in downloads_service.DOWNLOAD_STATUSES else None
 
 
-def _table_context(db: Session, user: User, params) -> dict:
+def _table_context(db: Session, user: User, params: FormValues) -> dict:
     """Build the download-history table context from query/form params.
 
     Shared by the initial page render, the htmx filter/pagination endpoint, and
     the retry endpoints, so filters and the current page survive a retry.
     """
-    channel_id = _clean(params.get("channel_id"))
-    category_id = _int_or_none(params.get("category_id"))
-    status = _status_or_none(params.get("status"))
-    q = _clean(params.get("q"))
-    page = _int_or_none(params.get("page")) or 1
+    channel_id = _clean(form_text(params, "channel_id"))
+    category_id = _int_or_none(form_text(params, "category_id"))
+    status = _status_or_none(form_text(params, "status"))
+    q = _clean(form_text(params, "q"))
+    page = _int_or_none(form_text(params, "page")) or 1
 
     data = downloads_service.list_downloads(
         db,
@@ -194,13 +196,13 @@ async def update_defaults(
     # Archive defaults (the root of the cascade — never NULL).
     user.download_enabled = "download_enabled" in form
     user.generate_podcast = "generate_podcast" in form
-    user.keep_last_n = parse_required_int(form.get("keep_last_n"), 15)
+    user.keep_last_n = parse_required_int(form_text(form, "keep_last_n"), 15)
     # Blank means "same window as the video" rather than "inherit from a level
     # above" — there is no level above the user.
-    user.keep_last_n_audio = parse_inherit_int(form.get("keep_last_n_audio"))
-    user.max_duration_seconds = parse_required_int(form.get("max_duration_minutes"), 0) * 60
-    user.min_duration_seconds = parse_required_int(form.get("min_duration_minutes"), 0) * 60
-    user.link_target = parse_link_target(form.get("link_target"), allow_inherit=False)
+    user.keep_last_n_audio = parse_inherit_int(form_text(form, "keep_last_n_audio"))
+    user.max_duration_seconds = parse_required_int(form_text(form, "max_duration_minutes"), 0) * 60
+    user.min_duration_seconds = parse_required_int(form_text(form, "min_duration_minutes"), 0) * 60
+    user.link_target = parse_link_target(form_text(form, "link_target"), allow_inherit=False)
     db.commit()
     return RedirectResponse("/settings", status_code=303)
 
@@ -218,9 +220,9 @@ async def update_jellyfin(
     secret back. Creating a new account requires a key.
     """
     form = await request.form()
-    base_url = str(form.get("base_url", "")).strip()
-    api_key = str(form.get("api_key", "")).strip()
-    jellyfin_user_id = str(form.get("jellyfin_user_id", "")).strip()
+    base_url = (form_text(form, "base_url") or "").strip()
+    api_key = (form_text(form, "api_key") or "").strip()
+    jellyfin_user_id = (form_text(form, "jellyfin_user_id") or "").strip()
 
     if not base_url:
         raise HTTPException(status_code=400, detail="Jellyfin base URL is required")
@@ -313,7 +315,7 @@ def downloads_table(
     return templates.TemplateResponse(request, "partials/downloads_table.html", ctx)
 
 
-def _retry_response(request: Request, db: Session, user: User, form, *, dl: str, dl_n: int):
+def _retry_response(request: Request, db: Session, user: User, form: FormData, *, dl: str, dl_n: int):
     """Refresh the table + summary in place for htmx; redirect otherwise.
 
     Retry buttons send the current filters and page (via hx-include), so the

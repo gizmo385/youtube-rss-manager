@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from fastapi.templating import Jinja2Templates
 
 _HERE = Path(__file__).parent
 
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
+# Jinja leaves ``globals`` unannotated, so type checkers infer it from the
+# built-in defaults and reject anything else. Widen it for our additions.
+_globals: dict[str, Any] = templates.env.globals
 
 
 def _asset_version() -> str:
@@ -23,7 +27,7 @@ def _asset_version() -> str:
 
 
 # Computed once at import; the file doesn't change under a running process.
-templates.env.globals["asset_v"] = _asset_version()
+_globals["asset_v"] = _asset_version()
 
 # Display labels shared across templates, defined once in the domain layer.
 from .services.downloads import (  # noqa: E402 — after templates is defined
@@ -32,6 +36,6 @@ from .services.downloads import (  # noqa: E402 — after templates is defined
     STATUS_LABELS,
 )
 
-templates.env.globals["STATUS_LABELS"] = STATUS_LABELS
-templates.env.globals["SKIP_REASON_LABELS"] = SKIP_REASON_LABELS
-templates.env.globals["SKIP_REASON_HELP"] = SKIP_REASON_HELP
+_globals["STATUS_LABELS"] = STATUS_LABELS
+_globals["SKIP_REASON_LABELS"] = SKIP_REASON_LABELS
+_globals["SKIP_REASON_HELP"] = SKIP_REASON_HELP

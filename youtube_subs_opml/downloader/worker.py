@@ -27,6 +27,7 @@ import signal
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import FrameType
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -59,10 +60,17 @@ _MAX_ATTEMPTS = 5
 _shutdown = False
 
 
-def _handle_signal(signum, frame) -> None:
+def _handle_signal(signum: int, frame: FrameType | None) -> None:
     global _shutdown
     logger.info("Received signal %s, finishing current job then exiting", signum)
     _shutdown = True
+
+
+def _required_path(value: str | None) -> Path:
+    """A path column the caller's query has already filtered to non-NULL."""
+    if value is None:
+        raise ValueError("expected a non-NULL path column")
+    return Path(value)
 
 
 def _backoff(attempts: int) -> datetime:
@@ -133,7 +141,7 @@ def claim_one(db: Session) -> Download | None:
         .order_by(Download.created_at)
         .limit(1)
     )
-    if db.bind.dialect.name == "postgresql":
+    if db.get_bind().dialect.name == "postgresql":
         stmt = stmt.with_for_update(skip_locked=True)
 
     row = db.execute(stmt).scalar_one_or_none()
@@ -397,7 +405,7 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
         video = videos.get(vid)
         channel = channels.get(video.channel_id) if video else None
         channel_title = channel.title if channel else (video.channel_id if video else vid)
-        src_mkv = Path(download.file_path)
+        src_mkv = _required_path(download.file_path)
         if not src_mkv.exists():
             logger.warning("Canonical file missing, skipping link: %s", src_mkv)
             continue
@@ -482,7 +490,7 @@ def renumber_episodes(db: Session, media_root: str) -> int:
         if video is None:
             continue
         new_num = naming.date_episode_number(video.published_at)
-        old_mkv = Path(download.file_path)
+        old_mkv = _required_path(download.file_path)
         old_stem = old_mkv.stem
         new_stem = _EPISODE_TOKEN.sub(rf"\g<1>{new_num:04d}", old_stem, count=1)
 
@@ -569,7 +577,7 @@ def repair_audio_paths(db: Session) -> int:
     repaired = 0
     cleared = 0
     for download in rows:
-        if Path(download.audio_path).is_file():
+        if _required_path(download.audio_path).is_file():
             continue
 
         candidate = Path(download.file_path).with_suffix(".m4a") if download.file_path else None
@@ -709,7 +717,7 @@ def backfill_audio(db: Session, settings) -> int:
     for download in rows:
         if download.video_id not in audio_keep:
             continue
-        output = Path(download.file_path).with_suffix("")
+        output = _required_path(download.file_path).with_suffix("")
         try:
             audio = ytdlp.extract_audio(
                 download.video_id,
@@ -890,7 +898,7 @@ def sync_library_art(db: Session, media_root: str) -> int:
         cdir = naming.canonical_channel_dir(media_root, channel.title)
         canon_poster = cdir / naming.POSTER_NAME
         canon_backdrop = cdir / naming.BACKDROP_NAME
-        season_dir = Path(link.link_path).parent
+        season_dir = _required_path(link.link_path).parent
         user_channel_dir = season_dir.parent
         try:
             created += _ensure_art_link(canon_poster, user_channel_dir / naming.POSTER_NAME)

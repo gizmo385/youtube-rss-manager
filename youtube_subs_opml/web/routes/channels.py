@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,6 +10,7 @@ from fastapi.responses import HTMLResponse
 from google.auth.exceptions import RefreshError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
+from starlette.datastructures import FormData
 
 from youtube_subs_opml import nebula
 from youtube_subs_opml.youtube import ChannelLookupError, resolve_channel
@@ -16,6 +18,7 @@ from youtube_subs_opml.youtube import ChannelLookupError, resolve_channel
 from ..config import get_settings
 from ..db import get_db
 from ..deps import get_current_user
+from ..forms import form_text, form_texts
 from ..models import (
     Category,
     Channel,
@@ -312,7 +315,7 @@ def _or(value, fallback):
     return fallback if value is None else value
 
 
-def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False, inherited=_UNSET):
+def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False, inherited: Any = _UNSET):
     """A numeric pref row. Blank means inherit; the placeholder shows the
     inherited value so the effective number is visible without extra subtext.
 
@@ -580,7 +583,7 @@ def _overview_context(user: User, db: Session) -> dict:
         row["pct"] = round(100 * row["count"] / widest)
 
     # Actionable items, each a jump into the matching list filter.
-    attention = []
+    attention: list[dict] = []
     if failing:
         attention.append(
             {
@@ -671,22 +674,24 @@ def _detail_response(
     return templates.TemplateResponse(request, "partials/channel_detail.html", context=ctx)
 
 
-def _stage_response_args(form) -> tuple[str, str | None]:
+def _stage_response_args(form: FormData) -> tuple[str, str | None]:
     """Extract (filter, selected) from a write request's form.
 
     An explicitly blank ``selected`` means "nothing is selected" (the overview
     is showing) and is honoured; only its absence falls back to the first
     channel written to.
     """
-    filt = form.get("filter") or "All"
-    channel_ids = form.getlist("channel_ids")
+    filt = form_text(form, "filter") or "All"
+    channel_ids = form_texts(form, "channel_ids")
     selected = channel_ids[0] if channel_ids else None
     if "selected" in form:
-        selected = form.get("selected") or None
+        selected = form_text(form, "selected") or None
     return filt, selected
 
 
-def _write_response(request: Request, form, user: User, db: Session, *, grouping_changed: bool) -> HTMLResponse:
+def _write_response(
+    request: Request, form: FormData, user: User, db: Session, *, grouping_changed: bool
+) -> HTMLResponse:
     """Render the right partial after a write, based on where it came from.
 
     ``return=detail`` writes come from the detail pane and swap it (optionally
@@ -833,9 +838,9 @@ async def move_channel(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form = await request.form()
-    channel_id = form.get("channel_id")
-    from_category_id = form.get("from_category_id", "")
-    to_category_id = form.get("to_category_id", "")
+    channel_id = form_text(form, "channel_id")
+    from_category_id = form_text(form, "from_category_id")
+    to_category_id = form_text(form, "to_category_id")
 
     if not channel_id:
         raise HTTPException(status_code=400, detail="channel_id required")
@@ -845,7 +850,7 @@ async def move_channel(
         row = db.execute(
             select(ChannelCategory).where(
                 ChannelCategory.user_id == user.id,
-                ChannelCategory.channel_id == str(channel_id),
+                ChannelCategory.channel_id == channel_id,
                 ChannelCategory.category_id == from_id,
             )
         ).scalar_one_or_none()
@@ -860,7 +865,7 @@ async def move_channel(
         existing = db.execute(
             select(ChannelCategory).where(
                 ChannelCategory.user_id == user.id,
-                ChannelCategory.channel_id == str(channel_id),
+                ChannelCategory.channel_id == channel_id,
                 ChannelCategory.category_id == to_id,
             )
         ).scalar_one_or_none()
@@ -868,7 +873,7 @@ async def move_channel(
             db.add(
                 ChannelCategory(
                     user_id=user.id,
-                    channel_id=str(channel_id),
+                    channel_id=channel_id,
                     category_id=to_id,
                 )
             )
@@ -887,13 +892,13 @@ async def assign_channels(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form = await request.form()
-    channel_ids = form.getlist("channel_ids")
-    category_id = form.get("category_id")
+    channel_ids = form_texts(form, "channel_ids")
+    category_value = form_text(form, "category_id")
 
-    if not channel_ids or not category_id:
+    if not channel_ids or not category_value:
         raise HTTPException(status_code=400, detail="Select channels and a category")
 
-    category_id = int(category_id)
+    category_id = int(category_value)
     category = db.get(Category, category_id)
     if category is None or category.user_id != user.id:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -902,7 +907,7 @@ async def assign_channels(
         existing = db.execute(
             select(ChannelCategory).where(
                 ChannelCategory.user_id == user.id,
-                ChannelCategory.channel_id == str(cid),
+                ChannelCategory.channel_id == cid,
                 ChannelCategory.category_id == category_id,
             )
         ).scalar_one_or_none()
@@ -910,7 +915,7 @@ async def assign_channels(
             db.add(
                 ChannelCategory(
                     user_id=user.id,
-                    channel_id=str(cid),
+                    channel_id=cid,
                     category_id=category_id,
                 )
             )
@@ -926,18 +931,18 @@ async def unassign_channels(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form = await request.form()
-    channel_ids = form.getlist("channel_ids")
-    category_id = form.get("category_id")
+    channel_ids = form_texts(form, "channel_ids")
+    category_value = form_text(form, "category_id")
 
-    if not channel_ids or not category_id:
+    if not channel_ids or not category_value:
         raise HTTPException(status_code=400, detail="Select channels and a category")
 
-    category_id = int(category_id)
+    category_id = int(category_value)
     for cid in channel_ids:
         row = db.execute(
             select(ChannelCategory).where(
                 ChannelCategory.user_id == user.id,
-                ChannelCategory.channel_id == str(cid),
+                ChannelCategory.channel_id == cid,
                 ChannelCategory.category_id == category_id,
             )
         ).scalar_one_or_none()
@@ -955,7 +960,7 @@ async def set_include_shorts(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form = await request.form()
-    channel_ids = form.getlist("channel_ids")
+    channel_ids = form_texts(form, "channel_ids")
     if not channel_ids:
         raise HTTPException(status_code=400, detail="Select at least one channel")
 
@@ -963,9 +968,9 @@ async def set_include_shorts(
         update(Subscription)
         .where(
             Subscription.user_id == user.id,
-            Subscription.channel_id.in_([str(c) for c in channel_ids]),
+            Subscription.channel_id.in_(channel_ids),
         )
-        .values(include_shorts=parse_tristate_bool(form.get("include_shorts")))
+        .values(include_shorts=parse_tristate_bool(form_text(form, "include_shorts")))
     )
     db.commit()
     return _write_response(request, form, user, db, grouping_changed=False)
@@ -978,7 +983,7 @@ async def set_include_live(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form = await request.form()
-    channel_ids = form.getlist("channel_ids")
+    channel_ids = form_texts(form, "channel_ids")
     if not channel_ids:
         raise HTTPException(status_code=400, detail="Select at least one channel")
 
@@ -986,9 +991,9 @@ async def set_include_live(
         update(Subscription)
         .where(
             Subscription.user_id == user.id,
-            Subscription.channel_id.in_([str(c) for c in channel_ids]),
+            Subscription.channel_id.in_(channel_ids),
         )
-        .values(include_live=parse_tristate_bool(form.get("include_live")))
+        .values(include_live=parse_tristate_bool(form_text(form, "include_live")))
     )
     db.commit()
     return _write_response(request, form, user, db, grouping_changed=False)
@@ -1007,19 +1012,19 @@ async def set_archive_pref(
     the user default.
     """
     form = await request.form()
-    channel_ids = form.getlist("channel_ids")
-    field = form.get("field", "")
+    channel_ids = form_texts(form, "channel_ids")
+    field = form_text(form, "field") or ""
     if not channel_ids:
         raise HTTPException(status_code=400, detail="Select at least one channel")
     if field not in _ARCHIVE_FIELD_KINDS:
         raise HTTPException(status_code=400, detail="Unknown preference")
 
-    parsed = _parse_archive_value(field, form.get("value"))
+    parsed = _parse_archive_value(field, form_text(form, "value"))
     db.execute(
         update(Subscription)
         .where(
             Subscription.user_id == user.id,
-            Subscription.channel_id.in_([str(c) for c in channel_ids]),
+            Subscription.channel_id.in_(channel_ids),
         )
         .values(**{field: parsed})
     )
@@ -1036,8 +1041,8 @@ async def ignore_channels(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form = await request.form()
-    channel_ids = form.getlist("channel_ids")
-    ignored = form.get("ignored", "true") == "true"
+    channel_ids = form_texts(form, "channel_ids")
+    ignored = (form_text(form, "ignored") or "true") == "true"
 
     if not channel_ids:
         raise HTTPException(status_code=400, detail="Select at least one channel")
@@ -1046,7 +1051,7 @@ async def ignore_channels(
         update(Subscription)
         .where(
             Subscription.user_id == user.id,
-            Subscription.channel_id.in_([str(c) for c in channel_ids]),
+            Subscription.channel_id.in_(channel_ids),
         )
         .values(ignored=ignored)
     )
@@ -1061,7 +1066,7 @@ async def add_manual_channel(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form = await request.form()
-    raw = str(form.get("channel_input", "")).strip()
+    raw = (form_text(form, "channel_input") or "").strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Enter a channel URL, handle, or ID")
 
@@ -1140,7 +1145,7 @@ async def add_manual_channel(
 
         warm_new_channels_soon()
 
-    filt = form.get("filter") or "All"
+    filt = form_text(form, "filter") or "All"
     return _list_response(request, user, db, resolved.channel_id, filt)
 
 
@@ -1197,14 +1202,14 @@ async def remove_manual_channel(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     form = await request.form()
-    channel_id = form.get("channel_id")
+    channel_id = form_text(form, "channel_id")
     if not channel_id:
         raise HTTPException(status_code=400, detail="channel_id required")
 
     sub = db.execute(
         select(Subscription).where(
             Subscription.user_id == user.id,
-            Subscription.channel_id == str(channel_id),
+            Subscription.channel_id == channel_id,
         )
     ).scalar_one_or_none()
 
@@ -1219,5 +1224,5 @@ async def remove_manual_channel(
     db.delete(sub)
     db.commit()
 
-    filt = form.get("filter") or "All"
+    filt = form_text(form, "filter") or "All"
     return _list_response(request, user, db, None, filt)

@@ -107,12 +107,13 @@ def _filter_feed(
     shorts = classify_videos(ids, db) if drop_shorts else {}
     live = classify_live(ids, db) if drop_live else {}
 
-    rewrite = link_target in ("when_ready", "hold") and jellyfin_base
+    # Where rewritten links point; None when links are left alone.
+    rewrite_base = jellyfin_base if link_target in ("when_ready", "hold") else None
     status_by_id: dict[str, str] = {}
     item_by_id: dict[str, str] = {}
-    if rewrite and ids:
+    if rewrite_base and ids:
         status_by_id = dict(
-            db.execute(select(Download.video_id, Download.status).where(Download.video_id.in_(ids))).all()
+            db.execute(select(Download.video_id, Download.status).where(Download.video_id.in_(ids))).tuples().all()
         )
         item_by_id = {
             vid: item
@@ -138,13 +139,13 @@ def _filter_feed(
             root.remove(entry)
             continue
 
-        if not rewrite:
+        if not rewrite_base:
             continue
 
         item_id = item_by_id.get(vid)
         ready = status_by_id.get(vid) == "complete" and item_id
         if ready:
-            _rewrite_link(entry, jellyfin_deep_link(jellyfin_base, item_id))
+            _rewrite_link(entry, jellyfin_deep_link(rewrite_base, item_id))
         elif link_target == "hold":
             published = _entry_published(entry)
             failed = status_by_id.get(vid) in ("failed", "skipped")
@@ -203,7 +204,7 @@ def _serve_feed(
         cat_live_pref = category.include_live
         cat_link_pref = category.link_target
 
-    user = db.get(User, user_id)
+    user = db.get_one(User, user_id)
     include_shorts = resolve_include_shorts(sub.include_shorts, cat_shorts_pref, user.include_shorts)
     include_live = resolve_include_live(sub.include_live, cat_live_pref, user.include_live)
     drop_shorts = not include_shorts

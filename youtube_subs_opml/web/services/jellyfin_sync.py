@@ -73,6 +73,8 @@ def resolve_item_ids(db: Session, user_id: int, jf_user_id: str, client) -> int:
     paths = client.episode_paths(jf_user_id)
     resolved = 0
     for link in unresolved:
+        if link.link_path is None:  # excluded by the query; narrows the type
+            continue
         item_id = paths.get(normalise_path(link.link_path))
         if item_id:
             link.jellyfin_item_id = item_id
@@ -189,6 +191,8 @@ def reconcile_playlists(db: Session, user_id: int, jf_user_id: str, client) -> N
 
     desired: dict[int, list[str]] = defaultdict(list)
     for link in ordered_links:
+        if link.jellyfin_item_id is None:  # excluded by the query; narrows the type
+            continue
         channel_id = videos[link.video_id][0]
         for cat_id in chan_to_cats.get(channel_id, ()):
             desired[cat_id].append(link.jellyfin_item_id)

@@ -244,7 +244,7 @@ def podcast_all(token: str, db: Session = Depends(get_db)) -> Response:
     """Podcast feed spanning every subscribed channel's archived audio."""
     opml_token = _validate_token(token, db)
     settings = get_settings()
-    user = db.get(User, opml_token.user_id)
+    user = db.get_one(User, opml_token.user_id)
 
     items = _podcast_items(db, user.id, settings.base_url, token, None)
     xml = build_podcast_feed(
@@ -264,7 +264,7 @@ def podcast_by_category(token: str, slug: str, db: Session = Depends(get_db)) ->
     """Podcast feed for a single category's archived audio."""
     opml_token = _validate_token(token, db)
     settings = get_settings()
-    user = db.get(User, opml_token.user_id)
+    user = db.get_one(User, opml_token.user_id)
 
     category = db.execute(
         select(Category).where(

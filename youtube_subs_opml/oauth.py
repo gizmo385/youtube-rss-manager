@@ -43,5 +43,7 @@ def get_credentials(token_path: Path) -> Credentials:
 def run_auth_flow(client_secrets_path: Path, token_path: Path) -> Credentials:
     flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), SCOPES)
     creds = flow.run_local_server(port=0, prompt="consent")
+    if not isinstance(creds, Credentials):
+        raise RuntimeError(f"Unexpected credential type from the OAuth flow: {type(creds).__name__}")
     _save(creds, token_path)
     return creds

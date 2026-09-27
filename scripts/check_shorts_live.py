@@ -30,6 +30,8 @@ def main(channel_id: str) -> int:
     with httpx.Client(headers={"User-Agent": _USER_AGENT}) as client:
         for entry in root.findall(f"{{{_ATOM}}}entry"):
             vid = entry.findtext(f"{{{_YT}}}videoId")
+            if not vid:
+                continue
             title = entry.findtext(f"{{{_ATOM}}}title") or ""
             verdict = _probe_is_short(vid, client)
             label = {True: "SHORT ", False: "video ", None: "??????"}[verdict]

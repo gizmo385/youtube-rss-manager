@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import get_current_user
+from ..forms import form_text
 from ..models import (
     Category,
     Channel,
@@ -76,10 +77,10 @@ def _is_htmx(request: Request) -> bool:
 
 async def _category_name_form(request: Request) -> str:
     form = await request.form()
-    name = form.get("name")
-    if not name or not str(name).strip():
+    name = form_text(form, "name")
+    if not name or not name.strip():
         raise HTTPException(status_code=400, detail="Name is required")
-    return str(name)
+    return name
 
 
 def _get_owned_category(category_id: int, user: User, db: Session) -> Category:
@@ -98,7 +99,9 @@ def _categories_with_counts(user: User, db: Session) -> list[dict]:
             select(ChannelCategory.category_id, func.count())
             .where(ChannelCategory.user_id == user.id)
             .group_by(ChannelCategory.category_id)
-        ).all()
+        )
+        .tuples()
+        .all()
     )
 
     # Disk used by completed downloads for the channels in each category.
@@ -115,15 +118,17 @@ def _categories_with_counts(user: User, db: Session) -> list[dict]:
                 Download.status == "complete",
             )
             .group_by(ChannelCategory.category_id)
-        ).all()
+        )
+        .tuples()
+        .all()
     )
 
     return [
         {
             "category": cat,
             "channel_count": counts.get(cat.id, 0),
-            "disk_bytes": int(disk.get(cat.id, 0)),
-            "disk_human": _format_bytes(int(disk.get(cat.id, 0))),
+            "disk_bytes": int(disk.get(cat.id) or 0),
+            "disk_human": _format_bytes(int(disk.get(cat.id) or 0)),
         }
         for cat in categories
     ]
@@ -290,11 +295,11 @@ async def update_category_archive(
     """Set one archive preference on a category. NULL means inherit from user."""
     category = _get_owned_category(category_id, user, db)
     form = await request.form()
-    field = form.get("field", "")
+    field = form_text(form, "field") or ""
     if field not in _ARCHIVE_FIELD_KINDS:
         raise HTTPException(status_code=400, detail="Unknown preference")
 
-    setattr(category, field, _parse_archive_value(field, form.get("value")))
+    setattr(category, field, _parse_archive_value(field, form_text(form, "value")))
     db.commit()
 
     return _category_list_response(request, user, db)
@@ -378,15 +383,15 @@ async def add_channel_to_category(
 ) -> HTMLResponse:
     category = _get_owned_category(category_id, user, db)
     form = await request.form()
-    channel_id = form.get("channel_id")
-    search = form.get("search", "")
+    channel_id = form_text(form, "channel_id")
+    search = form_text(form, "search") or ""
     if not channel_id:
         raise HTTPException(status_code=400)
 
     existing = db.execute(
         select(ChannelCategory).where(
             ChannelCategory.user_id == user.id,
-            ChannelCategory.channel_id == str(channel_id),
+            ChannelCategory.channel_id == channel_id,
             ChannelCategory.category_id == category_id,
         )
     ).scalar_one_or_none()
@@ -394,7 +399,7 @@ async def add_channel_to_category(
         db.add(
             ChannelCategory(
                 user_id=user.id,
-                channel_id=str(channel_id),
+                channel_id=channel_id,
                 category_id=category_id,
             )
         )

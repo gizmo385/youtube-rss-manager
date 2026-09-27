@@ -124,19 +124,9 @@ def fetch_channel_topics(creds: Credentials, channel_ids: list[str]) -> dict[str
 def fetch_subscriptions(creds: Credentials) -> list[Subscription]:
     youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
     subs: list[Subscription] = []
-    page_token: str | None = None
-    while True:
-        response = (
-            youtube.subscriptions()
-            .list(
-                part="snippet",
-                mine=True,
-                maxResults=50,
-                order="alphabetical",
-                pageToken=page_token,
-            )
-            .execute()
-        )
+    request = youtube.subscriptions().list(part="snippet", mine=True, maxResults=50, order="alphabetical")
+    while request is not None:
+        response = request.execute()
         for item in response.get("items", []):
             snippet = item["snippet"]
             subs.append(
@@ -146,7 +136,5 @@ def fetch_subscriptions(creds: Credentials) -> list[Subscription]:
                     description=snippet.get("description", ""),
                 )
             )
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            break
+        request = youtube.subscriptions().list_next(request, response)
     return subs

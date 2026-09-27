@@ -16,7 +16,7 @@ expressed with similar-looking values:
 
 from __future__ import annotations
 
-from typing import Literal, TypeVar
+from typing import Literal, TypeVar, overload
 
 T = TypeVar("T")
 
@@ -88,6 +88,14 @@ def parse_required_int(value: str | None, default: int) -> int:
     """A non-negative int with a fallback — for the user level, which is NOT NULL."""
     parsed = parse_inherit_int(value)
     return default if parsed is None else parsed
+
+
+@overload
+def parse_link_target(value: str | None, *, allow_inherit: Literal[False]) -> str: ...
+
+
+@overload
+def parse_link_target(value: str | None, *, allow_inherit: bool) -> str | None: ...
 
 
 def parse_link_target(value: str | None, *, allow_inherit: bool) -> str | None:

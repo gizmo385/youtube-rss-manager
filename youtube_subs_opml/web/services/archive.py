@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -44,6 +45,9 @@ from ..models import (
     VideoShort,
 )
 from .prefs import resolve
+
+T = TypeVar("T")
+U = TypeVar("U")
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +180,7 @@ def _archivable_subscriptions(db: Session) -> list[Subscription]:
     )
 
 
-def _or(value: int | None, fallback: int | None) -> int | None:
+def _or(value: T | None, fallback: U) -> T | U:
     """``value`` unless it's NULL (inherit), in which case ``fallback``."""
     return fallback if value is None else value
 
