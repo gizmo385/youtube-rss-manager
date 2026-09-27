@@ -113,6 +113,19 @@ uv run --extra web uvicorn youtube_subs_opml.web.main:app --reload
 DATABASE_URL=postgresql+psycopg://yts:<password>@localhost:5432/yts uv run --extra web alembic upgrade head
 ```
 
+### Tests and linting
+
+Ruff (lint + format) and Pyrefly (type checking) are configured in `pyproject.toml`
+and run in CI, along with the test suite, on every push and pull request.
+
+```bash
+uv sync --all-extras
+uv run pytest
+uv run ruff check .          # add --fix to apply safe fixes
+uv run ruff format .
+uv run pyrefly check
+```
+
 ## CLI
 
 A standalone CLI tool is available for one-shot OPML export without the web app:
