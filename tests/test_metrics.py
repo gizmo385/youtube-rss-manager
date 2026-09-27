@@ -155,12 +155,12 @@ def test_api_fallback_is_counted_per_channel_and_outcome(db, monkeypatch):
     )
 
     poller.poll_channel(cid, db, client)
-    poller.poll_channel(cid, db, client)  # inside the hour: skipped
+    poller.poll_channel(cid, db, client)  # inside the interval: skipped
 
     # The RSS failure is still recorded as such; the fallback is counted beside it.
     assert _total("yt_rss_feed_polls", channel_id=cid, outcome="http_error") == 2
     assert _total("yt_rss_feed_api_fallbacks", channel_id=cid, channel="Fallback Channel", outcome="ok") == 1
-    assert _total("yt_rss_feed_api_fallbacks", channel_id=cid, outcome="rate_limited") == 1
+    assert _total("yt_rss_feed_api_fallbacks", channel_id=cid, outcome="skipped") == 1
 
 
 def test_record_download_classifies_outcomes():

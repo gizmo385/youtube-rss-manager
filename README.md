@@ -87,7 +87,7 @@ If you're using auth via an OIDC provider, fill in the values:
 | `YOUTUBE_CLIENT_ID` | Google OAuth client ID |
 | `YOUTUBE_CLIENT_SECRET` | Google OAuth client secret |
 | `YOUTUBE_API_KEY` | Optional. Data API key used when a channel's RSS feed fails |
-| `YOUTUBE_API_FALLBACK_INTERVAL_MINUTES` | Optional. Minimum minutes between API fallbacks per channel (default 60; each costs 1 of the 10,000/day quota units) |
+| `YOUTUBE_API_FALLBACK_INTERVAL_MINUTES` | Optional. Minimum minutes between API fallbacks per channel (default 30; each costs 1 of the 10,000/day quota units) |
 
 
 If you're only planning on using the local setup and don't require OIDC or YouTube client support,

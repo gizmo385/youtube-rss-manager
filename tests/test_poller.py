@@ -267,7 +267,7 @@ def test_failed_rss_falls_back_to_the_data_api(db, monkeypatch):
     assert b"yt:video:vidBBBB2222" in db.get(ChannelFeedCache, cid).xml
 
 
-def test_api_fallback_is_rate_limited_per_channel(db, monkeypatch):
+def test_api_fallback_is_spaced_per_channel(db, monkeypatch):
     _with_api_key(monkeypatch)
     cid = "UCchannel00000000000001"
     api_url = uploads_api.uploads_url(cid)
@@ -276,7 +276,7 @@ def test_api_fallback_is_rate_limited_per_channel(db, monkeypatch):
     monkeypatch.setattr(poller, "_new_client", lambda: fake)
 
     poller.poll_channel(cid, db)
-    poller.poll_channel(cid, db)  # next sweep, well inside the hour
+    poller.poll_channel(cid, db)  # next sweep, inside the interval
 
     assert fake.calls.count(api_url) == 1
 

@@ -40,8 +40,9 @@ feed_api_fallbacks = meter.create_counter(
     unit="{request}",
     description=(
         "Data API fetches of a channel's uploads after its RSS feed failed, per "
-        "channel. `outcome` is 'ok', 'error', or 'rate_limited' (skipped, no "
-        "quota used: this channel fell back too recently)."
+        "channel. `outcome` is 'ok', 'error' (including Google's own rate limits "
+        "and quotaExceeded), or 'skipped' (not sent, no quota used: this channel "
+        "fell back too recently)."
     ),
 )
 feed_poll_duration = meter.create_histogram(

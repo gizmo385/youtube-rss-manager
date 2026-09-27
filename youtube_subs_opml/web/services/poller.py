@@ -231,7 +231,7 @@ def _api_fallback(channel_id: str, channel_attrs: dict[str, str], client: httpx.
     now = time.monotonic()
     last = _api_fallback_at.get(channel_id)
     if last is not None and now - last < settings.youtube_api_fallback_interval_minutes * 60:
-        metrics.feed_api_fallbacks.add(1, {**channel_attrs, "outcome": "rate_limited"})
+        metrics.feed_api_fallbacks.add(1, {**channel_attrs, "outcome": "skipped"})
         return None
     _api_fallback_at[channel_id] = now
     try:

@@ -62,10 +62,12 @@ class Settings(BaseSettings):
     # sometimes 404s every request from this server for hours. Empty disables it.
     youtube_api_key: str = Field("")
     # Minimum gap between API fallbacks for one channel. Each costs 1 unit of the
-    # 10,000/day quota; hourly keeps a full RSS outage around 24 units per channel
-    # per day, where following every 20-minute sweep would run past the quota at
-    # ~140 channels.
-    youtube_api_fallback_interval_minutes: int = Field(60)
+    # 10,000/day quota. During an RSS outage a sweep takes ~35 minutes (every
+    # channel burns its retries), so sweeps reach a channel every ~45 minutes;
+    # 30 lets each of those fall back (~5,300 units/day for 165 channels) while
+    # still capping the rate if sweeps ever speed up. At 60, every other sweep
+    # was skipped and channels went ~90 minutes between refreshes.
+    youtube_api_fallback_interval_minutes: int = Field(30)
     # Keep this at 1. Concurrent downloads from one IP are the fastest route to
     # "Sign in to confirm you're not a bot".
     download_concurrency: int = Field(1)
