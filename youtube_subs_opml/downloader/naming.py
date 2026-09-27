@@ -70,19 +70,14 @@ def sanitize(name: str) -> str:
     return cleaned or "Untitled"
 
 
-def episode_basename(
-    channel_title: str, published_at: datetime | None, episode_number: int, title: str
-) -> str:
+def episode_basename(channel_title: str, published_at: datetime | None, episode_number: int, title: str) -> str:
     """``Channel - S2026E0315 - Title`` with no extension.
 
     The episode number is the ``MMDD`` of the upload date (``date_episode_number``),
     zero-padded to four digits so a March episode reads ``E0315``.
     """
     year = published_at.year if published_at else 1970
-    return (
-        f"{sanitize(channel_title)} - S{year:04d}E{episode_number:04d} - "
-        f"{sanitize(title)}"
-    )
+    return f"{sanitize(channel_title)} - S{year:04d}E{episode_number:04d} - {sanitize(title)}"
 
 
 def _season_subpath(channel_title: str, published_at: datetime | None) -> Path:
@@ -99,27 +94,14 @@ def canonical_channel_dir(media_root: str, channel_title: str) -> Path:
     return Path(media_root) / CANONICAL_SUBDIR / sanitize(channel_title)
 
 
-def canonical_episode_dir(
-    media_root: str, channel_title: str, published_at: datetime | None
-) -> Path:
+def canonical_episode_dir(media_root: str, channel_title: str, published_at: datetime | None) -> Path:
     """The download target dir — under the un-scanned ``.canonical`` tree."""
-    return (
-        Path(media_root)
-        / CANONICAL_SUBDIR
-        / _season_subpath(channel_title, published_at)
-    )
+    return Path(media_root) / CANONICAL_SUBDIR / _season_subpath(channel_title, published_at)
 
 
-def user_episode_dir(
-    media_root: str, user_id: int, channel_title: str, published_at: datetime | None
-) -> Path:
+def user_episode_dir(media_root: str, user_id: int, channel_title: str, published_at: datetime | None) -> Path:
     """The per-user library dir a canonical file is hardlinked into."""
-    return (
-        Path(media_root)
-        / LIBRARIES_SUBDIR
-        / str(user_id)
-        / _season_subpath(channel_title, published_at)
-    )
+    return Path(media_root) / LIBRARIES_SUBDIR / str(user_id) / _season_subpath(channel_title, published_at)
 
 
 def media_is_ready(media_root: str, *, allow_unmounted: bool = False) -> bool:
@@ -150,7 +132,7 @@ def episode_files(mkv_path: Path) -> list[Path]:
     stem = mkv_path.stem
     out: list[Path] = []
     for p in sorted(mkv_path.parent.glob(escape(stem) + "*")):
-        rest = p.name[len(stem):]
+        rest = p.name[len(stem) :]
         if rest == "" or rest[0] in ".-":
             out.append(p)
     return out

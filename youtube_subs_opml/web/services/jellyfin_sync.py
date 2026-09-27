@@ -56,13 +56,17 @@ def resolve_item_ids(db: Session, user_id: int, jf_user_id: str, client) -> int:
     Returns the number newly resolved. Links whose file Jellyfin hasn't indexed
     yet are simply left for the next pass.
     """
-    unresolved = db.execute(
-        select(DownloadLink).where(
-            DownloadLink.user_id == user_id,
-            DownloadLink.jellyfin_item_id.is_(None),
-            DownloadLink.link_path.is_not(None),
+    unresolved = (
+        db.execute(
+            select(DownloadLink).where(
+                DownloadLink.user_id == user_id,
+                DownloadLink.jellyfin_item_id.is_(None),
+                DownloadLink.link_path.is_not(None),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not unresolved:
         return 0
 
@@ -92,7 +96,11 @@ def _order_key(published_at, video_id: str) -> tuple:
 
 
 def _rewrite_playlist(
-    client, playlist_id: str, jf_user_id: str, actual: list, want: list[str],
+    client,
+    playlist_id: str,
+    jf_user_id: str,
+    actual: list,
+    want: list[str],
     user_id: int,
 ) -> None:
     """Make the playlist hold exactly ``want``, in that order.
@@ -122,7 +130,9 @@ def _rewrite_playlist(
                 "Could not clear %d playlist entries for user %s, so its order "
                 "can't be corrected (Jellyfin build may predate API-key delete "
                 "support): %s",
-                len(entry_ids), user_id, exc,
+                len(entry_ids),
+                user_id,
+                exc,
             )
 
     present = set(current)
@@ -139,24 +149,24 @@ def reconcile_playlists(db: Session, user_id: int, jf_user_id: str, client) -> N
     Playlists are created lazily on first need and their ids cached in
     ``category_playlists``.
     """
-    categories = db.execute(
-        select(Category).where(Category.user_id == user_id)
-    ).scalars().all()
+    categories = db.execute(select(Category).where(Category.user_id == user_id)).scalars().all()
 
     # channel -> categories it belongs to (for this user)
     chan_to_cats: dict[str, set[int]] = defaultdict(set)
-    for assignment in db.execute(
-        select(ChannelCategory).where(ChannelCategory.user_id == user_id)
-    ).scalars().all():
+    for assignment in db.execute(select(ChannelCategory).where(ChannelCategory.user_id == user_id)).scalars().all():
         chan_to_cats[assignment.channel_id].add(assignment.category_id)
 
     # resolved links + the channel and upload date of each video
-    links = db.execute(
-        select(DownloadLink).where(
-            DownloadLink.user_id == user_id,
-            DownloadLink.jellyfin_item_id.is_not(None),
+    links = (
+        db.execute(
+            select(DownloadLink).where(
+                DownloadLink.user_id == user_id,
+                DownloadLink.jellyfin_item_id.is_not(None),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if links:
         videos = {
             video_id: (channel_id, published_at)
@@ -185,9 +195,7 @@ def reconcile_playlists(db: Session, user_id: int, jf_user_id: str, client) -> N
 
     playlists = {
         cp.category_id: cp
-        for cp in db.execute(
-            select(CategoryPlaylist).where(CategoryPlaylist.user_id == user_id)
-        ).scalars().all()
+        for cp in db.execute(select(CategoryPlaylist).where(CategoryPlaylist.user_id == user_id)).scalars().all()
     }
 
     for category in categories:
@@ -198,9 +206,7 @@ def reconcile_playlists(db: Session, user_id: int, jf_user_id: str, client) -> N
 
         if cp is None:
             playlist_id = client.create_playlist(category.name, jf_user_id)
-            cp = CategoryPlaylist(
-                user_id=user_id, category_id=category.id, playlist_id=playlist_id
-            )
+            cp = CategoryPlaylist(user_id=user_id, category_id=category.id, playlist_id=playlist_id)
             db.add(cp)
             actual: list = []
         else:
@@ -217,9 +223,7 @@ def reconcile_playlists(db: Session, user_id: int, jf_user_id: str, client) -> N
     db.commit()
 
 
-def sync_user(
-    db: Session, user_id: int, jf_user_id: str, client, *, do_refresh: bool = True
-) -> None:
+def sync_user(db: Session, user_id: int, jf_user_id: str, client, *, do_refresh: bool = True) -> None:
     """Refresh, resolve item ids, and reconcile playlists for one user."""
     if do_refresh:
         has_unresolved = db.execute(

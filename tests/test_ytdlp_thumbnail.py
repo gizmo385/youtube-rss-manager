@@ -4,6 +4,7 @@ Jellyfin ignores a same-named ``<video>.jpg`` for episodes, so the wrong name
 means no episode art. We assert the yt-dlp invocation carries the per-type
 ``thumbnail:`` output template rather than actually shelling out to YouTube.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,18 +29,14 @@ def test_download_uses_thumb_suffix_output_template(tmp_path, monkeypatch):
 
     monkeypatch.setattr(ytdlp.subprocess, "run", fake_run)
 
-    produced = ytdlp.download(
-        "vid00000001", target, video_format="best", write_thumbnail=True
-    )
+    produced = ytdlp.download("vid00000001", target, video_format="best", write_thumbnail=True)
     assert produced == target.with_suffix(".mkv")
 
     cmd = captured["cmd"]
     assert "--write-thumbnail" in cmd
     # The thumbnail gets its own output template ending in -thumb, so the file
     # lands as "<basename>-thumb.jpg" (after --convert-thumbnails jpg).
-    thumb_templates = [
-        c for c in cmd if isinstance(c, str) and c.startswith("thumbnail:")
-    ]
+    thumb_templates = [c for c in cmd if isinstance(c, str) and c.startswith("thumbnail:")]
     assert thumb_templates == [f"thumbnail:{target}-thumb.%(ext)s"]
 
 

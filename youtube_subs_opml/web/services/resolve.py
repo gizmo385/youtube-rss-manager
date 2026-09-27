@@ -15,14 +15,11 @@ _FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={cid}"
 _ATOM = "http://www.w3.org/2005/Atom"
 _TIMEOUT = 15.0
 _USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 # Matches the channel id from a channel page: canonical /channel/UC… link or
 # the channelId/externalId keys in the embedded JSON.
-_CHANNEL_ID_RE = re.compile(
-    r'(?:"channelId":"|"externalId":"|/channel/)(UC[A-Za-z0-9_-]{22})'
-)
+_CHANNEL_ID_RE = re.compile(r'(?:"channelId":"|"externalId":"|/channel/)(UC[A-Za-z0-9_-]{22})')
 
 
 def _fetch_title(channel_id: str, client: httpx.Client) -> str:
@@ -42,9 +39,7 @@ def resolve_channel_public(value: str) -> ResolvedChannel:
     Raises ChannelLookupError on bad input or if the channel can't be found.
     """
     kind, key = _parse_channel_input(value)
-    with httpx.Client(
-        headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT
-    ) as client:
+    with httpx.Client(headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT) as client:
         if kind == "id":
             channel_id = key
         else:
@@ -58,9 +53,7 @@ def resolve_channel_public(value: str) -> ResolvedChannel:
             page.raise_for_status()
             match = _CHANNEL_ID_RE.search(page.text)
             if match is None:
-                raise ChannelLookupError(
-                    f"Could not resolve a channel id for '{value}'"
-                )
+                raise ChannelLookupError(f"Could not resolve a channel id for '{value}'")
             channel_id = match.group(1)
 
         try:

@@ -111,8 +111,9 @@ def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]
         select(ChannelCategory.channel_id, Category.name.label("category"))
         .join(Category, Category.id == ChannelCategory.category_id)
         .union(
-            select(followed.c.channel_id, literal(_UNCATEGORIZED).label("category"))
-            .where(followed.c.channel_id.not_in(select(ChannelCategory.channel_id)))
+            select(followed.c.channel_id, literal(_UNCATEGORIZED).label("category")).where(
+                followed.c.channel_id.not_in(select(ChannelCategory.channel_id))
+            )
         )
         .subquery()
     )
@@ -153,9 +154,7 @@ def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]
     out["yt_rss_download_states"] = [
         (count, {"status": status, "reason": reason or ""})
         for status, reason, count in db.execute(
-            select(Download.status, Download.skip_reason, func.count()).group_by(
-                Download.status, Download.skip_reason
-            )
+            select(Download.status, Download.skip_reason, func.count()).group_by(Download.status, Download.skip_reason)
         )
     ]
     out["yt_rss_archive_bytes"] = []

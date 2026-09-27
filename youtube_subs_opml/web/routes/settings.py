@@ -61,14 +61,21 @@ def _table_context(db: Session, user: User, params) -> dict:  # noqa: ANN001
     page = _int_or_none(params.get("page")) or 1
 
     data = downloads_service.list_downloads(
-        db, user.id,
-        channel_id=channel_id, category_id=category_id, status=status, q=q, page=page,
+        db,
+        user.id,
+        channel_id=channel_id,
+        category_id=category_id,
+        status=status,
+        q=q,
+        page=page,
     )
     active = {
         k: v
         for k, v in (
-            ("channel_id", channel_id), ("category_id", category_id),
-            ("status", status), ("q", q),
+            ("channel_id", channel_id),
+            ("category_id", category_id),
+            ("status", status),
+            ("q", q),
         )
         if v not in (None, "")
     }
@@ -95,24 +102,13 @@ def settings_page(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    accounts = db.execute(
-        select(YoutubeAccount)
-        .where(YoutubeAccount.user_id == user.id)
-    ).scalars().all()
+    accounts = db.execute(select(YoutubeAccount).where(YoutubeAccount.user_id == user.id)).scalars().all()
 
-    opml_token = db.execute(
-        select(OpmlToken).where(OpmlToken.user_id == user.id)
-    ).scalar_one_or_none()
+    opml_token = db.execute(select(OpmlToken).where(OpmlToken.user_id == user.id)).scalar_one_or_none()
 
-    categories = db.execute(
-        select(Category)
-        .where(Category.user_id == user.id)
-        .order_by(Category.name)
-    ).scalars().all()
+    categories = db.execute(select(Category).where(Category.user_id == user.id).order_by(Category.name)).scalars().all()
 
-    jellyfin = db.execute(
-        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
-    ).scalar_one_or_none()
+    jellyfin = db.execute(select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)).scalar_one_or_none()
 
     from ..services.stats import shell_stats
 
@@ -179,6 +175,7 @@ def trigger_sync(
     # Newly-synced subscriptions have no cached feed yet; warm just those so their
     # feed URLs work in seconds rather than 503ing until a sweep reaches them.
     from ..services.scheduler import warm_new_channels_soon
+
     warm_new_channels_soon()
 
     return RedirectResponse("/settings", status_code=303)
@@ -201,12 +198,8 @@ async def update_defaults(
     # Blank means "same window as the video" rather than "inherit from a level
     # above" — there is no level above the user.
     user.keep_last_n_audio = parse_inherit_int(form.get("keep_last_n_audio"))
-    user.max_duration_seconds = (
-        parse_required_int(form.get("max_duration_minutes"), 0) * 60
-    )
-    user.min_duration_seconds = (
-        parse_required_int(form.get("min_duration_minutes"), 0) * 60
-    )
+    user.max_duration_seconds = parse_required_int(form.get("max_duration_minutes"), 0) * 60
+    user.min_duration_seconds = parse_required_int(form.get("min_duration_minutes"), 0) * 60
     user.link_target = parse_link_target(form.get("link_target"), allow_inherit=False)
     db.commit()
     return RedirectResponse("/settings", status_code=303)
@@ -232,9 +225,7 @@ async def update_jellyfin(
     if not base_url:
         raise HTTPException(status_code=400, detail="Jellyfin base URL is required")
 
-    account = db.execute(
-        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
-    ).scalar_one_or_none()
+    account = db.execute(select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)).scalar_one_or_none()
 
     if account is None:
         if not api_key:
@@ -263,9 +254,7 @@ def test_jellyfin(
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
     """Verify stored Jellyfin credentials against the live instance."""
-    account = db.execute(
-        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
-    ).scalar_one_or_none()
+    account = db.execute(select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)).scalar_one_or_none()
     if account is None:
         return RedirectResponse("/settings?jellyfin_test=missing", status_code=303)
 
@@ -292,9 +281,7 @@ def sync_jellyfin_now(
     settings page so a user isn't waiting on the next interval. Needs the user
     GUID: without it item ids can't be scoped and playlists can't be created.
     """
-    account = db.execute(
-        select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)
-    ).scalar_one_or_none()
+    account = db.execute(select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)).scalar_one_or_none()
     if account is None:
         return RedirectResponse("/settings?jellyfin_sync=missing", status_code=303)
     if not account.jellyfin_user_id:
@@ -326,9 +313,7 @@ def downloads_table(
     return templates.TemplateResponse(request, "partials/downloads_table.html", ctx)
 
 
-def _retry_response(
-    request: Request, db: Session, user: User, form, *, dl: str, dl_n: int
-):  # noqa: ANN001
+def _retry_response(request: Request, db: Session, user: User, form, *, dl: str, dl_n: int):  # noqa: ANN001
     """Refresh the table + summary in place for htmx; redirect otherwise.
 
     Retry buttons send the current filters and page (via hx-include), so the
@@ -340,12 +325,8 @@ def _retry_response(
         ctx = _table_context(db, user, form)
         ctx["download_counts"] = downloads_service.status_counts(db, user.id)
         ctx["recoverable"] = downloads_service.recoverable_count(db, user.id)
-        return templates.TemplateResponse(
-            request, "partials/downloads_refresh.html", ctx
-        )
-    return RedirectResponse(
-        f"/settings?tab=downloads&dl={dl}&dl_n={dl_n}", status_code=303
-    )
+        return templates.TemplateResponse(request, "partials/downloads_refresh.html", ctx)
+    return RedirectResponse(f"/settings?tab=downloads&dl={dl}&dl_n={dl_n}", status_code=303)
 
 
 @router.post("/settings/downloads/{video_id}/retry")
@@ -359,8 +340,12 @@ async def retry_download(
     ok = downloads_service.retry_one(db, user.id, video_id)
     form = await request.form()
     return _retry_response(
-        request, db, user, form,
-        dl="retried" if ok else "notfound", dl_n=1 if ok else 0,
+        request,
+        db,
+        user,
+        form,
+        dl="retried" if ok else "notfound",
+        dl_n=1 if ok else 0,
     )
 
 
@@ -373,9 +358,7 @@ async def retry_all_downloads(
     """Requeue every recoverable (failed / unavailable) download for this user."""
     n = downloads_service.retry_all_recoverable(db, user.id)
     form = await request.form()
-    return _retry_response(
-        request, db, user, form, dl="retried" if n else "none", dl_n=n
-    )
+    return _retry_response(request, db, user, form, dl="retried" if n else "none", dl_n=n)
 
 
 @router.post("/settings/opml-token/rotate")
@@ -383,9 +366,7 @@ def rotate_opml_token(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> RedirectResponse:
-    token_row = db.execute(
-        select(OpmlToken).where(OpmlToken.user_id == user.id)
-    ).scalar_one_or_none()
+    token_row = db.execute(select(OpmlToken).where(OpmlToken.user_id == user.id)).scalar_one_or_none()
 
     new_token = secrets.token_urlsafe(32)
 

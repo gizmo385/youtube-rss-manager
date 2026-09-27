@@ -91,11 +91,7 @@ def _get_owned_category(category_id: int, user: User, db: Session) -> Category:
 
 def _categories_with_counts(user: User, db: Session) -> list[dict]:
     """Load categories with their channel counts."""
-    categories = db.execute(
-        select(Category)
-        .where(Category.user_id == user.id)
-        .order_by(Category.name)
-    ).scalars().all()
+    categories = db.execute(select(Category).where(Category.user_id == user.id).order_by(Category.name)).scalars().all()
 
     counts = dict(
         db.execute(
@@ -133,9 +129,7 @@ def _categories_with_counts(user: User, db: Session) -> list[dict]:
     ]
 
 
-def _category_list_response(
-    request: Request, user: User, db: Session
-) -> HTMLResponse:
+def _category_list_response(request: Request, user: User, db: Session) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "partials/category_list.html",
@@ -159,6 +153,7 @@ def list_categories(
     if _is_htmx(request):
         return _category_list_response(request, user, db)
     from ..services.stats import shell_stats
+
     return templates.TemplateResponse(
         request,
         "categories.html",
@@ -314,15 +309,19 @@ def category_channels(
 ) -> HTMLResponse:
     category = _get_owned_category(category_id, user, db)
 
-    channels = db.execute(
-        select(Channel)
-        .join(ChannelCategory, ChannelCategory.channel_id == Channel.channel_id)
-        .where(
-            ChannelCategory.user_id == user.id,
-            ChannelCategory.category_id == category_id,
+    channels = (
+        db.execute(
+            select(Channel)
+            .join(ChannelCategory, ChannelCategory.channel_id == Channel.channel_id)
+            .where(
+                ChannelCategory.user_id == user.id,
+                ChannelCategory.category_id == category_id,
+            )
+            .order_by(Channel.title)
         )
-        .order_by(Channel.title)
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return templates.TemplateResponse(
         request,
@@ -337,16 +336,20 @@ def _available_channels_query(user_id: int, category_id: int, db: Session):
         ChannelCategory.user_id == user_id,
         ChannelCategory.category_id == category_id,
     )
-    return db.execute(
-        select(Channel)
-        .join(Subscription, Subscription.channel_id == Channel.channel_id)
-        .where(
-            Subscription.user_id == user_id,
-            Subscription.ignored == False,  # noqa: E712
-            ~Channel.channel_id.in_(in_category),
+    return (
+        db.execute(
+            select(Channel)
+            .join(Subscription, Subscription.channel_id == Channel.channel_id)
+            .where(
+                Subscription.user_id == user_id,
+                Subscription.ignored == False,  # noqa: E712
+                ~Channel.channel_id.in_(in_category),
+            )
+            .order_by(Channel.title)
         )
-        .order_by(Channel.title)
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
 @router.get("/{category_id}/available-channels")
@@ -388,11 +391,13 @@ async def add_channel_to_category(
         )
     ).scalar_one_or_none()
     if existing is None:
-        db.add(ChannelCategory(
-            user_id=user.id,
-            channel_id=str(channel_id),
-            category_id=category_id,
-        ))
+        db.add(
+            ChannelCategory(
+                user_id=user.id,
+                channel_id=str(channel_id),
+                category_id=category_id,
+            )
+        )
         db.commit()
 
     channels = _available_channels_query(user.id, category_id, db)

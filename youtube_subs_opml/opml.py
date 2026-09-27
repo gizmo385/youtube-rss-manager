@@ -36,9 +36,7 @@ def build_opml(
     opml = ET.Element("opml", version="2.0")
     head = ET.SubElement(opml, "head")
     ET.SubElement(head, "title").text = title
-    ET.SubElement(head, "dateCreated").text = datetime.now(timezone.utc).strftime(
-        "%a, %d %b %Y %H:%M:%S +0000"
-    )
+    ET.SubElement(head, "dateCreated").text = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
     body = ET.SubElement(opml, "body")
     folder = ET.SubElement(body, "outline", text=title, title=title)
     for sub in sorted(subscriptions, key=lambda s: s.title.lower()):
@@ -47,19 +45,14 @@ def build_opml(
             # the Shorts preference; the proxy fetches the real feed and
             # filters Shorts when needed (the UULF trick is broken upstream).
             if category_slug:
-                xml_url = (
-                    f"{proxy_base}/feed/{opml_token}/{category_slug}"
-                    f"/{sub.channel_id}.xml"
-                )
+                xml_url = f"{proxy_base}/feed/{opml_token}/{category_slug}/{sub.channel_id}.xml"
             else:
                 xml_url = f"{proxy_base}/feed/{opml_token}/{sub.channel_id}.xml"
         elif sub.include_shorts:
             xml_url = FEED_URL.format(channel_id=sub.channel_id)
         else:
             # Strip "UC" prefix and use UULF playlist to exclude Shorts
-            xml_url = FEED_URL_NO_SHORTS.format(
-                channel_id_suffix=sub.channel_id[2:]
-            )
+            xml_url = FEED_URL_NO_SHORTS.format(channel_id_suffix=sub.channel_id[2:])
         ET.SubElement(
             folder,
             "outline",

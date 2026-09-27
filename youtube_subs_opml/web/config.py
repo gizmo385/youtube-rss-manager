@@ -9,9 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Stable, deterministic local secrets so encryption survives restarts locally.
 # Never used in production — only filled in when LOCAL_MODE is set.
 _LOCAL_SESSION_SECRET = "local-insecure-session-secret-do-not-use-in-prod"
-_LOCAL_FERNET_KEY = base64.urlsafe_b64encode(
-    b"local-fernet-key-not-secure-0000"
-).decode()
+_LOCAL_FERNET_KEY = base64.urlsafe_b64encode(b"local-fernet-key-not-secure-0000").decode()
 _LOCAL_DATABASE_URL = "sqlite:///./local.db"
 
 
@@ -94,15 +92,10 @@ class Settings(BaseSettings):
             self.allow_unmounted_media = True
             return self
 
-        missing = [
-            name
-            for name in ("database_url", "session_secret", "fernet_key")
-            if not getattr(self, name)
-        ]
+        missing = [name for name in ("database_url", "session_secret", "fernet_key") if not getattr(self, name)]
         if missing:
             raise ValueError(
-                f"Missing required settings: {', '.join(missing)}. "
-                "Set them, or enable LOCAL_MODE for local defaults."
+                f"Missing required settings: {', '.join(missing)}. Set them, or enable LOCAL_MODE for local defaults."
             )
         return self
 

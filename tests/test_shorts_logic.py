@@ -1,4 +1,5 @@
 """Pure-logic tests for the Shorts feature — no DB, Keycloak, or network."""
+
 from __future__ import annotations
 
 import httpx
@@ -28,6 +29,7 @@ SAMPLE_FEED = b"""<?xml version="1.0"?>
 
 # --- OPML URL generation -------------------------------------------------
 
+
 def test_url_is_stable_across_shorts_flag():
     """The feed URL must not change when the Shorts preference toggles."""
     on = Subscription(channel_id=CID, title="T", description="", include_shorts=True)
@@ -40,9 +42,7 @@ def test_url_is_stable_across_shorts_flag():
 
 def test_category_scoped_url():
     sub = Subscription(channel_id=CID, title="T", description="")
-    xml = build_opml(
-        [sub], proxy_base_url="http://h:8000", opml_token="TOK", category_slug="tech"
-    )
+    xml = build_opml([sub], proxy_base_url="http://h:8000", opml_token="TOK", category_slug="tech")
     assert f"/feed/TOK/tech/{CID}.xml" in xml
 
 
@@ -55,23 +55,24 @@ def test_cli_fallback_uses_youtube_urls():
 
 # --- cascade -------------------------------------------------------------
 
+
 def test_cascade_precedence():
-    assert resolve_include_shorts(False, True, True) is False   # subscription wins
-    assert resolve_include_shorts(None, False, True) is False   # category wins
-    assert resolve_include_shorts(None, None, True) is True     # user default
+    assert resolve_include_shorts(False, True, True) is False  # subscription wins
+    assert resolve_include_shorts(None, False, True) is False  # category wins
+    assert resolve_include_shorts(None, None, True) is True  # user default
     assert resolve_include_shorts(None, None, False) is False
 
 
 # --- feed filtering ------------------------------------------------------
 
+
 def test_filter_drops_shorts(monkeypatch):
     monkeypatch.setattr(
-        feed, "classify_videos",
+        feed,
+        "classify_videos",
         lambda ids, db: {"shortone111": True, "realvideo22": False},
     )
-    out = feed._filter_feed(
-        SAMPLE_FEED, db=None, drop_shorts=True, drop_live=False
-    ).decode()
+    out = feed._filter_feed(SAMPLE_FEED, db=None, drop_shorts=True, drop_live=False).decode()
     assert "realvideo22" in out
     assert "shortone111" not in out
 
@@ -79,30 +80,28 @@ def test_filter_drops_shorts(monkeypatch):
 def test_filter_keeps_unknown(monkeypatch):
     """Fail open: a video with no verdict stays in the feed."""
     monkeypatch.setattr(feed, "classify_videos", lambda ids, db: {})
-    out = feed._filter_feed(
-        SAMPLE_FEED, db=None, drop_shorts=True, drop_live=False
-    ).decode()
+    out = feed._filter_feed(SAMPLE_FEED, db=None, drop_shorts=True, drop_live=False).decode()
     assert "shortone111" in out and "realvideo22" in out
 
 
 def test_filter_drops_live_and_upcoming(monkeypatch):
     monkeypatch.setattr(
-        feed, "classify_live",
+        feed,
+        "classify_live",
         lambda ids, db: {"shortone111": "upcoming", "realvideo22": "none"},
     )
-    out = feed._filter_feed(
-        SAMPLE_FEED, db=None, drop_shorts=False, drop_live=True
-    ).decode()
-    assert "realvideo22" in out      # status 'none' stays
+    out = feed._filter_feed(SAMPLE_FEED, db=None, drop_shorts=False, drop_live=True).decode()
+    assert "realvideo22" in out  # status 'none' stays
     assert "shortone111" not in out  # 'upcoming' is dropped
 
 
 # --- live cascade + probe ------------------------------------------------
 
+
 def test_live_cascade_precedence():
-    assert resolve_include_live(False, True, True) is False    # subscription wins
-    assert resolve_include_live(None, False, True) is False    # category wins
-    assert resolve_include_live(None, None, True) is True      # user default
+    assert resolve_include_live(False, True, True) is False  # subscription wins
+    assert resolve_include_live(None, False, True) is False  # category wins
+    assert resolve_include_live(None, None, True) is True  # user default
     assert resolve_include_live(None, None, False) is False
 
 
@@ -129,6 +128,7 @@ def test_probe_live_status_classifies():
 
 
 # --- probe ---------------------------------------------------------------
+
 
 class _FakeResp:
     def __init__(self, status: int):

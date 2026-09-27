@@ -42,9 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="YouTube Subscriptions OPML", lifespan=lifespan)
-app.add_middleware(
-    SessionMiddleware, secret_key=get_settings().session_secret, max_age=86400 * 14
-)
+app.add_middleware(SessionMiddleware, secret_key=get_settings().session_secret, max_age=86400 * 14)
 
 app.mount(
     "/static",

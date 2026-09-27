@@ -112,11 +112,7 @@ def _filter_feed(
     item_by_id: dict[str, str] = {}
     if rewrite and ids:
         status_by_id = dict(
-            db.execute(
-                select(Download.video_id, Download.status).where(
-                    Download.video_id.in_(ids)
-                )
-            ).all()
+            db.execute(select(Download.video_id, Download.status).where(Download.video_id.in_(ids))).all()
         )
         item_by_id = {
             vid: item
@@ -172,9 +168,7 @@ def _serve_feed(
     setting, so the feed URL stays stable when the preference is toggled — only
     the filtering behavior below changes.
     """
-    opml_token = db.execute(
-        select(OpmlToken).where(OpmlToken.token == token)
-    ).scalar_one_or_none()
+    opml_token = db.execute(select(OpmlToken).where(OpmlToken.token == token)).scalar_one_or_none()
     if opml_token is None:
         raise HTTPException(status_code=404)
     user_id = opml_token.user_id
@@ -210,21 +204,15 @@ def _serve_feed(
         cat_link_pref = category.link_target
 
     user = db.get(User, user_id)
-    include_shorts = resolve_include_shorts(
-        sub.include_shorts, cat_shorts_pref, user.include_shorts
-    )
-    include_live = resolve_include_live(
-        sub.include_live, cat_live_pref, user.include_live
-    )
+    include_shorts = resolve_include_shorts(sub.include_shorts, cat_shorts_pref, user.include_shorts)
+    include_live = resolve_include_live(sub.include_live, cat_live_pref, user.include_live)
     drop_shorts = not include_shorts
     drop_live = not include_live
 
     link_target = resolve(sub.link_target, cat_link_pref, user.link_target)
     jellyfin_base: str | None = None
     if link_target in ("when_ready", "hold"):
-        account = db.execute(
-            select(JellyfinAccount).where(JellyfinAccount.user_id == user_id)
-        ).scalar_one_or_none()
+        account = db.execute(select(JellyfinAccount).where(JellyfinAccount.user_id == user_id)).scalar_one_or_none()
         jellyfin_base = account.base_url if account else None
         # Without somewhere to link, "when_ready"/"hold" can't ever resolve — fall
         # back to plain YouTube behavior rather than hiding every entry forever.

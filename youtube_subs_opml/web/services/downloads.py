@@ -194,12 +194,8 @@ def list_downloads(
     ``total`` (matching the filters), clamped ``page``, ``pages``, ``has_prev``/
     ``has_next`` and the 1-based ``start``/``end`` indices of this page.
     """
-    base = _filtered_query(
-        user_id, channel_id=channel_id, category_id=category_id, status=status, q=q
-    )
-    total = db.execute(
-        select(func.count()).select_from(base.subquery())
-    ).scalar_one()
+    base = _filtered_query(user_id, channel_id=channel_id, category_id=category_id, status=status, q=q)
+    total = db.execute(select(func.count()).select_from(base.subquery())).scalar_one()
 
     pages = max(1, (total + per_page - 1) // per_page)
     page = min(max(1, page), pages)
@@ -258,9 +254,7 @@ def retry_one(db: Session, user_id: int, video_id: str) -> bool:
     Scoped to the user's subscriptions, so a token/URL can't requeue arbitrary
     videos, and only terminal rows are reset (never one mid-download).
     """
-    download = db.execute(
-        _visible(user_id).where(Download.video_id == video_id)
-    ).scalar_one_or_none()
+    download = db.execute(_visible(user_id).where(Download.video_id == video_id)).scalar_one_or_none()
     if download is None or download.status not in _RETRYABLE_STATUSES:
         return False
     _reset(download)
@@ -277,17 +271,21 @@ def retry_all_recoverable(db: Session, user_id: int) -> int:
     (too_long, members_only, geo_blocked, ...) are left alone; retry them
     individually if you really mean to.
     """
-    rows = db.execute(
-        _visible(user_id).where(
-            or_(
-                Download.status == "failed",
-                and_(
-                    Download.status == "skipped",
-                    Download.skip_reason == "unavailable",
-                ),
+    rows = (
+        db.execute(
+            _visible(user_id).where(
+                or_(
+                    Download.status == "failed",
+                    and_(
+                        Download.status == "skipped",
+                        Download.skip_reason == "unavailable",
+                    ),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for download in rows:
         _reset(download)
     if rows:

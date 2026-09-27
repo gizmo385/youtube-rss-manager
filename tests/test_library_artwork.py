@@ -4,6 +4,7 @@ In-memory SQLite with a real temp media tree so the poster hardlinks and inode
 sharing are exercised for real. Network (yt-dlp probe, HTTP image fetch) is
 stubbed — the point here is the on-disk layout and teardown, not YouTube.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -37,9 +38,7 @@ PUB = datetime(2026, 3, 2, tzinfo=timezone.utc)
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     try:
@@ -51,6 +50,7 @@ def db() -> Session:
 @pytest.fixture(autouse=True)
 def _stub_image_fetch(monkeypatch):
     """Write a placeholder file instead of hitting the network."""
+
     def fake_fetch(url: str, dest: Path) -> bool:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"IMG:" + url.encode())
@@ -62,8 +62,7 @@ def _stub_image_fetch(monkeypatch):
 
 def _seed(db, *, thumbnail_url="http://img/avatar.jpg", banner_url="http://img/banner.jpg"):
     db.add(User(id=1, oidc_sub="s1", email="u1@e", download_enabled=True, keep_last_n=15))
-    db.add(Channel(channel_id=CHAN, title=CHAN_TITLE,
-                   thumbnail_url=thumbnail_url, banner_url=banner_url))
+    db.add(Channel(channel_id=CHAN, title=CHAN_TITLE, thumbnail_url=thumbnail_url, banner_url=banner_url))
     db.add(Subscription(user_id=1, channel_id=CHAN, ignored=False))
     db.commit()
 
@@ -79,14 +78,21 @@ def _complete_download(db, media_root, vid="vid00000001", epnum=1) -> Path:
     mkv.write_bytes(b"video-bytes")
     (canon_dir / f"{basename}.nfo").write_bytes(b"<episodedetails/>")
     (canon_dir / f"{basename}-thumb.jpg").write_bytes(b"jpg")
-    db.add(Download(video_id=vid, status="complete", file_path=str(mkv),
-                    file_size_bytes=mkv.stat().st_size,
-                    completed_at=datetime.now(timezone.utc)))
+    db.add(
+        Download(
+            video_id=vid,
+            status="complete",
+            file_path=str(mkv),
+            file_size_bytes=mkv.stat().st_size,
+            completed_at=datetime.now(timezone.utc),
+        )
+    )
     db.commit()
     return mkv
 
 
 # --- sync_library_art ----------------------------------------------------
+
 
 def test_sync_places_series_and_season_posters(db, tmp_path):
     media = str(tmp_path)
@@ -149,6 +155,7 @@ def test_sync_places_poster_without_banner(db, tmp_path):
 
 # --- teardown: art files must not keep empty dirs alive -------------------
 
+
 def test_prune_removes_dirs_that_hold_only_posters(db, tmp_path):
     media = str(tmp_path)
     _seed(db)
@@ -159,8 +166,8 @@ def test_prune_removes_dirs_that_hold_only_posters(db, tmp_path):
     # Drop the subscription so nothing is retained, then reconcile + prune.
     db.query(Subscription).delete()
     db.commit()
-    reconcile_links(db, media)   # removes the user's hardlinks (and their art)
-    run_prune(db)                # removes canonical files (and their art)
+    reconcile_links(db, media)  # removes the user's hardlinks (and their art)
+    run_prune(db)  # removes canonical files (and their art)
 
     # No empty series/season shells left behind in either tree: the user's
     # channel dir and the canonical channel dir (which held only posters) go.
@@ -170,6 +177,7 @@ def test_prune_removes_dirs_that_hold_only_posters(db, tmp_path):
 
 
 # --- backfill_channel_art ------------------------------------------------
+
 
 def test_backfill_stores_probed_urls(db, tmp_path, monkeypatch):
     media = str(tmp_path)
@@ -181,9 +189,9 @@ def test_backfill_stores_probed_urls(db, tmp_path, monkeypatch):
     _complete_download(db, media)
 
     monkeypatch.setattr(
-        ytdlp, "probe_channel",
-        lambda cid: ytdlp.ChannelArt(avatar_url="http://a/av.jpg",
-                                     banner_url="http://a/bn.jpg"),
+        ytdlp,
+        "probe_channel",
+        lambda cid: ytdlp.ChannelArt(avatar_url="http://a/av.jpg", banner_url="http://a/bn.jpg"),
     )
     assert backfill_channel_art(db) == 1
     channel = db.get(Channel, CHAN)
@@ -198,7 +206,8 @@ def test_backfill_records_sentinel_when_no_art(db, tmp_path, monkeypatch):
     _complete_download(db, media)
 
     monkeypatch.setattr(
-        ytdlp, "probe_channel",
+        ytdlp,
+        "probe_channel",
         lambda cid: ytdlp.ChannelArt(avatar_url=None, banner_url=None),
     )
     backfill_channel_art(db)
@@ -214,7 +223,8 @@ def test_backfill_ignores_channels_without_downloads(db, monkeypatch):
     db.commit()
     called = []
     monkeypatch.setattr(
-        ytdlp, "probe_channel",
+        ytdlp,
+        "probe_channel",
         lambda cid: called.append(cid) or ytdlp.ChannelArt(None, None),
     )
     assert backfill_channel_art(db) == 0

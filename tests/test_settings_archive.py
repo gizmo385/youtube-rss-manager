@@ -4,6 +4,7 @@ per-channel / per-category archive preference controls.
 Runs against in-memory SQLite with get_db / get_current_user overridden, so no
 Postgres, Keycloak, or network is needed.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -87,6 +88,7 @@ def app_db():
 
 # --- user-level archive defaults ----------------------------------------
 
+
 def test_user_archive_defaults_persist(app_db):
     client, Session_ = app_db
     resp = client.post(
@@ -110,7 +112,7 @@ def test_user_archive_defaults_persist(app_db):
         assert user.keep_last_n == 5
         assert user.keep_last_n_audio == 30
         assert user.max_duration_seconds == 5400  # 90 minutes
-        assert user.min_duration_seconds == 180   # 3 minutes
+        assert user.min_duration_seconds == 180  # 3 minutes
         assert user.link_target == "hold"
 
 
@@ -126,7 +128,7 @@ def test_user_defaults_unchecked_and_bad_link_target(app_db):
         user = db.get(User, USER_ID)
         assert user.download_enabled is False
         assert user.generate_podcast is False
-        assert user.keep_last_n == 15   # blank → default
+        assert user.keep_last_n == 15  # blank → default
         assert user.keep_last_n_audio is None  # blank → same window as video
         assert user.max_duration_seconds == 0
         assert user.min_duration_seconds == 0  # blank → no floor
@@ -134,6 +136,7 @@ def test_user_defaults_unchecked_and_bad_link_target(app_db):
 
 
 # --- Jellyfin account ----------------------------------------------------
+
 
 def test_jellyfin_account_upsert_keeps_key_when_blank(app_db):
     client, Session_ = app_db
@@ -154,8 +157,7 @@ def test_jellyfin_account_upsert_keeps_key_when_blank(app_db):
     # Update base_url with a blank key — key must be preserved.
     client.post(
         "/settings/jellyfin",
-        data={"base_url": "https://new.example.com", "api_key": "",
-              "jellyfin_user_id": "guid-2"},
+        data={"base_url": "https://new.example.com", "api_key": "", "jellyfin_user_id": "guid-2"},
         follow_redirects=False,
     )
     with Session_() as db:
@@ -215,8 +217,7 @@ def test_jellyfin_sync_runs_for_this_user(app_db, monkeypatch):
     client, _ = app_db
     client.post(
         "/settings/jellyfin",
-        data={"base_url": "https://jf.example.com", "api_key": "k",
-              "jellyfin_user_id": "guid-1"},
+        data={"base_url": "https://jf.example.com", "api_key": "k", "jellyfin_user_id": "guid-1"},
         follow_redirects=False,
     )
 
@@ -224,7 +225,8 @@ def test_jellyfin_sync_runs_for_this_user(app_db, monkeypatch):
 
     seen = {}
     monkeypatch.setattr(
-        jellyfin_sync, "sync_user",
+        jellyfin_sync,
+        "sync_user",
         lambda db, user_id, jf_user_id, client: seen.update(user_id=user_id, guid=jf_user_id),
     )
     resp = client.post("/settings/jellyfin/sync", follow_redirects=False)
@@ -241,6 +243,7 @@ def test_settings_page_renders_library_path(app_db):
 
 # --- per-channel archive prefs ------------------------------------------
 
+
 def test_channel_archive_pref_tristate_and_ints(app_db):
     client, Session_ = app_db
 
@@ -248,64 +251,55 @@ def test_channel_archive_pref_tristate_and_ints(app_db):
         with Session_() as db:
             return db.get(Subscription, (USER_ID, CID))
 
-    client.post("/channels/archive-pref",
-                data={"channel_ids": CID, "field": "download_enabled", "value": "true"})
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "download_enabled", "value": "true"})
     assert sub().download_enabled is True
 
-    client.post("/channels/archive-pref",
-                data={"channel_ids": CID, "field": "download_enabled", "value": "inherit"})
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "download_enabled", "value": "inherit"})
     assert sub().download_enabled is None
 
-    client.post("/channels/archive-pref",
-                data={"channel_ids": CID, "field": "keep_last_n", "value": "0"})
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "keep_last_n", "value": "0"})
     assert sub().keep_last_n == 0
 
-    client.post("/channels/archive-pref",
-                data={"channel_ids": CID, "field": "max_duration_seconds", "value": "90"})
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "max_duration_seconds", "value": "90"})
     assert sub().max_duration_seconds == 5400  # minutes → seconds
 
-    client.post("/channels/archive-pref",
-                data={"channel_ids": CID, "field": "min_duration_seconds", "value": "2"})
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "min_duration_seconds", "value": "2"})
     assert sub().min_duration_seconds == 120  # minutes → seconds
 
-    client.post("/channels/archive-pref",
-                data={"channel_ids": CID, "field": "keep_last_n_audio", "value": "30"})
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "keep_last_n_audio", "value": "30"})
     assert sub().keep_last_n_audio == 30
 
-    client.post("/channels/archive-pref",
-                data={"channel_ids": CID, "field": "link_target", "value": "when_ready"})
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "link_target", "value": "when_ready"})
     assert sub().link_target == "when_ready"
 
 
 def test_channel_archive_pref_rejects_unknown_field(app_db):
     client, _ = app_db
-    resp = client.post("/channels/archive-pref",
-                       data={"channel_ids": CID, "field": "evil", "value": "x"})
+    resp = client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "evil", "value": "x"})
     assert resp.status_code == 400
 
 
 # --- per-category archive prefs -----------------------------------------
 
+
 def test_category_archive_pref_persists(app_db):
     client, Session_ = app_db
-    resp = client.patch("/categories/1/archive-pref",
-                        data={"field": "download_enabled", "value": "true"})
+    resp = client.patch("/categories/1/archive-pref", data={"field": "download_enabled", "value": "true"})
     assert resp.status_code == 200
     with Session_() as db:
         assert db.get(Category, 1).download_enabled is True
 
-    client.patch("/categories/1/archive-pref",
-                 data={"field": "max_duration_seconds", "value": "30"})
+    client.patch("/categories/1/archive-pref", data={"field": "max_duration_seconds", "value": "30"})
     with Session_() as db:
         assert db.get(Category, 1).max_duration_seconds == 1800
 
-    client.patch("/categories/1/archive-pref",
-                 data={"field": "min_duration_seconds", "value": "4"})
+    client.patch("/categories/1/archive-pref", data={"field": "min_duration_seconds", "value": "4"})
     with Session_() as db:
         assert db.get(Category, 1).min_duration_seconds == 240
 
 
 # --- disk usage + failure surfacing -------------------------------------
+
 
 def test_disk_usage_and_failure_counts_render(app_db):
     client, Session_ = app_db
@@ -314,12 +308,11 @@ def test_disk_usage_and_failure_counts_render(app_db):
         db.add(Video(video_id="vidaaaaaaaa", channel_id=CID, title="a"))
         db.add(Video(video_id="vidbbbbbbbb", channel_id=CID, title="b"))
         db.commit()
-        db.add(Download(video_id="vidaaaaaaaa", status="complete",
-                        file_size_bytes=5 * 1024 * 1024))
+        db.add(Download(video_id="vidaaaaaaaa", status="complete", file_size_bytes=5 * 1024 * 1024))
         db.add(Download(video_id="vidbbbbbbbb", status="failed"))
         db.commit()
 
     resp = client.get("/channels")
     assert resp.status_code == 200
-    assert "5.0 MB" in resp.text          # per-category disk usage
+    assert "5.0 MB" in resp.text  # per-category disk usage
     assert "1 download failed" in resp.text  # failure surfacing

@@ -3,6 +3,7 @@
 In-memory SQLite with get_db / get_current_user overridden — no Postgres,
 Keycloak, or network. Exercises both the service layer and the settings routes.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -45,20 +46,24 @@ def _local_settings(monkeypatch):
     config.get_settings.cache_clear()
 
 
-def _dl(seed, channel_id, vid, status, *, skip_reason=None, attempts=1,
-        last_error=None, size=None):
+def _dl(seed, channel_id, vid, status, *, skip_reason=None, attempts=1, last_error=None, size=None):
     seed.add(Video(video_id=vid, channel_id=channel_id, title=f"Title {vid}"))
-    seed.add(Download(video_id=vid, status=status, skip_reason=skip_reason,
-                      attempts=attempts, last_error=last_error,
-                      file_size_bytes=size,
-                      file_path="/c/%s.mkv" % vid if status == "complete" else None))
+    seed.add(
+        Download(
+            video_id=vid,
+            status=status,
+            skip_reason=skip_reason,
+            attempts=attempts,
+            last_error=last_error,
+            file_size_bytes=size,
+            file_path="/c/%s.mkv" % vid if status == "complete" else None,
+        )
+    )
 
 
 @pytest.fixture
 def app_db():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     TestingSession = sessionmaker(bind=engine)
 
@@ -75,8 +80,15 @@ def app_db():
         # Subscribed channel: a mix of states.
         _dl(seed, SUB, "vcomplete001", "complete", size=1000)
         _dl(seed, SUB, "vfailed00001", "failed", attempts=5, last_error="boom")
-        _dl(seed, SUB, "vunavail0001", "skipped", skip_reason="unavailable",
-            attempts=5, last_error="Sign in to confirm you're not a bot")
+        _dl(
+            seed,
+            SUB,
+            "vunavail0001",
+            "skipped",
+            skip_reason="unavailable",
+            attempts=5,
+            last_error="Sign in to confirm you're not a bot",
+        )
         _dl(seed, SUB, "vtoolong0001", "skipped", skip_reason="too_long")
         _dl(seed, SUB, "vshort000001", "skipped", skip_reason="short")
         _dl(seed, SUB, "vpending0001", "pending")
@@ -104,6 +116,7 @@ def app_db():
 
 # --- service: scoping & listing -----------------------------------------
 
+
 def test_status_counts_scoped_to_subscriptions(app_db):
     _client, Session = app_db
     with Session() as db:
@@ -114,6 +127,7 @@ def test_status_counts_scoped_to_subscriptions(app_db):
 
 
 # --- service: retry ------------------------------------------------------
+
 
 def test_retry_one_requeues_and_clears(app_db):
     _client, Session = app_db
@@ -158,12 +172,13 @@ def test_retry_all_recoverable_targets_failed_and_unavailable(app_db):
 
 # --- routes --------------------------------------------------------------
 
+
 def test_settings_page_renders_downloader_panel(app_db):
     client, _Session = app_db
     resp = client.get("/settings")
     assert resp.status_code == 200
     assert 'data-tab="downloads"' in resp.text  # the Downloads tab
-    assert "Download history" in resp.text       # the panel heading
+    assert "Download history" in resp.text  # the panel heading
     assert "Title vfailed00001" in resp.text
     assert "Retry all recoverable (2)" in resp.text
 
@@ -197,12 +212,11 @@ def test_retry_all_route(app_db):
 
 # --- service: full history list (filters + pagination) -------------------
 
+
 @pytest.fixture
 def history_db():
     """A fresh session with 60 downloads across two channels and one category."""
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     with Session() as s:
@@ -219,10 +233,8 @@ def history_db():
         for i in range(60):
             cid = "UCa" if i % 2 else "UCb"
             st = statuses[i % 4]
-            s.add(Video(video_id=f"v{i:09d}", channel_id=cid, title=f"Vid {i}",
-                        published_at=base + timedelta(days=i)))
-            s.add(Download(video_id=f"v{i:09d}", status=st,
-                           skip_reason="unavailable" if st == "skipped" else None))
+            s.add(Video(video_id=f"v{i:09d}", channel_id=cid, title=f"Vid {i}", published_at=base + timedelta(days=i)))
+            s.add(Download(video_id=f"v{i:09d}", status=st, skip_reason="unavailable" if st == "skipped" else None))
         s.commit()
     return Session
 
@@ -268,6 +280,7 @@ def test_subscribed_channels_sorted(history_db):
 
 # --- friendly display labels ---------------------------------------------
 
+
 def test_table_uses_friendly_labels(app_db):
     client, _Session = app_db
     html = client.get("/settings/downloads/table").text
@@ -282,8 +295,7 @@ def test_no_subscribers_reads_as_not_wanted(app_db):
     client, Session = app_db
     with Session() as db:
         db.add(Video(video_id="vnowant00001", channel_id=SUB, title="Nobody wants me"))
-        db.add(Download(video_id="vnowant00001", status="skipped",
-                        skip_reason="no_subscribers"))
+        db.add(Download(video_id="vnowant00001", status="skipped", skip_reason="no_subscribers"))
         db.commit()
     html = client.get("/settings/downloads/table", params={"status": "skipped"}).text
     assert "Not wanted" in html
@@ -291,6 +303,7 @@ def test_no_subscribers_reads_as_not_wanted(app_db):
 
 
 # --- routes: tabs, table partial, htmx retry -----------------------------
+
 
 def test_settings_has_two_tabs(app_db):
     client, _Session = app_db

@@ -47,7 +47,7 @@ _ID_BATCH = 50
 
 
 def _batched(ids: list[str]) -> list[list[str]]:
-    return [ids[i:i + _ID_BATCH] for i in range(0, len(ids), _ID_BATCH)]
+    return [ids[i : i + _ID_BATCH] for i in range(0, len(ids), _ID_BATCH)]
 
 
 class JellyfinError(RuntimeError):
@@ -81,9 +81,7 @@ class JellyfinClient:
     def verify(self) -> bool:
         """Cheap credential check for the settings page."""
         try:
-            resp = httpx.get(
-                self._url("/System/Info"), headers=self._headers(), timeout=_TIMEOUT
-            )
+            resp = httpx.get(self._url("/System/Info"), headers=self._headers(), timeout=_TIMEOUT)
             return resp.status_code == 200
         except httpx.HTTPError:
             return False
@@ -96,9 +94,7 @@ class JellyfinClient:
         misses and retries on a later pass rather than failing.
         """
         try:
-            resp = httpx.post(
-                self._url("/Library/Refresh"), headers=self._headers(), timeout=_TIMEOUT
-            )
+            resp = httpx.post(self._url("/Library/Refresh"), headers=self._headers(), timeout=_TIMEOUT)
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise JellyfinError(f"library refresh failed: {exc}") from exc
@@ -154,9 +150,7 @@ class JellyfinClient:
             raise JellyfinError(f"playlist creation failed: {exc}") from exc
         return resp.json()["Id"]
 
-    def add_to_playlist(
-        self, playlist_id: str, item_ids: list[str], user_id: str
-    ) -> None:
+    def add_to_playlist(self, playlist_id: str, item_ids: list[str], user_id: str) -> None:
         """Append items to a playlist, in the order given.
 
         Jellyfin has no insert-at-index; adds always go on the end, which is why
@@ -200,9 +194,7 @@ class JellyfinClient:
                 entries.append(PlaylistEntry(item_id=item_id, entry_id=entry_id))
         return entries
 
-    def remove_from_playlist(
-        self, playlist_id: str, entry_ids: list[str], user_id: str
-    ) -> None:
+    def remove_from_playlist(self, playlist_id: str, entry_ids: list[str], user_id: str) -> None:
         """Remove entries by ``PlaylistItemId``, batched like the add."""
         if not entry_ids:
             return

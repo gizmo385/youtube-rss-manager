@@ -58,9 +58,7 @@ def _pick_thumbnail(thumbnails: list[dict], keyword: str) -> str | None:
     largest by pixel area (``preference``/``height`` aren't always present).
     """
     matches = [
-        t for t in thumbnails
-        if keyword in str(t.get("id", "")).lower()
-        or keyword in str(t.get("url", "")).lower()
+        t for t in thumbnails if keyword in str(t.get("id", "")).lower() or keyword in str(t.get("url", "")).lower()
     ]
     if not matches:
         return None
@@ -80,21 +78,18 @@ def probe_channel(channel_id: str, *, timeout: int = 60) -> ChannelArt:
         "yt-dlp",
         "--dump-single-json",
         "--flat-playlist",
-        "--playlist-items", "1",
+        "--playlist-items",
+        "1",
         "--no-warnings",
         f"https://www.youtube.com/channel/{channel_id}",
     ]
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         raise ProbeError(f"channel probe timed out for {channel_id}") from exc
 
     if result.returncode != 0:
-        raise ProbeError(
-            result.stderr.strip()[:2000] or f"channel probe failed for {channel_id}"
-        )
+        raise ProbeError(result.stderr.strip()[:2000] or f"channel probe failed for {channel_id}")
 
     try:
         data = json.loads(result.stdout)
@@ -120,9 +115,7 @@ def probe(video_id: str, *, timeout: int = 120) -> VideoMetadata:
         WATCH_URL.format(video_id=video_id),
     ]
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         raise ProbeError(f"probe timed out for {video_id}") from exc
 
@@ -161,14 +154,20 @@ def download(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "yt-dlp",
-        "-f", video_format,
-        "--merge-output-format", "mkv",
+        "-f",
+        video_format,
+        "--merge-output-format",
+        "mkv",
         "--no-warnings",
         "--no-playlist",
-        "--sleep-requests", "2",
-        "--sleep-interval", str(sleep_interval),
-        "--retries", str(max_retries),
-        "-o", str(output_path.with_suffix(".%(ext)s")),
+        "--sleep-requests",
+        "2",
+        "--sleep-interval",
+        str(sleep_interval),
+        "--retries",
+        str(max_retries),
+        "-o",
+        str(output_path.with_suffix(".%(ext)s")),
     ]
     if write_thumbnail:
         # Jellyfin only recognises an episode image named ``<video>-thumb.jpg``;
@@ -177,15 +176,15 @@ def download(
         # touching the media file's own template above.
         cmd += [
             "--write-thumbnail",
-            "--convert-thumbnails", "jpg",
-            "-o", f"thumbnail:{output_path}-thumb.%(ext)s",
+            "--convert-thumbnails",
+            "jpg",
+            "-o",
+            f"thumbnail:{output_path}-thumb.%(ext)s",
         ]
     cmd.append(WATCH_URL.format(video_id=video_id))
 
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         raise DownloadError(f"download timed out for {video_id}") from exc
 
@@ -217,19 +216,21 @@ def extract_audio(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "yt-dlp",
-        "-f", "bestaudio[ext=m4a]/bestaudio",
+        "-f",
+        "bestaudio[ext=m4a]/bestaudio",
         "--extract-audio",
-        "--audio-format", "m4a",
+        "--audio-format",
+        "m4a",
         "--no-warnings",
         "--no-playlist",
-        "--sleep-interval", str(sleep_interval),
-        "-o", str(output_path.with_suffix(".%(ext)s")),
+        "--sleep-interval",
+        str(sleep_interval),
+        "-o",
+        str(output_path.with_suffix(".%(ext)s")),
         WATCH_URL.format(video_id=video_id),
     ]
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         raise DownloadError(f"audio extraction timed out for {video_id}") from exc
 

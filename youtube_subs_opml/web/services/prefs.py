@@ -107,9 +107,7 @@ def minutes_to_seconds(value: str | None) -> int | None:
     return None if minutes is None else minutes * 60
 
 
-def is_within_duration_limit(
-    duration_seconds: int | None, max_duration_seconds: int
-) -> bool:
+def is_within_duration_limit(duration_seconds: int | None, max_duration_seconds: int) -> bool:
     """True if a video is short enough to download.
 
     Fails *open* on an unknown duration: a probe that couldn't determine length
@@ -123,9 +121,7 @@ def is_within_duration_limit(
     return duration_seconds <= max_duration_seconds
 
 
-def meets_duration_floor(
-    duration_seconds: int | None, min_duration_seconds: int
-) -> bool:
+def meets_duration_floor(duration_seconds: int | None, min_duration_seconds: int) -> bool:
     """True if a video is long enough to be worth archiving.
 
     The floor to ``is_within_duration_limit``'s ceiling, for keeping clips and

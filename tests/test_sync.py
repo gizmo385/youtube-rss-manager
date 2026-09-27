@@ -6,6 +6,7 @@ than on account_id. Otherwise reconnecting an account (new account row) or
 syncing a channel that was added manually tries to INSERT a row that already
 exists. Runs against in-memory SQLite; the YouTube API calls are monkeypatched.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -34,9 +35,7 @@ def _local_settings(monkeypatch):
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine)() as session:
         session.add(User(id=USER_ID, oidc_sub="s", email="e"))
@@ -81,11 +80,14 @@ def test_resync_adopts_manual_and_stale_rows_without_pk_collision(db, monkeypatc
     db.add(Subscription(user_id=USER_ID, channel_id="UCgone00000000000000000", account_id=2))
     db.commit()
 
-    _patch_fetch(monkeypatch, [
-        "UCmanual0000000000000",   # was manual  -> adopt
-        "UColdacct0000000000000",  # was acct 99 -> adopt
-        "UCbrandnew00000000000",   # new         -> insert
-    ])
+    _patch_fetch(
+        monkeypatch,
+        [
+            "UCmanual0000000000000",  # was manual  -> adopt
+            "UColdacct0000000000000",  # was acct 99 -> adopt
+            "UCbrandnew00000000000",  # new         -> insert
+        ],
+    )
 
     # Must not raise IntegrityError.
     count = sync_mod.sync_account(acct, db, get_settings())
@@ -93,9 +95,9 @@ def test_resync_adopts_manual_and_stale_rows_without_pk_collision(db, monkeypatc
 
     assert count == 3
     subs = {s.channel_id: s for s in db.query(Subscription).all()}
-    assert subs["UCmanual0000000000000"].account_id == 2   # adopted
+    assert subs["UCmanual0000000000000"].account_id == 2  # adopted
     assert subs["UColdacct0000000000000"].account_id == 2  # adopted
-    assert "UCbrandnew00000000000" in subs                 # inserted
+    assert "UCbrandnew00000000000" in subs  # inserted
     # The stale row this account owned but no longer sees is removed.
     assert "UCgone00000000000000000" not in subs
 

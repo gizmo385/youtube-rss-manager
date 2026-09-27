@@ -43,10 +43,7 @@ _YT = "http://www.youtube.com/xml/schemas/2015"
 _TIMEOUT = 15.0
 
 # YouTube is noticeably friendlier to a browser-like UA than to httpx's default.
-_USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 # Statuses YouTube returns when soft-throttling a busy IP. 404 is included
 # because a throttled feed 404s intermittently (the same channel returns 200
 # moments later), so a retry usually clears it; a genuinely dead channel just
@@ -66,7 +63,7 @@ def _sleep_backoff(base_delay: float, attempt: int) -> None:
     """Exponential backoff with jitter. A no-op when base_delay is 0."""
     if base_delay <= 0:
         return
-    time.sleep(base_delay * (2 ** attempt) + random.uniform(0, base_delay))
+    time.sleep(base_delay * (2**attempt) + random.uniform(0, base_delay))
 
 
 def _fetch_feed(
@@ -126,9 +123,7 @@ def _parse_entries(xml_bytes: bytes) -> list[tuple[str, str, datetime | None]]:
     return out
 
 
-def poll_channel(
-    channel_id: str, db: Session, client: httpx.Client | None = None
-) -> int:
+def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = None) -> int:
     """Fetch one channel's feed and upsert its videos. Returns new video count.
 
     Pass a shared ``client`` when polling many channels; otherwise a throwaway
@@ -137,11 +132,7 @@ def poll_channel(
     settings = get_settings()
     channel = db.get(Channel, channel_id)
     is_nebula = channel is not None and channel.platform == nebula.PLATFORM
-    url = (
-        nebula.feed_url(channel_id)
-        if is_nebula
-        else FEED_URL.format(channel_id=channel_id)
-    )
+    url = nebula.feed_url(channel_id) if is_nebula else FEED_URL.format(channel_id=channel_id)
     platform = nebula.PLATFORM if is_nebula else "youtube"
     channel_attrs = {
         "platform": platform,
@@ -184,11 +175,7 @@ def poll_channel(
         return 0
 
     ids = [e[0] for e in entries]
-    known = set(
-        db.execute(select(Video.video_id).where(Video.video_id.in_(ids)))
-        .scalars()
-        .all()
-    )
+    known = set(db.execute(select(Video.video_id).where(Video.video_id.in_(ids))).scalars().all())
 
     new = 0
     for video_id, title, published in entries:
@@ -208,9 +195,7 @@ def poll_channel(
     return new
 
 
-def _record_poll(
-    channel_attrs: dict[str, str], outcome: str, status: str, started: float
-) -> None:
+def _record_poll(channel_attrs: dict[str, str], outcome: str, status: str, started: float) -> None:
     metrics.feed_polls.add(1, {**channel_attrs, "outcome": outcome, "status": status})
     metrics.feed_poll_duration.record(
         time.monotonic() - started,

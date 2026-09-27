@@ -30,22 +30,14 @@ class User(Base):
     oidc_sub: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(255), server_default="")
-    include_shorts: Mapped[bool] = mapped_column(
-        Boolean, server_default=text("true"), default=True
-    )
-    include_live: Mapped[bool] = mapped_column(
-        Boolean, server_default=text("true"), default=True
-    )
+    include_shorts: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True)
+    include_live: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True)
     # --- Archive preferences (root of the cascade; never NULL) ---------------
-    download_enabled: Mapped[bool] = mapped_column(
-        Boolean, server_default=text("false"), default=False
-    )
+    download_enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False)
     # 0 means "keep everything". Non-zero prunes to the N most recent per
     # channel. NULL is reserved for "inherit" at the category/subscription
     # levels, so the user level uses 0 rather than NULL for unlimited.
-    keep_last_n: Mapped[int] = mapped_column(
-        Integer, server_default=text("15"), default=15
-    )
+    keep_last_n: Mapped[int] = mapped_column(Integer, server_default=text("15"), default=15)
     # The same window for podcast audio, which is ~12x cheaper per episode than
     # the video and so usually wants keeping for longer. NULL means "same as
     # keep_last_n" — the one place a user-level archive pref may be NULL,
@@ -54,53 +46,31 @@ class User(Base):
     keep_last_n_audio: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 0 means "no limit". Videos longer than this are marked skipped rather
     # than downloaded, so six-hour streams don't eat the disk.
-    max_duration_seconds: Mapped[int] = mapped_column(
-        Integer, server_default=text("0"), default=0
-    )
+    max_duration_seconds: Mapped[int] = mapped_column(Integer, server_default=text("0"), default=0)
     # 0 means "no floor" — the default, so nothing is filtered out by length.
     # Non-zero skips anything shorter, for keeping clips and quick updates out
     # of an archive (or a podcast feed) meant for longer-form content.
-    min_duration_seconds: Mapped[int] = mapped_column(
-        Integer, server_default=text("0"), default=0
-    )
-    generate_podcast: Mapped[bool] = mapped_column(
-        Boolean, server_default=text("false"), default=False
-    )
+    min_duration_seconds: Mapped[int] = mapped_column(Integer, server_default=text("0"), default=0)
+    generate_podcast: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False)
     # 'youtube' | 'when_ready' | 'hold' — see services/prefs.LinkTarget.
-    link_target: Mapped[str] = mapped_column(
-        String(16), server_default="youtube", default="youtube"
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    link_target: Mapped[str] = mapped_column(String(16), server_default="youtube", default="youtube")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    youtube_accounts: Mapped[list["YoutubeAccount"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
-    categories: Mapped[list["Category"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
+    youtube_accounts: Mapped[list["YoutubeAccount"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    categories: Mapped[list["Category"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class YoutubeAccount(Base):
     __tablename__ = "youtube_accounts"
-    __table_args__ = (
-        UniqueConstraint("user_id", "channel_id", name="uq_user_channel"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "channel_id", name="uq_user_channel"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     channel_id: Mapped[str] = mapped_column(String(64))
     channel_title: Mapped[str] = mapped_column(String(255), server_default="")
     refresh_token_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
-    last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="youtube_accounts")
 
@@ -112,9 +82,7 @@ class Channel(Base):
     # 'youtube' | 'nebula'. Nebula channels (ids ``nebula:{slug}``) are
     # feed-only: no account sync, no Shorts/live filtering and no archive — see
     # youtube_subs_opml.nebula.
-    platform: Mapped[str] = mapped_column(
-        String(16), server_default="youtube", default="youtube"
-    )
+    platform: Mapped[str] = mapped_column(String(16), server_default="youtube", default="youtube")
     title: Mapped[str] = mapped_column(String(255), server_default="")
     description: Mapped[str] = mapped_column(Text, server_default="")
     # Channel avatar and banner URLs, used as Jellyfin series/season posters and
@@ -124,31 +92,21 @@ class Channel(Base):
     thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     banner_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Native array on Postgres; JSON on SQLite (for local/dev use).
-    youtube_topics: Mapped[list[str] | None] = mapped_column(
-        ARRAY(String).with_variant(JSON, "sqlite"), nullable=True
-    )
-    last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    youtube_topics: Mapped[list[str] | None] = mapped_column(ARRAY(String).with_variant(JSON, "sqlite"), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     channel_id: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("channels.channel_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    account_id: Mapped[int | None] = mapped_column(
-        ForeignKey("youtube_accounts.id", ondelete="CASCADE"), nullable=True
-    )
-    ignored: Mapped[bool] = mapped_column(
-        Boolean, server_default=text("false"), default=False
-    )
+    account_id: Mapped[int | None] = mapped_column(ForeignKey("youtube_accounts.id", ondelete="CASCADE"), nullable=True)
+    ignored: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False)
     include_shorts: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     include_live: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # NULL == inherit from category, then user.
@@ -161,21 +119,15 @@ class Subscription(Base):
     min_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     generate_podcast: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     link_target: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Category(Base):
     __tablename__ = "categories"
-    __table_args__ = (
-        UniqueConstraint("user_id", "slug", name="uq_user_slug"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "slug", name="uq_user_slug"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str] = mapped_column(String(255))
     include_shorts: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -190,9 +142,7 @@ class Category(Base):
     min_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     generate_podcast: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     link_target: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="categories")
 
@@ -210,12 +160,8 @@ class ChannelCategory(Base):
 
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     channel_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    category_id: Mapped[int] = mapped_column(
-        ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class VideoShort(Base):
@@ -229,9 +175,7 @@ class VideoShort(Base):
 
     video_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     is_short: Mapped[bool] = mapped_column(Boolean)
-    checked_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class VideoLiveStatus(Base):
@@ -246,9 +190,7 @@ class VideoLiveStatus(Base):
 
     video_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     status: Mapped[str] = mapped_column(String(16))
-    checked_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Video(Base):
@@ -272,18 +214,14 @@ class Video(Base):
         index=True,
     )
     title: Mapped[str] = mapped_column(String(512), server_default="")
-    published_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, index=True
-    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     # Filled in by the downloader's metadata probe, not by the poller: the RSS
     # feed doesn't carry duration. NULL means "not probed yet".
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Also filled by the probe; surfaced as podcast episode notes. NULL means
     # "not probed yet"; an empty string means the video genuinely has none.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Download(Base):
@@ -309,17 +247,13 @@ class Download(Base):
         ForeignKey("videos.video_id", ondelete="CASCADE"),
         primary_key=True,
     )
-    status: Mapped[str] = mapped_column(
-        String(16), server_default="pending", default="pending", index=True
-    )
+    status: Mapped[str] = mapped_column(String(16), server_default="pending", default="pending", index=True)
     # Why a row is terminal-but-not-complete: 'too_long' | 'unavailable' |
     # 'members_only' | 'no_subscribers' — kept so we don't re-probe forever.
     skip_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, server_default=text("0"), default=0)
     # Retry backoff: the worker ignores pending rows until this passes.
-    next_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -332,12 +266,8 @@ class Download(Base):
     # each subscriber's own library, so it has a distinct item id per user. That
     # mapping lives on DownloadLink.
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DownloadLink(Base):
@@ -356,9 +286,7 @@ class DownloadLink(Base):
 
     __tablename__ = "download_links"
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     video_id: Mapped[str] = mapped_column(
         String(32),
         ForeignKey("downloads.video_id", ondelete="CASCADE"),
@@ -371,12 +299,8 @@ class DownloadLink(Base):
     # This user's Jellyfin item id, set after their library is scanned (Phase 3).
     # Distinct from any other user's id for the same underlying file.
     jellyfin_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    linked_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    linked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class JellyfinAccount(Base):
@@ -401,12 +325,8 @@ class JellyfinAccount(Base):
     base_url: Mapped[str] = mapped_column(String(512))
     api_key_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
     jellyfin_user_id: Mapped[str] = mapped_column(String(64), server_default="")
-    last_verified_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class CategoryPlaylist(Base):
@@ -420,19 +340,11 @@ class CategoryPlaylist(Base):
 
     __tablename__ = "category_playlists"
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    category_id: Mapped[int] = mapped_column(
-        ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id", ondelete="CASCADE"), primary_key=True)
     playlist_id: Mapped[str] = mapped_column(String(64))
-    last_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class ChannelFeedCache(Base):
@@ -455,19 +367,13 @@ class ChannelFeedCache(Base):
         primary_key=True,
     )
     xml: Mapped[bytes] = mapped_column(LargeBinary)
-    fetched_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class OpmlToken(Base):
     __tablename__ = "opml_tokens"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), unique=True
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True)
     token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

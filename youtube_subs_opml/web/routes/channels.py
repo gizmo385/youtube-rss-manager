@@ -118,14 +118,18 @@ def _effective(sub, cats: list[Category], user: User, key: str):
 
 def _channel_ids_with_failures(user: User, db: Session) -> set[str]:
     """Channel ids that have at least one failed download (for the list badge)."""
-    rows = db.execute(
-        select(Video.channel_id)
-        .select_from(Download)
-        .join(Video, Video.video_id == Download.video_id)
-        .join(Subscription, Subscription.channel_id == Video.channel_id)
-        .where(Subscription.user_id == user.id, Download.status == "failed")
-        .distinct()
-    ).scalars().all()
+    rows = (
+        db.execute(
+            select(Video.channel_id)
+            .select_from(Download)
+            .join(Video, Video.video_id == Download.video_id)
+            .join(Subscription, Subscription.channel_id == Video.channel_id)
+            .where(Subscription.user_id == user.id, Download.status == "failed")
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
     return set(rows)
 
 
@@ -145,14 +149,12 @@ def _channel_records(user: User, db: Session) -> tuple[list[dict], list[Category
         .order_by(Channel.title)
     ).all()
 
-    categories = list(db.execute(
-        select(Category).where(Category.user_id == user.id).order_by(Category.name)
-    ).scalars().all())
+    categories = list(
+        db.execute(select(Category).where(Category.user_id == user.id).order_by(Category.name)).scalars().all()
+    )
     cat_by_id = {c.id: c for c in categories}
 
-    assignments = db.execute(
-        select(ChannelCategory).where(ChannelCategory.user_id == user.id)
-    ).scalars().all()
+    assignments = db.execute(select(ChannelCategory).where(ChannelCategory.user_id == user.id)).scalars().all()
     channel_cats: dict[str, list[Category]] = {}
     for a in assignments:
         cat = cat_by_id.get(a.category_id)
@@ -168,18 +170,20 @@ def _channel_records(user: User, db: Session) -> tuple[list[dict], list[Category
         cats = channel_cats.get(ch.channel_id, [])
         is_nebula = ch.platform == nebula.PLATFORM
         archive_on, _ = _effective(sub, cats, user, "download_enabled")
-        records.append({
-            "channel_id": ch.channel_id,
-            "title": ch.title,
-            "ignored": sub.ignored,
-            "cats": cats,
-            "cat_count": len(cats),
-            # Nebula can't be downloaded, whatever the inherited pref says.
-            "archive_on": bool(archive_on) and not is_nebula,
-            "is_nebula": is_nebula,
-            "has_failure": ch.channel_id in failures,
-            "is_manual": sub.account_id is None,
-        })
+        records.append(
+            {
+                "channel_id": ch.channel_id,
+                "title": ch.title,
+                "ignored": sub.ignored,
+                "cats": cats,
+                "cat_count": len(cats),
+                # Nebula can't be downloaded, whatever the inherited pref says.
+                "archive_on": bool(archive_on) and not is_nebula,
+                "is_nebula": is_nebula,
+                "has_failure": ch.channel_id in failures,
+                "is_manual": sub.account_id is None,
+            }
+        )
     return records, categories
 
 
@@ -222,12 +226,14 @@ def _build_list_context(user: User, db: Session, selected: str | None, filt: str
 
     ignored = [r for r in pool if r["ignored"]]
     if ignored:
-        groups.append({
-            "name": "Ignored",
-            "count": len(ignored),
-            "channels": ignored,
-            "is_ignored": True,
-        })
+        groups.append(
+            {
+                "name": "Ignored",
+                "count": len(ignored),
+                "channels": ignored,
+                "is_ignored": True,
+            }
+        )
 
     return {
         "groups": groups,
@@ -271,8 +277,7 @@ def _pref_choice(sub, cats, user, key, label, opts):
     if own is None:
         inherited = _inherited_value(cats, user, key)
         hint = next(
-            (opt_label for opt_label, _val, raw in opts
-             if raw is not None and raw == inherited),
+            (opt_label for opt_label, _val, raw in opts if raw is not None and raw == inherited),
             None,
         )
 
@@ -309,8 +314,7 @@ def _or(value, fallback):
     return fallback if value is None else value
 
 
-def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False,
-                 inherited=_UNSET):
+def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False, inherited=_UNSET):
     """A numeric pref row. Blank means inherit; the placeholder shows the
     inherited value so the effective number is visible without extra subtext.
 
@@ -407,15 +411,19 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         return None
     sub, ch = row
 
-    cats = db.execute(
-        select(Category)
-        .join(ChannelCategory, ChannelCategory.category_id == Category.id)
-        .where(
-            ChannelCategory.user_id == user.id,
-            ChannelCategory.channel_id == channel_id,
+    cats = (
+        db.execute(
+            select(Category)
+            .join(ChannelCategory, ChannelCategory.category_id == Category.id)
+            .where(
+                ChannelCategory.user_id == user.id,
+                ChannelCategory.channel_id == channel_id,
+            )
+            .order_by(Category.name)
         )
-        .order_by(Category.name)
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     cats = list(cats)
 
     # Disk + count over completed downloads for this channel.
@@ -441,19 +449,14 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
 
     # Assignable categories (not already assigned).
     assigned_ids = {c.id for c in cats}
-    all_categories = db.execute(
-        select(Category).where(Category.user_id == user.id).order_by(Category.name)
-    ).scalars().all()
+    all_categories = (
+        db.execute(select(Category).where(Category.user_id == user.id).order_by(Category.name)).scalars().all()
+    )
     assignable = [c for c in all_categories if c.id not in assigned_ids]
 
-    token = db.execute(
-        select(OpmlToken).where(OpmlToken.user_id == user.id)
-    ).scalar_one_or_none()
+    token = db.execute(select(OpmlToken).where(OpmlToken.user_id == user.id)).scalar_one_or_none()
     base_url = get_settings().base_url
-    feed_url = (
-        f"{base_url}/feed/{token.token}/{channel_id}.xml"
-        if token else None
-    )
+    feed_url = f"{base_url}/feed/{token.token}/{channel_id}.xml" if token else None
 
     tri = [("Inherit", "inherit", None), ("On", "true", True), ("Off", "false", False)]
     incl = [("Inherit", "inherit", None), ("Include", "true", True), ("Exclude", "false", False)]
@@ -496,13 +499,36 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         ],
         "archive_numbers": [
             _pref_number(sub, cats, user, "keep_last_n", "Keep last N", "videos", "Blank inherits"),
-            _pref_number(sub, cats, user, "keep_last_n_audio", "Keep audio", "episodes",
-                         "Blank matches the video window, 0 = keep everything",
-                         inherited=_inherited_audio_keep(cats, user)),
-            _pref_number(sub, cats, user, "max_duration_seconds", "Max duration", "min",
-                         "Blank inherits, 0 = no limit", minutes=True),
-            _pref_number(sub, cats, user, "min_duration_seconds", "Min duration", "min",
-                         "Blank inherits, 0 = no floor", minutes=True),
+            _pref_number(
+                sub,
+                cats,
+                user,
+                "keep_last_n_audio",
+                "Keep audio",
+                "episodes",
+                "Blank matches the video window, 0 = keep everything",
+                inherited=_inherited_audio_keep(cats, user),
+            ),
+            _pref_number(
+                sub,
+                cats,
+                user,
+                "max_duration_seconds",
+                "Max duration",
+                "min",
+                "Blank inherits, 0 = no limit",
+                minutes=True,
+            ),
+            _pref_number(
+                sub,
+                cats,
+                user,
+                "min_duration_seconds",
+                "Min duration",
+                "min",
+                "Blank inherits, 0 = no floor",
+                minutes=True,
+            ),
         ],
         "archive_choices": [
             _pref_choice(sub, cats, user, "generate_podcast", "Podcast audio", tri),
@@ -545,17 +571,11 @@ def _overview_context(user: User, db: Session) -> dict:
     ).all()
     counts = {status: count for status, count, _ in status_rows}
     disk = sum(size for status, _, size in status_rows if status == "complete")
-    pending = sum(
-        count for status, count, _ in status_rows
-        if status not in ("complete", "failed", "skipped")
-    )
+    pending = sum(count for status, count, _ in status_rows if status not in ("complete", "failed", "skipped"))
 
     # Category breakdown, biggest first, with a bar width relative to the
     # largest category so the shape of the library reads at a glance.
-    breakdown = [
-        {"name": cat.name, "count": len([r for r in live if cat in r["cats"]])}
-        for cat in categories
-    ]
+    breakdown = [{"name": cat.name, "count": len([r for r in live if cat in r["cats"]])} for cat in categories]
     breakdown.sort(key=lambda c: (-c["count"], c["name"].lower()))
     widest = max([c["count"] for c in breakdown] + [1])
     for row in breakdown:
@@ -564,26 +584,32 @@ def _overview_context(user: User, db: Session) -> dict:
     # Actionable items, each a jump into the matching list filter.
     attention = []
     if failing:
-        attention.append({
-            "filter": "Failed",
-            "label": f"{len(failing)} channel{'' if len(failing) == 1 else 's'} with a failed download",
-            "hint": "Retry or inspect them in Settings › Downloads.",
-            "urgent": True,
-        })
+        attention.append(
+            {
+                "filter": "Failed",
+                "label": f"{len(failing)} channel{'' if len(failing) == 1 else 's'} with a failed download",
+                "hint": "Retry or inspect them in Settings › Downloads.",
+                "urgent": True,
+            }
+        )
     if uncategorized:
-        attention.append({
-            "filter": "Uncategorized",
-            "label": f"{len(uncategorized)} channel{'' if len(uncategorized) == 1 else 's'} not in a category",
-            "hint": "Uncategorized channels only appear in the all-channels feed.",
-            "urgent": False,
-        })
+        attention.append(
+            {
+                "filter": "Uncategorized",
+                "label": f"{len(uncategorized)} channel{'' if len(uncategorized) == 1 else 's'} not in a category",
+                "hint": "Uncategorized channels only appear in the all-channels feed.",
+                "urgent": False,
+            }
+        )
     if not categories:
-        attention.append({
-            "filter": None,
-            "label": "No categories yet",
-            "hint": "Categories become per-topic OPML feeds and group archive settings.",
-            "urgent": False,
-        })
+        attention.append(
+            {
+                "filter": None,
+                "label": "No categories yet",
+                "hint": "Categories become per-topic OPML feeds and group archive settings.",
+                "urgent": False,
+            }
+        )
 
     last_video = db.execute(
         select(func.max(Video.published_at))
@@ -593,13 +619,10 @@ def _overview_context(user: User, db: Session) -> dict:
     ).scalar_one_or_none()
 
     last_synced = db.execute(
-        select(func.max(YoutubeAccount.last_synced_at))
-        .where(YoutubeAccount.user_id == user.id)
+        select(func.max(YoutubeAccount.last_synced_at)).where(YoutubeAccount.user_id == user.id)
     ).scalar_one_or_none()
 
-    token = db.execute(
-        select(OpmlToken).where(OpmlToken.user_id == user.id)
-    ).scalar_one_or_none()
+    token = db.execute(select(OpmlToken).where(OpmlToken.user_id == user.id)).scalar_one_or_none()
     base_url = get_settings().base_url
 
     return {
@@ -693,9 +716,7 @@ def _build_board_context(user: User, db: Session) -> dict:
         .where(Subscription.user_id == user.id)
         .order_by(Channel.title)
     ).all()
-    assignments = db.execute(
-        select(ChannelCategory).where(ChannelCategory.user_id == user.id)
-    ).scalars().all()
+    assignments = db.execute(select(ChannelCategory).where(ChannelCategory.user_id == user.id)).scalars().all()
     cats_by_channel: dict[str, list[int]] = {}
     for a in assignments:
         cats_by_channel.setdefault(a.channel_id, []).append(a.category_id)
@@ -788,9 +809,7 @@ def channel_detail_partial(
     detail = _channel_detail(user, db, channel_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Channel not found")
-    return templates.TemplateResponse(
-        request, "partials/channel_detail.html", context={"user": user, "detail": detail}
-    )
+    return templates.TemplateResponse(request, "partials/channel_detail.html", context={"user": user, "detail": detail})
 
 
 @router.get("/board")
@@ -850,11 +869,13 @@ async def move_channel(
             )
         ).scalar_one_or_none()
         if existing is None:
-            db.add(ChannelCategory(
-                user_id=user.id,
-                channel_id=str(channel_id),
-                category_id=to_id,
-            ))
+            db.add(
+                ChannelCategory(
+                    user_id=user.id,
+                    channel_id=str(channel_id),
+                    category_id=to_id,
+                )
+            )
 
     db.commit()
 
@@ -890,11 +911,13 @@ async def assign_channels(
             )
         ).scalar_one_or_none()
         if existing is None:
-            db.add(ChannelCategory(
-                user_id=user.id,
-                channel_id=str(cid),
-                category_id=category_id,
-            ))
+            db.add(
+                ChannelCategory(
+                    user_id=user.id,
+                    channel_id=str(cid),
+                    category_id=category_id,
+                )
+            )
 
     db.commit()
     return _write_response(request, form, user, db, grouping_changed=True)
@@ -1060,15 +1083,17 @@ async def add_manual_channel(
 
     channel = db.get(Channel, resolved.channel_id)
     if channel is None:
-        db.add(Channel(
-            channel_id=resolved.channel_id,
-            platform=resolved.platform,
-            title=resolved.title,
-            description=resolved.description,
-            youtube_topics=resolved.topics,
-            thumbnail_url=resolved.thumbnail_url,
-            banner_url=resolved.banner_url,
-        ))
+        db.add(
+            Channel(
+                channel_id=resolved.channel_id,
+                platform=resolved.platform,
+                title=resolved.title,
+                description=resolved.description,
+                youtube_topics=resolved.topics,
+                thumbnail_url=resolved.thumbnail_url,
+                banner_url=resolved.banner_url,
+            )
+        )
     else:
         channel.title = resolved.title
         # The public resolver has no description or topics; keep whatever a
@@ -1089,11 +1114,13 @@ async def add_manual_channel(
         )
     ).scalar_one_or_none()
     if existing is None:
-        db.add(Subscription(
-            user_id=user.id,
-            channel_id=resolved.channel_id,
-            account_id=None,
-        ))
+        db.add(
+            Subscription(
+                user_id=user.id,
+                channel_id=resolved.channel_id,
+                account_id=None,
+            )
+        )
 
     db.commit()
 
@@ -1102,6 +1129,7 @@ async def add_manual_channel(
         # here rather than waiting on a sweep that may be stuck behind YouTube.
         # Best-effort: a failure just leaves it to the next sweep.
         from ..services.poller import poll_channel
+
         try:
             poll_channel(resolved.channel_id, db)
             db.commit()
@@ -1113,6 +1141,7 @@ async def add_manual_channel(
         # doesn't 503 until a sweep reaches it. Not inline: under throttling a
         # YouTube fetch with retries can hold the request for tens of seconds.
         from ..services.scheduler import warm_new_channels_soon
+
         warm_new_channels_soon()
 
     filt = form.get("filter") or "All"
@@ -1128,9 +1157,7 @@ def _resolve_nebula(raw: str):
 
 def _resolve_youtube(raw: str, user: User, db: Session):
     """Resolve ``raw`` as a YouTube channel, raising a 400 if it can't be."""
-    account = db.execute(
-        select(YoutubeAccount).where(YoutubeAccount.user_id == user.id).limit(1)
-    ).scalar_one_or_none()
+    account = db.execute(select(YoutubeAccount).where(YoutubeAccount.user_id == user.id).limit(1)).scalar_one_or_none()
 
     # A connected account gets us description and topics, so try the API first.
     # Any failure there (revoked token, quota, a handle the API can't find) is
@@ -1138,9 +1165,7 @@ def _resolve_youtube(raw: str, user: User, db: Session):
     resolved = None
     if account is not None:
         try:
-            creds = build_google_credentials(
-                decrypt_token(account.refresh_token_encrypted), get_settings()
-            )
+            creds = build_google_credentials(decrypt_token(account.refresh_token_encrypted), get_settings())
             resolved = resolve_channel(creds, raw)
         except RefreshError:
             logger.warning(

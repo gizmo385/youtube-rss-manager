@@ -27,9 +27,7 @@ def _sub_data(ch: Channel) -> SubData:
 
 
 def _validate_token(token: str, db: Session) -> OpmlToken:
-    opml_token = db.execute(
-        select(OpmlToken).where(OpmlToken.token == token)
-    ).scalar_one_or_none()
+    opml_token = db.execute(select(OpmlToken).where(OpmlToken.token == token)).scalar_one_or_none()
     if opml_token is None:
         raise HTTPException(status_code=404)
     return opml_token
@@ -44,15 +42,19 @@ def opml_all(
 
     # Every channel routes through the feed proxy, which resolves the Shorts
     # cascade at request time — so the OPML only needs the channel list here.
-    channels = db.execute(
-        select(Channel)
-        .join(Subscription, Subscription.channel_id == Channel.channel_id)
-        .where(
-            Subscription.user_id == opml_token.user_id,
-            Subscription.ignored == False,  # noqa: E712
+    channels = (
+        db.execute(
+            select(Channel)
+            .join(Subscription, Subscription.channel_id == Channel.channel_id)
+            .where(
+                Subscription.user_id == opml_token.user_id,
+                Subscription.ignored == False,  # noqa: E712
+            )
+            .order_by(Channel.title)
         )
-        .order_by(Channel.title)
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     subs = [_sub_data(ch) for ch in channels]
     xml = build_opml(
@@ -81,26 +83,30 @@ def opml_by_category(
     if category is None:
         raise HTTPException(status_code=404)
 
-    channels = db.execute(
-        select(Channel)
-        .join(
-            ChannelCategory,
-            ChannelCategory.channel_id == Channel.channel_id,
+    channels = (
+        db.execute(
+            select(Channel)
+            .join(
+                ChannelCategory,
+                ChannelCategory.channel_id == Channel.channel_id,
+            )
+            .join(
+                Subscription,
+                and_(
+                    Subscription.user_id == ChannelCategory.user_id,
+                    Subscription.channel_id == ChannelCategory.channel_id,
+                ),
+            )
+            .where(
+                ChannelCategory.category_id == category.id,
+                ChannelCategory.user_id == opml_token.user_id,
+                Subscription.ignored == False,  # noqa: E712
+            )
+            .order_by(Channel.title)
         )
-        .join(
-            Subscription,
-            and_(
-                Subscription.user_id == ChannelCategory.user_id,
-                Subscription.channel_id == ChannelCategory.channel_id,
-            ),
-        )
-        .where(
-            ChannelCategory.category_id == category.id,
-            ChannelCategory.user_id == opml_token.user_id,
-            Subscription.ignored == False,  # noqa: E712
-        )
-        .order_by(Channel.title)
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     subs = [_sub_data(ch) for ch in channels]
     xml = build_opml(

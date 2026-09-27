@@ -51,21 +51,23 @@ def _parse_channel_input(value: str) -> tuple[str, str]:
     if _CHANNEL_ID_RE.match(value):
         return "id", value
 
-    if value.startswith(("http://", "https://", "//")) or value.startswith("youtube.com") or value.startswith("www.youtube.com"):
+    if (
+        value.startswith(("http://", "https://", "//"))
+        or value.startswith("youtube.com")
+        or value.startswith("www.youtube.com")
+    ):
         url = value if "://" in value else "https://" + value.lstrip("/")
         parsed = urlparse(url)
         path = parsed.path.strip("/")
         if path.startswith("channel/"):
-            cid = path[len("channel/"):].split("/", 1)[0]
+            cid = path[len("channel/") :].split("/", 1)[0]
             if _CHANNEL_ID_RE.match(cid):
                 return "id", cid
             raise ChannelLookupError(f"Invalid channel id in URL: {cid}")
         if path.startswith("@"):
             handle = path.split("/", 1)[0]
             return "handle", handle
-        raise ChannelLookupError(
-            "Unsupported URL format. Use a /channel/UC... or /@handle URL."
-        )
+        raise ChannelLookupError("Unsupported URL format. Use a /channel/UC... or /@handle URL.")
 
     if value.startswith("@") or _HANDLE_RE.match(value):
         handle = value if value.startswith("@") else "@" + value
@@ -103,9 +105,7 @@ def resolve_channel(creds: Credentials, value: str) -> ResolvedChannel:
     )
 
 
-def fetch_channel_topics(
-    creds: Credentials, channel_ids: list[str]
-) -> dict[str, list[str]]:
+def fetch_channel_topics(creds: Credentials, channel_ids: list[str]) -> dict[str, list[str]]:
     """Fetch topic categories for channels. Returns {channel_id: [topic_name, ...]}."""
     youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
     result: dict[str, list[str]] = {}
@@ -113,11 +113,7 @@ def fetch_channel_topics(
     # API allows up to 50 IDs per request
     for i in range(0, len(channel_ids), 50):
         batch = channel_ids[i : i + 50]
-        response = (
-            youtube.channels()
-            .list(part="topicDetails", id=",".join(batch))
-            .execute()
-        )
+        response = youtube.channels().list(part="topicDetails", id=",".join(batch)).execute()
         for item in response.get("items", []):
             topic_details = item.get("topicDetails", {})
             categories = topic_details.get("topicCategories", [])

@@ -1,4 +1,5 @@
 """Manual channel adds: API lookup when possible, public resolver as fallback."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -19,12 +20,8 @@ from youtube_subs_opml.web.routes import channels
 from youtube_subs_opml.web.services import scheduler
 from youtube_subs_opml.youtube import ChannelLookupError, ResolvedChannel
 
-API_RESULT = ResolvedChannel(
-    channel_id="UCnew", title="From API", description="api desc", topics=["Science"]
-)
-PUBLIC_RESULT = ResolvedChannel(
-    channel_id="UCnew", title="From RSS", description="", topics=None
-)
+API_RESULT = ResolvedChannel(channel_id="UCnew", title="From API", description="api desc", topics=["Science"])
+PUBLIC_RESULT = ResolvedChannel(channel_id="UCnew", title="From RSS", description="", topics=None)
 
 
 @pytest.fixture
@@ -35,9 +32,7 @@ def calls():
 
 @pytest.fixture
 def session_factory():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     TestingSession = sessionmaker(bind=engine)
     with TestingSession() as s:
@@ -48,9 +43,7 @@ def session_factory():
 
 @pytest.fixture
 def client(monkeypatch, calls, session_factory):
-    monkeypatch.setattr(
-        channels, "get_settings", lambda: SimpleNamespace(base_url="http://test")
-    )
+    monkeypatch.setattr(channels, "get_settings", lambda: SimpleNamespace(base_url="http://test"))
     # Credentials and the warm job are irrelevant to what's under test.
     monkeypatch.setattr(channels, "decrypt_token", lambda blob: "refresh-token")
     monkeypatch.setattr(channels, "build_google_credentials", lambda tok, s: object())
@@ -81,11 +74,7 @@ def client(monkeypatch, calls, session_factory):
 
 def connect_account(session_factory):
     with session_factory() as s:
-        s.add(
-            YoutubeAccount(
-                id=1, user_id=1, channel_id="UCme", refresh_token_encrypted=b"x"
-            )
-        )
+        s.add(YoutubeAccount(id=1, user_id=1, channel_id="UCme", refresh_token_encrypted=b"x"))
         s.commit()
 
 
@@ -143,9 +132,7 @@ def test_add_with_account_prefers_the_api(client, calls, monkeypatch, session_fa
     ],
     ids=["revoked-token", "api-miss", "network", "other"],
 )
-def test_api_failure_falls_back_to_public(
-    client, calls, monkeypatch, session_factory, exc
-):
+def test_api_failure_falls_back_to_public(client, calls, monkeypatch, session_factory, exc):
     connect_account(session_factory)
     monkeypatch.setattr(channels, "resolve_channel", api_raising(calls, exc))
 
@@ -156,9 +143,7 @@ def test_api_failure_falls_back_to_public(
     assert stored_channel(session_factory).title == "From RSS"
 
 
-def test_fallback_keeps_existing_description_and_topics(
-    client, calls, monkeypatch, session_factory
-):
+def test_fallback_keeps_existing_description_and_topics(client, calls, monkeypatch, session_factory):
     # A channel someone else already added through the API path.
     with session_factory() as s:
         s.add(

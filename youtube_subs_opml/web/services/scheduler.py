@@ -113,8 +113,7 @@ def start_scheduler() -> None:
     )
     scheduler.start()
     logger.info(
-        "Schedulers started (subscription sync every 6h, video poll every %dm, "
-        "Jellyfin sync every %dm)",
+        "Schedulers started (subscription sync every 6h, video poll every %dm, Jellyfin sync every %dm)",
         interval,
         jellyfin_interval,
     )

@@ -16,8 +16,7 @@ _TIMEOUT = 10.0
 # How long to trust a transient (upcoming/live) verdict before re-probing.
 _TRANSIENT_TTL = timedelta(minutes=15)
 _USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
 STATUS_NONE = "none"
@@ -85,13 +84,7 @@ def classify_live(video_ids: list[str], db: Session) -> dict[str, str]:
     if not video_ids:
         return {}
 
-    rows = (
-        db.execute(
-            select(VideoLiveStatus).where(VideoLiveStatus.video_id.in_(video_ids))
-        )
-        .scalars()
-        .all()
-    )
+    rows = db.execute(select(VideoLiveStatus).where(VideoLiveStatus.video_id.in_(video_ids))).scalars().all()
     cached = {row.video_id: row for row in rows}
 
     now = datetime.now(timezone.utc)
@@ -114,9 +107,7 @@ def classify_live(video_ids: list[str], db: Session) -> dict[str, str]:
                     continue
                 row = cached.get(vid)
                 if row is None:
-                    db.add(
-                        VideoLiveStatus(video_id=vid, status=status, checked_at=now)
-                    )
+                    db.add(VideoLiveStatus(video_id=vid, status=status, checked_at=now))
                 else:
                     row.status = status
                     row.checked_at = now

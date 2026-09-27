@@ -1,4 +1,5 @@
 """Channels stage: overview landing, ignore grouping, and the ignore toggle."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -26,13 +27,9 @@ from youtube_subs_opml.web.routes import channels
 def client(monkeypatch):
     # base_url is the only setting these routes touch; stub it so the test
     # doesn't need a full environment.
-    monkeypatch.setattr(
-        channels, "get_settings", lambda: SimpleNamespace(base_url="http://test")
-    )
+    monkeypatch.setattr(channels, "get_settings", lambda: SimpleNamespace(base_url="http://test"))
 
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     TestingSession = sessionmaker(bind=engine)
     with TestingSession() as s:
@@ -98,8 +95,14 @@ def test_detail_offers_a_separate_audio_retention_field(client):
 def test_audio_retention_saves_per_subscription(client):
     resp = client.post(
         "/channels/archive-pref",
-        data={"channel_ids": "UCa", "selected": "UCa", "return": "detail",
-              "field": "keep_last_n_audio", "value": "30", "filter": "All"},
+        data={
+            "channel_ids": "UCa",
+            "selected": "UCa",
+            "return": "detail",
+            "field": "keep_last_n_audio",
+            "value": "30",
+            "filter": "All",
+        },
         headers={"HX-Request": "true"},
     )
     assert resp.status_code == 200
@@ -107,8 +110,14 @@ def test_audio_retention_saves_per_subscription(client):
     # And blanking it goes back to inheriting.
     resp = client.post(
         "/channels/archive-pref",
-        data={"channel_ids": "UCa", "selected": "UCa", "return": "detail",
-              "field": "keep_last_n_audio", "value": "", "filter": "All"},
+        data={
+            "channel_ids": "UCa",
+            "selected": "UCa",
+            "return": "detail",
+            "field": "keep_last_n_audio",
+            "value": "",
+            "filter": "All",
+        },
         headers={"HX-Request": "true"},
     )
     assert 'value="30"' not in resp.text
@@ -132,8 +141,7 @@ def test_ignored_channels_group_at_the_bottom(client):
 def test_ignore_toggle_moves_the_channel_and_reports_state(client):
     resp = client.post(
         "/channels/ignore",
-        data={"channel_ids": "UCa", "selected": "UCa", "return": "detail",
-              "ignored": "true", "filter": "All"},
+        data={"channel_ids": "UCa", "selected": "UCa", "return": "detail", "ignored": "true", "filter": "All"},
         headers={"HX-Request": "true"},
     )
     assert resp.status_code == 200

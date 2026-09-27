@@ -64,7 +64,7 @@ def parse_input(value: str) -> tuple[str, str] | None:
     """
     value = value.strip()
     if value.lower().startswith(ID_PREFIX):
-        slug = value[len(ID_PREFIX):].strip("/")
+        slug = value[len(ID_PREFIX) :].strip("/")
         return ("channel", slug) if slug else None
 
     url = value if "://" in value else "https://" + value.lstrip("/")
@@ -133,9 +133,7 @@ def resolve_channel(value: str) -> ResolvedChannel:
         raise ChannelLookupError(f"'{value}' isn't a Nebula URL")
     kind, slug = parsed
 
-    with httpx.Client(
-        headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT, follow_redirects=True
-    ) as client:
+    with httpx.Client(headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT, follow_redirects=True) as client:
         if kind == "video":
             resp = client.get(_CONTENT_API.format(path=f"videos/{slug}"))
             if resp.status_code == 404:

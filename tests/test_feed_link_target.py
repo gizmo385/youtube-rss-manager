@@ -3,6 +3,7 @@
 Exercises ``feed._filter_feed`` directly with an explicit ``now`` so the
 ``hold`` 48-hour fallback is deterministic, plus the Jellyfin deep-link helper.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -21,16 +22,14 @@ ATOM = "http://www.w3.org/2005/Atom"
 YT = "http://www.youtube.com/xml/schemas/2015"
 JF_BASE = "https://jf.example.com"
 NOW = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
-RECENT = "2026-08-28T06:00:00+00:00"   # 6h before NOW
-AGED = "2026-08-24T00:00:00+00:00"     # >48h before NOW
+RECENT = "2026-08-28T06:00:00+00:00"  # 6h before NOW
+AGED = "2026-08-24T00:00:00+00:00"  # >48h before NOW
 YT_LINK = "https://www.youtube.com/watch?v={vid}"
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(
         engine,
         tables=[t.__table__ for t in (User, Video, Download, DownloadLink)],
@@ -80,15 +79,19 @@ def seed_download(db, vid, status, *, item_id=None):
 
 def _filter(db, xml, link_target, *, base=JF_BASE):
     return feed._filter_feed(
-        xml, db, drop_shorts=False, drop_live=False,
-        link_target=link_target, user_id=1, jellyfin_base=base, now=NOW,
+        xml,
+        db,
+        drop_shorts=False,
+        drop_live=False,
+        link_target=link_target,
+        user_id=1,
+        jellyfin_base=base,
+        now=NOW,
     )
 
 
 def test_deep_link_format():
-    assert feed.jellyfin_deep_link(JF_BASE, "itemA") == (
-        "https://jf.example.com/web/#/details?id=itemA"
-    )
+    assert feed.jellyfin_deep_link(JF_BASE, "itemA") == ("https://jf.example.com/web/#/details?id=itemA")
     # trailing slash on the base is tolerated
     assert feed.jellyfin_deep_link(JF_BASE + "/", "itemA").endswith("/web/#/details?id=itemA")
 
@@ -96,10 +99,12 @@ def test_deep_link_format():
 def test_when_ready_rewrites_only_ready(db):
     seed_download(db, "readyvid0001", "complete", item_id="itemA")
     seed_download(db, "pendingvid01", "pending")
-    xml = build_feed([
-        {"id": "readyvid0001", "published": RECENT},
-        {"id": "pendingvid01", "published": RECENT},
-    ])
+    xml = build_feed(
+        [
+            {"id": "readyvid0001", "published": RECENT},
+            {"id": "pendingvid01", "published": RECENT},
+        ]
+    )
 
     links = links_by_id(_filter(db, xml, "when_ready"))
 
@@ -119,10 +124,12 @@ def test_when_ready_no_jellyfin_base_is_noop(db):
 def test_hold_drops_unready_recent_keeps_ready(db):
     seed_download(db, "readyvid0001", "complete", item_id="itemA")
     seed_download(db, "pendingvid01", "pending")
-    xml = build_feed([
-        {"id": "readyvid0001", "published": RECENT},
-        {"id": "pendingvid01", "published": RECENT},
-    ])
+    xml = build_feed(
+        [
+            {"id": "readyvid0001", "published": RECENT},
+            {"id": "pendingvid01", "published": RECENT},
+        ]
+    )
 
     links = links_by_id(_filter(db, xml, "hold"))
 
@@ -131,12 +138,14 @@ def test_hold_drops_unready_recent_keeps_ready(db):
 
 
 def test_hold_fallback_publishes_aged_and_failed(db):
-    seed_download(db, "oldpendvid01", "pending")   # aged out
-    seed_download(db, "failedvid001", "failed")     # terminal
-    xml = build_feed([
-        {"id": "oldpendvid01", "published": AGED},
-        {"id": "failedvid001", "published": RECENT},
-    ])
+    seed_download(db, "oldpendvid01", "pending")  # aged out
+    seed_download(db, "failedvid001", "failed")  # terminal
+    xml = build_feed(
+        [
+            {"id": "oldpendvid01", "published": AGED},
+            {"id": "failedvid001", "published": RECENT},
+        ]
+    )
 
     links = links_by_id(_filter(db, xml, "hold"))
 

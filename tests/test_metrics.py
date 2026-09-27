@@ -1,5 +1,6 @@
 """OpenTelemetry metrics: what the poller and downloader record, and the
 library snapshot behind the gauges."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -51,8 +52,7 @@ def _points(name: str, **attrs: object) -> list:
             for metric in scope.metrics:
                 if metric.name == name:
                     points += [
-                        p for p in metric.data.data_points
-                        if all(p.attributes.get(k) == v for k, v in attrs.items())
+                        p for p in metric.data.data_points if all(p.attributes.get(k) == v for k, v in attrs.items())
                     ]
     return points
 
@@ -75,9 +75,7 @@ def _settings(monkeypatch):
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     try:
@@ -165,30 +163,38 @@ def _observed(snapshot: dict, name: str, **attrs: str) -> list[float]:
 def test_library_snapshot(db):
     now = datetime(2026, 9, 26, tzinfo=timezone.utc)
     db.add(User(id=1, oidc_sub="sub", email="me@example.com"))
-    db.add_all([
-        Channel(channel_id="UCa", title="Planes"),
-        Channel(channel_id="UCb", title="Trains"),
-        Channel(channel_id="nebula:c", title="Nebby", platform="nebula"),
-    ])
+    db.add_all(
+        [
+            Channel(channel_id="UCa", title="Planes"),
+            Channel(channel_id="UCb", title="Trains"),
+            Channel(channel_id="nebula:c", title="Nebby", platform="nebula"),
+        ]
+    )
     db.flush()
-    db.add_all([
-        Subscription(user_id=1, channel_id="UCa"),
-        Subscription(user_id=1, channel_id="UCb"),
-        Subscription(user_id=1, channel_id="nebula:c", ignored=True),
-        Category(id=10, user_id=1, name="Aviation", slug="aviation"),
-    ])
+    db.add_all(
+        [
+            Subscription(user_id=1, channel_id="UCa"),
+            Subscription(user_id=1, channel_id="UCb"),
+            Subscription(user_id=1, channel_id="nebula:c", ignored=True),
+            Category(id=10, user_id=1, name="Aviation", slug="aviation"),
+        ]
+    )
     db.flush()
     db.add(ChannelCategory(user_id=1, channel_id="UCa", category_id=10))
-    db.add_all([
-        Video(video_id="a1", channel_id="UCa", published_at=now - timedelta(days=2), duration_seconds=30),
-        Video(video_id="a2", channel_id="UCa", published_at=now - timedelta(days=90), duration_seconds=600),
-        Video(video_id="b1", channel_id="UCb", published_at=now - timedelta(days=10)),
-    ])
+    db.add_all(
+        [
+            Video(video_id="a1", channel_id="UCa", published_at=now - timedelta(days=2), duration_seconds=30),
+            Video(video_id="a2", channel_id="UCa", published_at=now - timedelta(days=90), duration_seconds=600),
+            Video(video_id="b1", channel_id="UCb", published_at=now - timedelta(days=10)),
+        ]
+    )
     db.flush()
-    db.add_all([
-        Download(video_id="a1", status="complete", file_size_bytes=1000, audio_size_bytes=50),
-        Download(video_id="a2", status="skipped", skip_reason="too_long"),
-    ])
+    db.add_all(
+        [
+            Download(video_id="a1", status="complete", file_size_bytes=1000, audio_size_bytes=50),
+            Download(video_id="a2", status="skipped", skip_reason="too_long"),
+        ]
+    )
     db.commit()
 
     snap = library_metrics.collect(db, now=now)

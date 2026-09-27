@@ -22,18 +22,14 @@ def register_oauth_clients(settings: Settings) -> None:
         name="oidc",
         client_id=settings.oidc_client_id,
         client_secret=settings.oidc_client_secret,
-        server_metadata_url=(
-            f"{settings.oidc_issuer}/.well-known/openid-configuration"
-        ),
+        server_metadata_url=(f"{settings.oidc_issuer}/.well-known/openid-configuration"),
         client_kwargs={"scope": "openid email profile"},
     )
     oauth.register(
         name="google",
         client_id=settings.youtube_client_id,
         client_secret=settings.youtube_client_secret,
-        server_metadata_url=(
-            "https://accounts.google.com/.well-known/openid-configuration"
-        ),
+        server_metadata_url=("https://accounts.google.com/.well-known/openid-configuration"),
         client_kwargs={
             "scope": "https://www.googleapis.com/auth/youtube.readonly",
         },
@@ -55,9 +51,7 @@ async def callback(request: Request, db: Session = Depends(get_db)) -> RedirectR
     email = userinfo.get("email", "")
     display_name = userinfo.get("name", userinfo.get("preferred_username", ""))
 
-    user = db.execute(
-        select(User).where(User.oidc_sub == sub)
-    ).scalar_one_or_none()
+    user = db.execute(select(User).where(User.oidc_sub == sub)).scalar_one_or_none()
 
     if user is None:
         user = User(oidc_sub=sub, email=email, display_name=display_name)

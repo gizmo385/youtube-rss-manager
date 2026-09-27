@@ -31,16 +31,10 @@ def format_bytes(num: int) -> str:
 def shell_stats(user: User, db: Session) -> dict:
     """Totals for the sub-bar: channel/category counts, archived size, failures."""
     channels = db.execute(
-        select(func.count())
-        .select_from(Subscription)
-        .where(Subscription.user_id == user.id)
+        select(func.count()).select_from(Subscription).where(Subscription.user_id == user.id)
     ).scalar_one()
 
-    categories = db.execute(
-        select(func.count())
-        .select_from(Category)
-        .where(Category.user_id == user.id)
-    ).scalar_one()
+    categories = db.execute(select(func.count()).select_from(Category).where(Category.user_id == user.id)).scalar_one()
 
     # Downloads are global; scope disk + failures to this user's subscriptions.
     status_rows = db.execute(

@@ -20,11 +20,7 @@ def store_feed(db: Session, channel_id: str, xml: bytes) -> None:
     with no new uploads doesn't churn a write on every poll."""
     row = db.get(ChannelFeedCache, channel_id)
     if row is None:
-        db.add(
-            ChannelFeedCache(
-                channel_id=channel_id, xml=xml, fetched_at=datetime.now(timezone.utc)
-            )
-        )
+        db.add(ChannelFeedCache(channel_id=channel_id, xml=xml, fetched_at=datetime.now(timezone.utc)))
     elif row.xml != xml:
         row.xml = xml
         row.fetched_at = datetime.now(timezone.utc)

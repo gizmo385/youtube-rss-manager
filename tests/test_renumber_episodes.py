@@ -3,6 +3,7 @@
 Runs against in-memory SQLite with a real temp media tree so the file renames
 and NFO rewrites are exercised for real.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -31,9 +32,7 @@ PUB = datetime(2026, 3, 15, 9, 0, tzinfo=timezone.utc)  # -> MMDD 315 -> E0315
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     session.add(User(id=1, oidc_sub="s1", email="u1@e"))
@@ -65,14 +64,17 @@ def _seed_old_style_episode(db: Session, media_root: str) -> Path:
     mkv = canon_dir / f"{old_stem}.mkv"
     mkv.write_bytes(b"video-bytes")
     nfo = naming.build_nfo(
-        title="Ep One", channel_title=CHAN_TITLE, published_at=PUB,
-        episode_number=7, description="Cool description", video_id="vid00000001",
+        title="Ep One",
+        channel_title=CHAN_TITLE,
+        published_at=PUB,
+        episode_number=7,
+        description="Cool description",
+        video_id="vid00000001",
     )
     (canon_dir / f"{old_stem}.nfo").write_bytes(nfo)
     (canon_dir / f"{old_stem}-thumb.jpg").write_bytes(b"jpg")
 
-    db.add(Video(video_id="vid00000001", channel_id=CHAN, title="Ep One",
-                 published_at=PUB))
+    db.add(Video(video_id="vid00000001", channel_id=CHAN, title="Ep One", published_at=PUB))
     db.add(Download(video_id="vid00000001", status="complete", file_path=str(mkv)))
 
     # A stale per-user hardlink under the old name, which the migration drops.
@@ -112,8 +114,9 @@ def test_renumber_renames_files_patches_nfo_and_backfills_description(db, tmp_pa
 
     # Stale hardlink and its DownloadLink row removed; reconcile rebuilds later.
     assert db.query(DownloadLink).count() == 0
-    assert not (naming.user_episode_dir(media_root, 1, CHAN_TITLE, PUB)
-                / f"{CHAN_TITLE} - S2026E07 - Ep One.mkv").exists()
+    assert not (
+        naming.user_episode_dir(media_root, 1, CHAN_TITLE, PUB) / f"{CHAN_TITLE} - S2026E07 - Ep One.mkv"
+    ).exists()
 
 
 def test_renumber_follows_the_extracted_audio(db, tmp_path):
@@ -183,10 +186,12 @@ def test_repair_clears_audio_that_is_really_gone(db, tmp_path):
 def test_repair_requeues_an_audio_only_row_with_nothing_left(db, tmp_path):
     """An audio-only download has no video for backfill_audio to work from, so a
     missing .m4a means the row goes back through the queue."""
-    db.add(Video(video_id="vid00000002", channel_id=CHAN, title="Audio Only",
-                 published_at=PUB))
-    db.add(Download(video_id="vid00000002", status="complete", file_path=None,
-                    audio_path=str(tmp_path / "gone.m4a"), attempts=3))
+    db.add(Video(video_id="vid00000002", channel_id=CHAN, title="Audio Only", published_at=PUB))
+    db.add(
+        Download(
+            video_id="vid00000002", status="complete", file_path=None, audio_path=str(tmp_path / "gone.m4a"), attempts=3
+        )
+    )
     db.commit()
 
     assert worker.repair_audio_paths(db) == 1

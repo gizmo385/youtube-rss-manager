@@ -1,6 +1,7 @@
 """Nebula channels: input parsing, lookup, and the feed-only behaviour — polled
 and proxied like YouTube channels, but never filtered or archived. In-memory
 SQLite and mocked HTTP; no network."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -115,7 +116,8 @@ def upstream(monkeypatch):
         return httpx.Response(status, content=body)
 
     monkeypatch.setattr(
-        nebula.httpx, "Client",
+        nebula.httpx,
+        "Client",
         lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
     )
     return routes
@@ -133,7 +135,8 @@ def test_resolve_uses_content_api(upstream):
 
 def test_resolve_video_url_finds_its_channel(upstream):
     upstream["https://content.api.nebula.app/content/videos/tomscott-x/"] = (
-        200, {"type": "video_episode", "channel_slug": "tomscott"},
+        200,
+        {"type": "video_episode", "channel_slug": "tomscott"},
     )
     upstream["https://content.api.nebula.app/content/tomscott/"] = (200, CONTENT)
     assert nebula.resolve_channel("https://nebula.tv/videos/tomscott-x").channel_id == CID
@@ -156,18 +159,24 @@ def test_resolve_falls_back_to_feed_when_api_errors(upstream):
 
 @pytest.fixture
 def session_factory():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine)
     with factory() as s:
         # Every archive feature switched on at the account level, so anything
         # that leaks through to a Nebula channel shows up.
-        s.add(User(
-            id=1, oidc_sub="s", email="e", include_shorts=False, include_live=False,
-            download_enabled=True, generate_podcast=True, link_target="hold",
-        ))
+        s.add(
+            User(
+                id=1,
+                oidc_sub="s",
+                email="e",
+                include_shorts=False,
+                include_live=False,
+                download_enabled=True,
+                generate_podcast=True,
+                link_target="hold",
+            )
+        )
         s.add(OpmlToken(user_id=1, token=TOKEN))
         s.add(Channel(channel_id=CID, platform="nebula", title="Tom Scott: England"))
         s.add(Subscription(user_id=1, channel_id=CID))
@@ -212,9 +221,14 @@ class _FakeClient:
 
 
 def test_poll_caches_nebula_feed_without_recording_videos(db, monkeypatch):
-    monkeypatch.setattr(poller, "get_settings", lambda: SimpleNamespace(
-        poll_max_retries=0, poll_channel_delay_seconds=0,
-    ))
+    monkeypatch.setattr(
+        poller,
+        "get_settings",
+        lambda: SimpleNamespace(
+            poll_max_retries=0,
+            poll_channel_delay_seconds=0,
+        ),
+    )
     client = _FakeClient()
     assert poller.poll_channel(CID, db, client) == 0
     assert client.calls == ["https://rss.nebula.app/video/channels/tomscott.rss"]
@@ -223,9 +237,14 @@ def test_poll_caches_nebula_feed_without_recording_videos(db, monkeypatch):
 
 
 def test_sweep_polls_nebula_first_without_spacing(db, monkeypatch):
-    monkeypatch.setattr(poller, "get_settings", lambda: SimpleNamespace(
-        poll_max_retries=0, poll_channel_delay_seconds=5,
-    ))
+    monkeypatch.setattr(
+        poller,
+        "get_settings",
+        lambda: SimpleNamespace(
+            poll_max_retries=0,
+            poll_channel_delay_seconds=5,
+        ),
+    )
     sleeps: list[float] = []
     monkeypatch.setattr(poller.time, "sleep", sleeps.append)
     for cid in ("UCaaaa", "UCbbbb"):
@@ -290,12 +309,18 @@ def test_add_nebula_channel(session_factory, monkeypatch, upstream):
 
     monkeypatch.setattr(channels, "resolve_channel_public", no_youtube)
     upstream["https://content.api.nebula.app/content/realengineering/"] = (
-        200, {**CONTENT, "slug": "realengineering", "title": "Real Engineering"},
+        200,
+        {**CONTENT, "slug": "realengineering", "title": "Real Engineering"},
     )
     upstream["https://rss.nebula.app/video/channels/realengineering.rss"] = (200, FEED)
-    monkeypatch.setattr(poller, "get_settings", lambda: SimpleNamespace(
-        poll_max_retries=0, poll_channel_delay_seconds=0,
-    ))
+    monkeypatch.setattr(
+        poller,
+        "get_settings",
+        lambda: SimpleNamespace(
+            poll_max_retries=0,
+            poll_channel_delay_seconds=0,
+        ),
+    )
 
     tc = _app(session_factory, channels.router)
     resp = tc.post("/channels/add", data={"channel_input": "https://nebula.tv/realengineering"})

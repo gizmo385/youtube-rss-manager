@@ -3,6 +3,7 @@
 In-memory SQLite; the audio enclosure is backed by a real temp file so the
 range request exercises Starlette's FileResponse for real.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -54,16 +55,20 @@ def audio_file(tmp_path):
 
 @pytest.fixture
 def client(audio_file):
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(
         engine,
         tables=[
             t.__table__
             for t in (
-                User, Channel, Subscription, Category, ChannelCategory,
-                OpmlToken, Video, Download,
+                User,
+                Channel,
+                Subscription,
+                Category,
+                ChannelCategory,
+                OpmlToken,
+                Video,
+                Download,
             )
         ],
     )
@@ -81,23 +86,41 @@ def client(audio_file):
 
         pub = datetime(2026, 8, 20, 9, 0, tzinfo=timezone.utc)
         # Complete + audio -> appears in feed.
-        seed.add(Video(video_id="withaudio001", channel_id=CID, title="Has Audio",
-                       published_at=pub, duration_seconds=3661,
-                       description="First line\nSecond line"))
-        seed.add(Download(video_id="withaudio001", status="complete",
-                          file_path="/c/withaudio001.mkv",
-                          audio_path=str(audio_file), audio_size_bytes=20))
+        seed.add(
+            Video(
+                video_id="withaudio001",
+                channel_id=CID,
+                title="Has Audio",
+                published_at=pub,
+                duration_seconds=3661,
+                description="First line\nSecond line",
+            )
+        )
+        seed.add(
+            Download(
+                video_id="withaudio001",
+                status="complete",
+                file_path="/c/withaudio001.mkv",
+                audio_path=str(audio_file),
+                audio_size_bytes=20,
+            )
+        )
         # Complete but no audio -> excluded.
-        seed.add(Video(video_id="noaudio00001", channel_id=CID, title="No Audio",
-                       published_at=pub))
-        seed.add(Download(video_id="noaudio00001", status="complete",
-                          file_path="/c/noaudio.mkv"))
+        seed.add(Video(video_id="noaudio00001", channel_id=CID, title="No Audio", published_at=pub))
+        seed.add(Download(video_id="noaudio00001", status="complete", file_path="/c/noaudio.mkv"))
         # Different channel, in no category -> only in the all feed.
-        seed.add(Video(video_id="otheraud0001", channel_id=CID2, title="Other Audio",
-                       published_at=pub, duration_seconds=125))
-        seed.add(Download(video_id="otheraud0001", status="complete",
-                          file_path="/c/other.mkv",
-                          audio_path=str(audio_file), audio_size_bytes=20))
+        seed.add(
+            Video(video_id="otheraud0001", channel_id=CID2, title="Other Audio", published_at=pub, duration_seconds=125)
+        )
+        seed.add(
+            Download(
+                video_id="otheraud0001",
+                status="complete",
+                file_path="/c/other.mkv",
+                audio_path=str(audio_file),
+                audio_size_bytes=20,
+            )
+        )
         seed.commit()
 
     def override_db():
@@ -140,7 +163,7 @@ def test_feed_item_shape(client):
     it = by_guid["withaudio001"]
     enc = it.find("enclosure")
     assert enc.get("url").endswith(f"/media/{TOKEN}/withaudio001.m4a")
-    assert enc.get("length") == "20"           # real byte count, not estimated
+    assert enc.get("length") == "20"  # real byte count, not estimated
     assert enc.get("type") == "audio/x-m4a"
     assert it.find(f"{{{ITUNES}}}duration").text == "1:01:01"  # 3661s
     assert it.find("guid").get("isPermaLink") == "false"
@@ -168,9 +191,7 @@ def test_episode_notes_include_description_and_source_link(client):
 
     # A video with no stored description still carries the source link.
     other = by_guid["otheraud0001"]
-    assert other.find("description").text == (
-        "Watch on YouTube: https://www.youtube.com/watch?v=otheraud0001"
-    )
+    assert other.find("description").text == ("Watch on YouTube: https://www.youtube.com/watch?v=otheraud0001")
 
 
 def test_channel_cover_falls_back_to_newest_episode(client):
@@ -205,9 +226,7 @@ def test_media_serves_full_and_range(client):
     assert full.content == b"AUDIODATA-0123456789"
     assert full.headers.get("content-type") == "audio/x-m4a"
 
-    ranged = client.get(
-        f"/media/{TOKEN}/withaudio001.m4a", headers={"Range": "bytes=0-3"}
-    )
+    ranged = client.get(f"/media/{TOKEN}/withaudio001.m4a", headers={"Range": "bytes=0-3"})
     assert ranged.status_code == 206
     assert ranged.content == b"AUDI"
     assert ranged.headers["content-range"] == "bytes 0-3/20"

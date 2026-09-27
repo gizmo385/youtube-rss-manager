@@ -31,6 +31,4 @@ def quickswitch_channels(
         .where(Subscription.user_id == user.id)
         .order_by(func.lower(Channel.title))
     ).all()
-    return JSONResponse(
-        [{"id": cid, "title": title or cid} for cid, title in rows]
-    )
+    return JSONResponse([{"id": cid, "title": title or cid} for cid, title in rows])

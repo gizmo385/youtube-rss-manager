@@ -4,6 +4,7 @@ The real HTTP client can't be unit-tested without a live server; these cover the
 orchestration — path-based item resolution, lazy playlist creation, and the
 add/remove reconcile — which is where the logic lives.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -43,9 +44,7 @@ def _local_settings(monkeypatch):
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     try:
@@ -79,10 +78,7 @@ class FakeJellyfin:
         return pid
 
     def playlist_entries(self, playlist_id, user_id):
-        return [
-            PlaylistEntry(item_id=i, entry_id=e)
-            for e, i in self.playlists.get(playlist_id, {}).items()
-        ]
+        return [PlaylistEntry(item_id=i, entry_id=e) for e, i in self.playlists.get(playlist_id, {}).items()]
 
     def add_to_playlist(self, playlist_id, item_ids, user_id):
         p = self.playlists.setdefault(playlist_id, {})
@@ -103,12 +99,9 @@ class FakeJellyfin:
 
 
 def seed_link(db, video_id, channel_id, link_path, item_id=None, published_at=None):
-    db.add(Video(video_id=video_id, channel_id=channel_id, title=video_id,
-                 published_at=published_at))
+    db.add(Video(video_id=video_id, channel_id=channel_id, title=video_id, published_at=published_at))
     db.add(Download(video_id=video_id, status="complete", file_path="/c/" + video_id))
-    db.add(DownloadLink(
-        user_id=USER, video_id=video_id, link_path=link_path, jellyfin_item_id=item_id
-    ))
+    db.add(DownloadLink(user_id=USER, video_id=video_id, link_path=link_path, jellyfin_item_id=item_id))
     db.commit()
 
 
@@ -120,6 +113,7 @@ def add_category(db, cid, name, channel_ids):
 
 
 # --- item resolution -----------------------------------------------------
+
 
 def test_resolve_item_ids_by_path(db):
     p1 = "/media/youtube/libraries/1/Chan/Season 2026/ep1.mkv"
@@ -143,6 +137,7 @@ def test_resolve_tolerates_separator_differences(db):
 
 
 # --- playlist reconcile --------------------------------------------------
+
 
 def test_reconcile_creates_playlist_and_adds_items(db):
     add_category(db, 1, "Tech", ["chanA"])
@@ -212,6 +207,7 @@ def test_reconcile_removal_failure_is_nonfatal(db):
 
     def boom(*a, **k):
         raise JellyfinError("400")
+
     fake.remove_from_playlist = boom
 
     # Should not raise; the wanted item is still added.
@@ -220,6 +216,7 @@ def test_reconcile_removal_failure_is_nonfatal(db):
 
 
 # --- playlist ordering ---------------------------------------------------
+
 
 def _dated(day: int) -> datetime:
     return datetime(2026, 3, day, tzinfo=timezone.utc)
@@ -299,6 +296,7 @@ def test_reorder_without_removal_support_keeps_membership_intact(db):
 
     def boom(*a, **k):
         raise JellyfinError("400")
+
     fake.remove_from_playlist = boom
 
     jellyfin_sync.reconcile_playlists(db, USER, JF, fake)
@@ -310,13 +308,14 @@ def test_reorder_without_removal_support_keeps_membership_intact(db):
 
 # --- sync_user + sync_all -----------------------------------------------
 
+
 def test_sync_user_refreshes_only_when_unresolved(db):
     add_category(db, 1, "Tech", ["chanA"])
     seed_link(db, "vid1", "chanA", "/p/ep1.mkv")  # unresolved
     fake = FakeJellyfin({"/p/ep1.mkv": "itemA"})
 
     jellyfin_sync.sync_user(db, USER, JF, fake)
-    assert fake.refreshed == 1                       # refreshed because unresolved
+    assert fake.refreshed == 1  # refreshed because unresolved
     assert db.get(DownloadLink, (USER, "vid1")).jellyfin_item_id == "itemA"
     assert fake.items_in(db.get(CategoryPlaylist, (USER, 1)).playlist_id) == {"itemA"}
 
@@ -327,10 +326,14 @@ def test_sync_user_refreshes_only_when_unresolved(db):
 
 
 def test_sync_all_skips_account_without_user_guid(db):
-    db.add(JellyfinAccount(
-        user_id=USER, base_url="https://jf", api_key_encrypted=encrypt_token("k"),
-        jellyfin_user_id="",
-    ))
+    db.add(
+        JellyfinAccount(
+            user_id=USER,
+            base_url="https://jf",
+            api_key_encrypted=encrypt_token("k"),
+            jellyfin_user_id="",
+        )
+    )
     db.commit()
     # No network call should happen (client never built) and nothing errors.
     jellyfin_sync.sync_all(db)

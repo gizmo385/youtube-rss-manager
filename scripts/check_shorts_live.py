@@ -7,6 +7,7 @@ entries are classified as Shorts. Hits the network; needs no DB or Keycloak.
 Usage:
     uv run --extra web python scripts/check_shorts_live.py UC_xxxxxxxxxxxxxxxxxxxx
 """
+
 from __future__ import annotations
 
 import sys

@@ -67,7 +67,7 @@ def _handle_signal(signum, frame) -> None:  # noqa: ANN001
 
 def _backoff(attempts: int) -> datetime:
     """Exponential backoff, capped at 6 hours."""
-    delay = min(2 ** attempts * 60, 6 * 3600)
+    delay = min(2**attempts * 60, 6 * 3600)
     return datetime.now(timezone.utc) + timedelta(seconds=delay)
 
 
@@ -77,24 +77,33 @@ def _backoff(attempts: int) -> datetime:
 # a bot" and other throttling ARE transient and must keep retrying, so they are
 # NOT listed here.
 _TERMINAL_PROBE_ERRORS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("geo_blocked", (
-        "available in your country",       # "not made this video available in your country"
-        "blocked it in your country",
-    )),
-    ("members_only", (
-        "members-only",
-        "available to this channel's members",
-        "join this channel",
-    )),
-    ("unavailable", (
-        "private video",
-        "removed by the uploader",
-        "account associated with this video has been terminated",
-        "video is no longer available",
-        "confirm your age",
-        "age-restricted",
-        "inappropriate for some users",
-    )),
+    (
+        "geo_blocked",
+        (
+            "available in your country",  # "not made this video available in your country"
+            "blocked it in your country",
+        ),
+    ),
+    (
+        "members_only",
+        (
+            "members-only",
+            "available to this channel's members",
+            "join this channel",
+        ),
+    ),
+    (
+        "unavailable",
+        (
+            "private video",
+            "removed by the uploader",
+            "account associated with this video has been terminated",
+            "video is no longer available",
+            "confirm your age",
+            "age-restricted",
+            "inappropriate for some users",
+        ),
+    ),
 )
 
 
@@ -139,11 +148,11 @@ def claim_one(db: Session) -> Download | None:
 def reap_stale(db: Session) -> int:
     """Return crashed-mid-download rows to pending."""
     cutoff = datetime.now(timezone.utc) - _STALE_CLAIM
-    stale = db.execute(
-        select(Download).where(
-            Download.status == "downloading", Download.created_at < cutoff
-        )
-    ).scalars().all()
+    stale = (
+        db.execute(select(Download).where(Download.status == "downloading", Download.created_at < cutoff))
+        .scalars()
+        .all()
+    )
     for row in stale:
         row.status = "pending"
         row.last_error = "reclaimed after stale claim"
@@ -180,13 +189,11 @@ def process(row: Download, db: Session) -> None:
             row.status = "skipped"
             row.skip_reason = terminal
         elif row.attempts >= _MAX_ATTEMPTS:
-            logger.warning("Giving up on %s after %d attempts: %s",
-                           row.video_id, row.attempts, exc)
+            logger.warning("Giving up on %s after %d attempts: %s", row.video_id, row.attempts, exc)
             row.status = "skipped"
             row.skip_reason = "unavailable"
         else:
-            logger.warning("Probe failed for %s (attempt %d): %s",
-                           row.video_id, row.attempts, exc)
+            logger.warning("Probe failed for %s (attempt %d): %s", row.video_id, row.attempts, exc)
             row.status = "pending"
             row.next_attempt_at = _backoff(row.attempts)
         db.commit()
@@ -219,9 +226,7 @@ def process(row: Download, db: Session) -> None:
         db.commit()
         return
 
-    if not is_within_duration_limit(
-        video.duration_seconds, intent.max_duration_seconds
-    ):
+    if not is_within_duration_limit(video.duration_seconds, intent.max_duration_seconds):
         logger.info(
             "Skipping %s: %ss exceeds cap of %ss",
             row.video_id,
@@ -233,9 +238,7 @@ def process(row: Download, db: Session) -> None:
         db.commit()
         return
 
-    if not meets_duration_floor(
-        video.duration_seconds, intent.min_duration_seconds
-    ):
+    if not meets_duration_floor(video.duration_seconds, intent.min_duration_seconds):
         logger.info(
             "Skipping %s: %ss is under the floor of %ss",
             row.video_id,
@@ -264,12 +267,8 @@ def process(row: Download, db: Session) -> None:
     # episode that has aged out of the video window but not the audio one takes
     # the same path.
     episode_number = naming.date_episode_number(video.published_at)
-    basename = naming.episode_basename(
-        channel_title, video.published_at, episode_number, video.title or meta.title
-    )
-    target_dir = naming.canonical_episode_dir(
-        settings.media_root, channel_title, video.published_at
-    )
+    basename = naming.episode_basename(channel_title, video.published_at, episode_number, video.title or meta.title)
+    target_dir = naming.canonical_episode_dir(settings.media_root, channel_title, video.published_at)
     target = target_dir / basename
 
     if wants_video:
@@ -335,8 +334,7 @@ def process(row: Download, db: Session) -> None:
     row.completed_at = datetime.now(timezone.utc)
     row.last_error = None
     db.commit()
-    kind = ("video+audio" if wants_video and wants_audio
-            else "video" if wants_video else "audio")
+    kind = "video+audio" if wants_video and wants_audio else "video" if wants_video else "audio"
     logger.info("Fetched %s (%s)", row.video_id, kind)
 
 
@@ -383,23 +381,15 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
     # Only completed downloads with a real canonical file can be linked.
     completed = {
         d.video_id: d
-        for d in db.execute(
-            select(Download).where(Download.status == "complete")
-        ).scalars().all()
+        for d in db.execute(select(Download).where(Download.status == "complete")).scalars().all()
         if d.file_path
     }
     videos = {v.video_id: v for v in db.execute(select(Video)).scalars().all()}
     channels = {c.channel_id: c for c in db.execute(select(Channel)).scalars().all()}
-    existing = {
-        (link.user_id, link.video_id): link
-        for link in db.execute(select(DownloadLink)).scalars().all()
-    }
+    existing = {(link.user_id, link.video_id): link for link in db.execute(select(DownloadLink)).scalars().all()}
 
     wanted: set[tuple[int, str]] = {
-        (user_id, vid)
-        for user_id, vids in desired.items()
-        for vid in vids
-        if vid in completed
+        (user_id, vid) for user_id, vids in desired.items() for vid in vids if vid in completed
     }
 
     created = removed = 0
@@ -414,9 +404,7 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
         if not src_mkv.exists():
             logger.warning("Canonical file missing, skipping link: %s", src_mkv)
             continue
-        user_dir = naming.user_episode_dir(
-            media_root, user_id, channel_title, video.published_at if video else None
-        )
+        user_dir = naming.user_episode_dir(media_root, user_id, channel_title, video.published_at if video else None)
         try:
             for src in naming.episode_files(src_mkv):
                 naming.hardlink(src, user_dir / src.name)
@@ -464,7 +452,7 @@ def _rename_episode_files(old_mkv: Path, new_stem: str) -> dict[Path, Path]:
     old_stem = old_mkv.stem
     moved: dict[Path, Path] = {}
     for f in naming.episode_files(old_mkv):
-        target = f.with_name(new_stem + f.name[len(old_stem):])
+        target = f.with_name(new_stem + f.name[len(old_stem) :])
         if target == f:
             continue
         f.rename(target)
@@ -490,11 +478,7 @@ def renumber_episodes(db: Session, media_root: str) -> int:
     renamed = 0
     relinked: set[str] = set()
     downloads = [
-        d
-        for d in db.execute(
-            select(Download).where(Download.status == "complete")
-        ).scalars().all()
-        if d.file_path
+        d for d in db.execute(select(Download).where(Download.status == "complete")).scalars().all() if d.file_path
     ]
     for download in downloads:
         video = db.get(Video, download.video_id)
@@ -543,9 +527,7 @@ def renumber_episodes(db: Session, media_root: str) -> int:
     # Drop stale hardlinks for renamed episodes; reconcile_links recreates them
     # from the new canonical names on the next idle pass.
     if relinked:
-        for link in db.execute(
-            select(DownloadLink).where(DownloadLink.video_id.in_(relinked))
-        ).scalars().all():
+        for link in db.execute(select(DownloadLink).where(DownloadLink.video_id.in_(relinked))).scalars().all():
             if link.link_path:
                 _unlink_all(Path(link.link_path))
             db.delete(link)
@@ -576,12 +558,16 @@ def repair_audio_paths(db: Session) -> int:
 
     Returns the number of rows changed.
     """
-    rows = db.execute(
-        select(Download).where(
-            Download.status == "complete",
-            Download.audio_path.is_not(None),
+    rows = (
+        db.execute(
+            select(Download).where(
+                Download.status == "complete",
+                Download.audio_path.is_not(None),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     repaired = 0
     cleared = 0
@@ -589,11 +575,7 @@ def repair_audio_paths(db: Session) -> int:
         if Path(download.audio_path).is_file():
             continue
 
-        candidate = (
-            Path(download.file_path).with_suffix(".m4a")
-            if download.file_path
-            else None
-        )
+        candidate = Path(download.file_path).with_suffix(".m4a") if download.file_path else None
         if candidate is not None and candidate.is_file():
             download.audio_path = str(candidate)
             download.audio_size_bytes = candidate.stat().st_size
@@ -661,9 +643,7 @@ def run_prune(db: Session) -> int:
     """
     video_keep = retained_video_ids(db)
     audio_keep = retained_podcast_ids(db)
-    completed = db.execute(
-        select(Download).where(Download.status == "complete")
-    ).scalars().all()
+    completed = db.execute(select(Download).where(Download.status == "complete")).scalars().all()
 
     deleted = 0
     modified = 0
@@ -722,13 +702,17 @@ def backfill_audio(db: Session, settings) -> int:
     # audio window would otherwise be extracted here and deleted by the very next
     # run_prune, forever.
     audio_keep = retained_podcast_ids(db)
-    rows = db.execute(
-        select(Download).where(
-            Download.status == "complete",
-            Download.audio_path.is_(None),
-            Download.file_path.is_not(None),
+    rows = (
+        db.execute(
+            select(Download).where(
+                Download.status == "complete",
+                Download.audio_path.is_(None),
+                Download.file_path.is_not(None),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     done = 0
     for download in rows:
@@ -766,19 +750,20 @@ def backfill_shorts(db: Session, *, limit: int = 15) -> int:
     picked up on later passes. Returns the number newly identified as Shorts.
     """
     intents = channel_intents(db)
-    excluded = {
-        cid for cid, intent in intents.items()
-        if intent.download and not intent.include_shorts
-    }
+    excluded = {cid for cid, intent in intents.items() if intent.download and not intent.include_shorts}
     if not excluded:
         return 0
 
     classified = set(db.execute(select(VideoShort.video_id)).scalars().all())
-    candidates = db.execute(
-        select(Download.video_id)
-        .join(Video, Video.video_id == Download.video_id)
-        .where(Download.status == "complete", Video.channel_id.in_(excluded))
-    ).scalars().all()
+    candidates = (
+        db.execute(
+            select(Download.video_id)
+            .join(Video, Video.video_id == Download.video_id)
+            .where(Download.status == "complete", Video.channel_id.in_(excluded))
+        )
+        .scalars()
+        .all()
+    )
     todo = [v for v in candidates if v not in classified][:limit]
     if not todo:
         return 0
@@ -792,10 +777,7 @@ def backfill_shorts(db: Session, *, limit: int = 15) -> int:
 
 # YouTube serves avatars/banners more reliably to a browser-like UA, same as
 # the poller's feed fetches.
-_ART_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/124.0.0.0 Safari/537.36"
-)
+_ART_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 
 def _fetch_image(url: str, dest: Path) -> bool:
@@ -805,9 +787,7 @@ def _fetch_image(url: str, dest: Path) -> bool:
     since the destination file stays absent.
     """
     try:
-        with httpx.Client(
-            timeout=30.0, follow_redirects=True, headers={"User-Agent": _ART_UA}
-        ) as client:
+        with httpx.Client(timeout=30.0, follow_redirects=True, headers={"User-Agent": _ART_UA}) as client:
             resp = client.get(url)
             resp.raise_for_status()
             data = resp.content
@@ -840,20 +820,23 @@ def backfill_channel_art(db: Session, *, limit: int = 5) -> int:
         .where(Download.status == "complete")
         .distinct()
     )
-    channels = db.execute(
-        select(Channel).where(
-            Channel.channel_id.in_(archived),
-            Channel.thumbnail_url.is_(None),
+    channels = (
+        db.execute(
+            select(Channel).where(
+                Channel.channel_id.in_(archived),
+                Channel.thumbnail_url.is_(None),
+            )
         )
-    ).scalars().all()[:limit]
+        .scalars()
+        .all()[:limit]
+    )
 
     done = 0
     for channel in channels:
         try:
             art = ytdlp.probe_channel(channel.channel_id)
         except ytdlp.ProbeError as exc:
-            logger.warning("Channel art probe failed for %s: %s",
-                           channel.channel_id, exc)
+            logger.warning("Channel art probe failed for %s: %s", channel.channel_id, exc)
             continue
         # "" is the "probed, none found" sentinel; a real URL is truthy.
         channel.thumbnail_url = art.avatar_url or ""
@@ -885,11 +868,7 @@ def sync_library_art(db: Session, media_root: str) -> int:
     """
     channels = {c.channel_id: c for c in db.execute(select(Channel)).scalars().all()}
     videos = {v.video_id: v for v in db.execute(select(Video)).scalars().all()}
-    links = [
-        link
-        for link in db.execute(select(DownloadLink)).scalars().all()
-        if link.link_path
-    ]
+    links = [link for link in db.execute(select(DownloadLink)).scalars().all() if link.link_path]
 
     def channel_for(video_id: str) -> Channel | None:
         video = videos.get(video_id)
@@ -898,11 +877,7 @@ def sync_library_art(db: Session, media_root: str) -> int:
         return channel if channel and channel.thumbnail_url else None
 
     # Step 1: ensure the canonical art files exist for every linked channel.
-    for cid in {
-        video.channel_id
-        for link in links
-        if (video := videos.get(link.video_id))
-    }:
+    for cid in {video.channel_id for link in links if (video := videos.get(link.video_id))}:
         channel = channels.get(cid)
         if channel is None or not channel.thumbnail_url:
             continue
@@ -929,9 +904,7 @@ def sync_library_art(db: Session, media_root: str) -> int:
         try:
             created += _ensure_art_link(canon_poster, user_channel_dir / naming.POSTER_NAME)
             created += _ensure_art_link(canon_poster, season_dir / naming.POSTER_NAME)
-            created += _ensure_art_link(
-                canon_backdrop, user_channel_dir / naming.BACKDROP_NAME
-            )
+            created += _ensure_art_link(canon_backdrop, user_channel_dir / naming.BACKDROP_NAME)
         except OSError as exc:
             logger.warning("Art hardlink failed for %s: %s", link.link_path, exc)
     if created:
@@ -1003,9 +976,7 @@ def run_forever() -> None:
     renumbered = False
 
     while not _shutdown:
-        ready = naming.media_is_ready(
-            media_root, allow_unmounted=settings.allow_unmounted_media
-        )
+        ready = naming.media_is_ready(media_root, allow_unmounted=settings.allow_unmounted_media)
         if ready != media_ready_last:
             if ready:
                 logger.info("media_root %s is ready; downloads enabled", media_root)

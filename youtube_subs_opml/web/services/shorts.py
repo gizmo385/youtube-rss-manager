@@ -14,8 +14,7 @@ SHORTS_URL = "https://www.youtube.com/shorts/{video_id}"
 _PROBE_TIMEOUT = 10.0
 # A browser-ish UA: YouTube serves bots inconsistently for the /shorts/ path.
 _USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
 
@@ -45,16 +44,12 @@ def _probe_is_short(video_id: str, client: httpx.Client) -> bool | None:
     """
     url = SHORTS_URL.format(video_id=video_id)
     try:
-        with client.stream(
-            "GET", url, follow_redirects=False, timeout=_PROBE_TIMEOUT
-        ) as resp:
+        with client.stream("GET", url, follow_redirects=False, timeout=_PROBE_TIMEOUT) as resp:
             if resp.status_code == 200:
                 return True
             if resp.is_redirect:
                 return False
-            logger.warning(
-                "Unexpected shorts-probe status %s for %s", resp.status_code, video_id
-            )
+            logger.warning("Unexpected shorts-probe status %s for %s", resp.status_code, video_id)
             return None
     except httpx.HTTPError as exc:
         logger.warning("Shorts probe failed for %s: %s", video_id, exc)
@@ -70,11 +65,7 @@ def classify_videos(video_ids: list[str], db: Session) -> dict[str, bool]:
     if not video_ids:
         return {}
 
-    rows = (
-        db.execute(select(VideoShort).where(VideoShort.video_id.in_(video_ids)))
-        .scalars()
-        .all()
-    )
+    rows = db.execute(select(VideoShort).where(VideoShort.video_id.in_(video_ids))).scalars().all()
     result: dict[str, bool] = {row.video_id: row.is_short for row in rows}
 
     missing = [vid for vid in video_ids if vid not in result]

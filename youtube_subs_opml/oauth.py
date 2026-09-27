@@ -28,9 +28,7 @@ def get_credentials(token_path: Path) -> Credentials:
     """
     creds = load_credentials(token_path)
     if creds is None:
-        raise RuntimeError(
-            f"No credentials at {token_path}. Run `youtube-subs-opml auth` first."
-        )
+        raise RuntimeError(f"No credentials at {token_path}. Run `youtube-subs-opml auth` first.")
     if creds.valid:
         return creds
     if creds.expired and creds.refresh_token:
@@ -38,8 +36,7 @@ def get_credentials(token_path: Path) -> Credentials:
         _save(creds, token_path)
         return creds
     raise RuntimeError(
-        f"Credentials at {token_path} are invalid and cannot be refreshed. "
-        "Run `youtube-subs-opml auth` again."
+        f"Credentials at {token_path} are invalid and cannot be refreshed. Run `youtube-subs-opml auth` again."
     )
 
 

@@ -13,9 +13,7 @@ _LOCAL_SUB = "local-user"
 
 def _get_or_create_local_user(db: Session) -> User:
     """Return a fixed local user, creating it on first use (local mode only)."""
-    user = db.execute(
-        select(User).where(User.oidc_sub == _LOCAL_SUB)
-    ).scalar_one_or_none()
+    user = db.execute(select(User).where(User.oidc_sub == _LOCAL_SUB)).scalar_one_or_none()
     if user is None:
         user = User(
             oidc_sub=_LOCAL_SUB,

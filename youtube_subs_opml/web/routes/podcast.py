@@ -89,9 +89,7 @@ def episode_image_url(video_id: str) -> str:
 
 
 def _validate_token(token: str, db: Session) -> OpmlToken:
-    opml_token = db.execute(
-        select(OpmlToken).where(OpmlToken.token == token)
-    ).scalar_one_or_none()
+    opml_token = db.execute(select(OpmlToken).where(OpmlToken.token == token)).scalar_one_or_none()
     if opml_token is None:
         raise HTTPException(status_code=404)
     return opml_token
@@ -166,8 +164,7 @@ def build_podcast_feed(
         notes = _episode_notes(item.get("description"), item["video_id"])
         _sub(it, "description", notes)
         _sub(it, _itunes("summary"), notes)
-        _sub(it, _content_tag("encoded"),
-             _episode_notes_html(item.get("description"), item["video_id"]))
+        _sub(it, _content_tag("encoded"), _episode_notes_html(item.get("description"), item["video_id"]))
         # Per-episode art so each entry is visually attributable to its video.
         # Apple ignores item-level <itunes:image>, but Overcast/Pocket Casts
         # honour it, which is exactly where the "who is this from?" gap showed.
@@ -177,9 +174,7 @@ def build_podcast_feed(
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
 
 
-def _podcast_items(
-    db: Session, user_id: int, base_url: str, token: str, category_id: int | None
-) -> list[dict]:
+def _podcast_items(db: Session, user_id: int, base_url: str, token: str, category_id: int | None) -> list[dict]:
     """Completed downloads with extracted audio, in the user's scope.
 
     Only videos with ``audio_path`` set and a ``complete`` download are eligible;
@@ -265,9 +260,7 @@ def podcast_all(token: str, db: Session = Depends(get_db)) -> Response:
 
 
 @router.get("/podcast/{token}/{slug}.xml")
-def podcast_by_category(
-    token: str, slug: str, db: Session = Depends(get_db)
-) -> Response:
+def podcast_by_category(token: str, slug: str, db: Session = Depends(get_db)) -> Response:
     """Podcast feed for a single category's archived audio."""
     opml_token = _validate_token(token, db)
     settings = get_settings()
@@ -296,9 +289,7 @@ def podcast_by_category(
 
 
 @router.get("/media/{token}/{video_id}.m4a")
-def media_audio(
-    token: str, video_id: str, db: Session = Depends(get_db)
-) -> FileResponse:
+def media_audio(token: str, video_id: str, db: Session = Depends(get_db)) -> FileResponse:
     """Serve a video's extracted audio, with HTTP range support for seeking.
 
     Only serves audio for a video on a channel the token's user is subscribed

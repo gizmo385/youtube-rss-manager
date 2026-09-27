@@ -74,11 +74,11 @@ def _known_shorts(db: Session, video_ids: list[str]) -> set[str]:
     video is treated as non-Short (fail open), so nothing regular is dropped."""
     if not video_ids:
         return set()
-    rows = db.execute(
-        select(VideoShort.video_id).where(
-            VideoShort.video_id.in_(video_ids), VideoShort.is_short.is_(True)
-        )
-    ).scalars().all()
+    rows = (
+        db.execute(select(VideoShort.video_id).where(VideoShort.video_id.in_(video_ids), VideoShort.is_short.is_(True)))
+        .scalars()
+        .all()
+    )
     return set(rows)
 
 
@@ -123,14 +123,18 @@ class _CategoryPrefs:
 
 def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPrefs:
     """Most permissive preference across every category this channel is in."""
-    categories = db.execute(
-        select(Category)
-        .join(ChannelCategory, ChannelCategory.category_id == Category.id)
-        .where(
-            ChannelCategory.user_id == user_id,
-            ChannelCategory.channel_id == channel_id,
+    categories = (
+        db.execute(
+            select(Category)
+            .join(ChannelCategory, ChannelCategory.category_id == Category.id)
+            .where(
+                ChannelCategory.user_id == user_id,
+                ChannelCategory.channel_id == channel_id,
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not categories:
         return _CategoryPrefs()
 
@@ -143,15 +147,9 @@ def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPref
         # Each category's audio window falls back to its own video window before
         # they're compared, so a category that only sets keep_last_n still gets
         # a say in the audio answer.
-        keep_audio=_most_permissive_int(
-            [_or(c.keep_last_n_audio, c.keep_last_n) for c in categories]
-        ),
-        max_duration=_most_permissive_int(
-            [c.max_duration_seconds for c in categories]
-        ),
-        min_duration=_least_restrictive_floor(
-            [c.min_duration_seconds for c in categories]
-        ),
+        keep_audio=_most_permissive_int([_or(c.keep_last_n_audio, c.keep_last_n) for c in categories]),
+        max_duration=_most_permissive_int([c.max_duration_seconds for c in categories]),
+        min_duration=_least_restrictive_floor([c.min_duration_seconds for c in categories]),
         podcast=(True if any(podcasts) else False) if podcasts else None,
         shorts=(True if any(shorts) else False) if shorts else None,
     )
@@ -164,14 +162,18 @@ def _archivable_subscriptions(db: Session) -> list[Subscription]:
     under an account default) with downloads on must not produce an intent —
     there's nothing the downloader could fetch for it.
     """
-    return list(db.execute(
-        select(Subscription)
-        .join(Channel, Channel.channel_id == Subscription.channel_id)
-        .where(
-            Subscription.ignored == False,  # noqa: E712
-            Channel.platform == "youtube",
+    return list(
+        db.execute(
+            select(Subscription)
+            .join(Channel, Channel.channel_id == Subscription.channel_id)
+            .where(
+                Subscription.ignored == False,  # noqa: E712
+                Channel.platform == "youtube",
+            )
         )
-    ).scalars().all())
+        .scalars()
+        .all()
+    )
 
 
 def _or(value: int | None, fallback: int | None) -> int | None:
@@ -209,18 +211,12 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
 
         download = resolve(sub.download_enabled, cat.download, user.download_enabled)
         keep = resolve(sub.keep_last_n, cat.keep, user.keep_last_n)
-        max_dur = resolve(
-            sub.max_duration_seconds, cat.max_duration, user.max_duration_seconds
-        )
-        min_dur = resolve(
-            sub.min_duration_seconds, cat.min_duration, user.min_duration_seconds
-        )
+        max_dur = resolve(sub.max_duration_seconds, cat.max_duration, user.max_duration_seconds)
+        min_dur = resolve(sub.min_duration_seconds, cat.min_duration, user.min_duration_seconds)
         podcast = resolve(sub.generate_podcast, cat.podcast, user.generate_podcast)
         # Only a subscriber who actually downloads this channel gets a say in
         # whether its Shorts are wanted on disk.
-        wants_shorts = download and resolve(
-            sub.include_shorts, cat.shorts, user.include_shorts
-        )
+        wants_shorts = download and resolve(sub.include_shorts, cat.shorts, user.include_shorts)
 
         existing = intents.get(sub.channel_id)
         if existing is None:
@@ -240,14 +236,8 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
             channel_id=sub.channel_id,
             download=existing.download or download,
             keep_last_n=_most_permissive_int([existing.keep_last_n, keep]) or 0,
-            max_duration_seconds=_most_permissive_int(
-                [existing.max_duration_seconds, max_dur]
-            )
-            or 0,
-            min_duration_seconds=_least_restrictive_floor(
-                [existing.min_duration_seconds, min_dur]
-            )
-            or 0,
+            max_duration_seconds=_most_permissive_int([existing.max_duration_seconds, max_dur]) or 0,
+            min_duration_seconds=_least_restrictive_floor([existing.min_duration_seconds, min_dur]) or 0,
             generate_podcast=existing.generate_podcast or podcast,
             include_shorts=existing.include_shorts or wants_shorts,
         )
@@ -381,11 +371,7 @@ def enqueue_pending(db: Session) -> int:
     if not wanted:
         return 0
 
-    existing = set(
-        db.execute(
-            select(Download.video_id).where(Download.video_id.in_(wanted))
-        ).scalars().all()
-    )
+    existing = set(db.execute(select(Download.video_id).where(Download.video_id.in_(wanted))).scalars().all())
 
     created = 0
     for video_id in wanted - existing:
@@ -394,5 +380,3 @@ def enqueue_pending(db: Session) -> int:
     if created:
         logger.info("Enqueued %d new downloads", created)
     return created
-
-

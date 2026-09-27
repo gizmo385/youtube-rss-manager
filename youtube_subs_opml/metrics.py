@@ -52,8 +52,7 @@ downloads = meter.create_counter(
     "yt_rss_downloads",
     unit="{download}",
     description=(
-        "Downloader attempts by `outcome` ('complete', 'skipped', 'retry', "
-        "'failed', 'error') and skip `reason`."
+        "Downloader attempts by `outcome` ('complete', 'skipped', 'retry', 'failed', 'error') and skip `reason`."
     ),
 )
 download_duration = meter.create_histogram(

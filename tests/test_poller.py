@@ -1,5 +1,6 @@
 """Poller politeness: browser UA, retry-with-backoff on throttling, and a
 spaced-out sweep so ~50 channels don't burst YouTube into rate-limiting."""
+
 from __future__ import annotations
 
 import httpx
@@ -36,9 +37,7 @@ def _settings(monkeypatch):
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(
         engine,
         tables=[
@@ -122,8 +121,8 @@ def test_gives_up_after_max_retries(db, monkeypatch):
 
     new = poller.poll_channel("UCchannel00000000000002", db)
 
-    assert new == 0                 # logged and skipped, not raised
-    assert len(fake.calls) == 3     # initial + 2 retries
+    assert new == 0  # logged and skipped, not raised
+    assert len(fake.calls) == 3  # initial + 2 retries
 
 
 def test_poll_all_spaces_out_requests(db, monkeypatch):
@@ -138,10 +137,12 @@ def test_poll_all_spaces_out_requests(db, monkeypatch):
     db.add(Subscription(user_id=1, channel_id=c2))
     db.commit()
 
-    fake = FakeClient({
-        FEED_URL.format(channel_id=c1): [_resp(200, "u", FEED)],
-        FEED_URL.format(channel_id=c2): [_resp(200, "u", FEED)],
-    })
+    fake = FakeClient(
+        {
+            FEED_URL.format(channel_id=c1): [_resp(200, "u", FEED)],
+            FEED_URL.format(channel_id=c2): [_resp(200, "u", FEED)],
+        }
+    )
     monkeypatch.setattr(poller, "_new_client", lambda: fake)
     monkeypatch.setattr(poller, "enqueue_pending", lambda db: 0)  # isolate spacing
     sleeps: list[float] = []

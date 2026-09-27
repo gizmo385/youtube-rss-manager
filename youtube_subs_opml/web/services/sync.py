@@ -16,9 +16,7 @@ from .crypto import decrypt_token
 logger = logging.getLogger(__name__)
 
 
-def build_google_credentials(
-    refresh_token: str, settings: Settings
-) -> Credentials:
+def build_google_credentials(refresh_token: str, settings: Settings) -> Credentials:
     return Credentials(
         token=None,
         refresh_token=refresh_token,
@@ -37,8 +35,7 @@ def sync_account(account: YoutubeAccount, db: Session, settings: Settings) -> in
         fetched = fetch_subscriptions(creds)
     except RefreshError:
         logger.error(
-            "Refresh token revoked for account %s (channel %s). "
-            "User needs to re-connect.",
+            "Refresh token revoked for account %s (channel %s). User needs to re-connect.",
             account.id,
             account.channel_id,
         )
@@ -79,9 +76,7 @@ def sync_account(account: YoutubeAccount, db: Session, settings: Settings) -> in
     # a row that already exists and collide on the PK.
     fetched_ids = {s.channel_id for s in fetched}
 
-    existing = db.execute(
-        select(Subscription).where(Subscription.user_id == account.user_id)
-    ).scalars().all()
+    existing = db.execute(select(Subscription).where(Subscription.user_id == account.user_id)).scalars().all()
     existing_by_id = {s.channel_id: s for s in existing}
 
     # Upsert subscriptions, adopting any existing row (old account, or a manual
