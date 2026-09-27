@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     # retry backoff. Set to 0 to disable spacing (e.g. in tests).
     poll_channel_delay_seconds: float = Field(2.0)
     poll_max_retries: int = Field(2)
+    # YouTube Data API key (no OAuth) for when a channel's RSS feed fails: the
+    # poller reads the channel's uploads playlist instead. YouTube's RSS endpoint
+    # sometimes 404s every request from this server for hours. Empty disables it.
+    youtube_api_key: str = Field("")
+    # Minimum gap between API fallbacks for one channel. Each costs 1 unit of the
+    # 10,000/day quota; hourly keeps a full RSS outage around 24 units per channel
+    # per day, where following every 20-minute sweep would run past the quota at
+    # ~140 channels.
+    youtube_api_fallback_interval_minutes: int = Field(60)
     # Keep this at 1. Concurrent downloads from one IP are the fastest route to
     # "Sign in to confirm you're not a bot".
     download_concurrency: int = Field(1)

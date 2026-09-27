@@ -12,6 +12,10 @@ A channel publishing more than that between polls loses the overflow
 permanently, which is why ``poll_interval_minutes`` defaults to 20 rather than
 matching the 6-hour subscription sync.
 
+When a YouTube feed fails even after retries, and ``YOUTUBE_API_KEY`` is set, the
+channel's uploads are read from the Data API instead (see ``uploads_api``), at
+most once per channel per ``youtube_api_fallback_interval_minutes``.
+
 Nebula channels are polled on the same sweep, but only to warm the feed cache:
 nothing on Nebula is downloadable, so their entries aren't recorded as videos.
 """
@@ -33,6 +37,7 @@ from youtube_subs_opml.opml import FEED_URL
 
 from ..config import get_settings
 from ..models import Channel, ChannelFeedCache, Subscription, Video
+from . import uploads_api
 from .archive import enqueue_pending
 from .feed_cache import store_feed
 
@@ -49,6 +54,11 @@ _USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like G
 # moments later), so a retry usually clears it; a genuinely dead channel just
 # costs a couple of extra requests per sweep.
 _RETRY_STATUSES = frozenset({404, 429, 500, 502, 503})
+
+# channel_id -> time.monotonic() of its last Data API fallback. In memory: the
+# web app is a single process, and a restart costs at most one extra quota unit
+# per channel.
+_api_fallback_at: dict[str, float] = {}
 
 
 def _new_client() -> httpx.Client:
@@ -157,20 +167,24 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
         else:
             outcome, status = "network_error", "network_error"
         _record_poll(channel_attrs, outcome, status, started)
-        return 0
+        content = None if is_nebula else _api_fallback(channel_id, channel_attrs, client)
+        if content is None:
+            return 0
+    else:
+        _record_poll(channel_attrs, "ok", str(resp.status_code), started)
+        content = resp.content
     finally:
         if owns_client:
             client.close()
-    _record_poll(channel_attrs, "ok", str(resp.status_code), started)
 
     # Warm the feed cache so the proxy can serve readers without hitting YouTube.
     # Cached regardless of whether there are new videos — an unchanged feed is
     # still what a reader should get. store_feed skips the write when unchanged.
-    store_feed(db, channel_id, resp.content)
+    store_feed(db, channel_id, content)
     if is_nebula:
         return 0
 
-    entries = _parse_entries(resp.content)
+    entries = _parse_entries(content)
     if not entries:
         return 0
 
@@ -201,6 +215,42 @@ def _record_poll(channel_attrs: dict[str, str], outcome: str, status: str, start
         time.monotonic() - started,
         {"platform": channel_attrs["platform"], "outcome": outcome},
     )
+
+
+def _api_fallback(channel_id: str, channel_attrs: dict[str, str], client: httpx.Client) -> bytes | None:
+    """The channel's uploads from the Data API, after its RSS feed failed.
+
+    None when no API key is configured, when this channel already fell back
+    within ``youtube_api_fallback_interval_minutes``, or when the API fails too.
+    A failed call still counts toward the interval, so a bad key or an exhausted
+    quota isn't retried on every sweep.
+    """
+    settings = get_settings()
+    if not settings.youtube_api_key:
+        return None
+    now = time.monotonic()
+    last = _api_fallback_at.get(channel_id)
+    if last is not None and now - last < settings.youtube_api_fallback_interval_minutes * 60:
+        metrics.feed_api_fallbacks.add(1, {**channel_attrs, "outcome": "rate_limited"})
+        return None
+    _api_fallback_at[channel_id] = now
+    try:
+        content = uploads_api.fetch_uploads_feed(
+            channel_id, client, settings.youtube_api_key, title=channel_attrs["channel"]
+        )
+    except httpx.HTTPError as exc:
+        reason = uploads_api.error_reason(exc.response) if isinstance(exc, httpx.HTTPStatusError) else ""
+        logger.warning(
+            "Data API fallback failed for %s: %s%s",
+            channel_id,
+            exc,
+            f" ({reason})" if reason else "",
+        )
+        metrics.feed_api_fallbacks.add(1, {**channel_attrs, "outcome": "error"})
+        return None
+    logger.info("Polled %s via the Data API after its RSS feed failed", channel_id)
+    metrics.feed_api_fallbacks.add(1, {**channel_attrs, "outcome": "ok"})
+    return content
 
 
 def _poll_one(channel_id: str, db: Session, client: httpx.Client) -> int:

@@ -64,7 +64,8 @@ Authentication can either be managed via:
 1. Go to Cloud Console > Credentials > Create OAuth client ID. Select **Web application** (not Desktop).
 2. Set the authorized redirect URI to `<BASE_URL>/auth/youtube/callback`.
 3. Enable the **YouTube Data API v3** on the same project.
-4. The `youtube.readonly` scope is classified as "sensitive" by Google. In Testing mode, you must add users to the OAuth consent screen's test user list (max ~100). This is fine for household use.
+4. Set the OAuth consent screen's publishing status to **In production**. In Testing mode, Google expires refresh tokens after 7 days, so connected accounts stop syncing weekly until reconnected. The `youtube.readonly` scope is "sensitive", so an unverified app shows a "Google hasn't verified this app" warning when connecting and is capped at 100 users. Neither matters for household use, and no verification review is needed.
+5. Optionally, create an **API key** restricted to the YouTube Data API v3 and set it as `YOUTUBE_API_KEY`. When YouTube's RSS feeds fail (they sometimes 404 every request from a server for hours), the poller reads a channel's recent uploads from the API instead, at most once per channel per hour.
 
 ### 2. Configure environment
 
@@ -85,6 +86,8 @@ If you're using auth via an OIDC provider, fill in the values:
 | `OIDC_CLIENT_SECRET` | OIDC client secret |
 | `YOUTUBE_CLIENT_ID` | Google OAuth client ID |
 | `YOUTUBE_CLIENT_SECRET` | Google OAuth client secret |
+| `YOUTUBE_API_KEY` | Optional. Data API key used when a channel's RSS feed fails |
+| `YOUTUBE_API_FALLBACK_INTERVAL_MINUTES` | Optional. Minimum minutes between API fallbacks per channel (default 60; each costs 1 of the 10,000/day quota units) |
 
 
 If you're only planning on using the local setup and don't require OIDC or YouTube client support,

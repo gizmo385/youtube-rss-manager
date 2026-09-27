@@ -35,6 +35,15 @@ feed_polls = meter.create_counter(
         "'ok', 'http_error' or 'network_error'; `status` is the last HTTP status."
     ),
 )
+feed_api_fallbacks = meter.create_counter(
+    "yt_rss_feed_api_fallbacks",
+    unit="{request}",
+    description=(
+        "Data API fetches of a channel's uploads after its RSS feed failed, per "
+        "channel. `outcome` is 'ok', 'error', or 'rate_limited' (skipped, no "
+        "quota used: this channel fell back too recently)."
+    ),
+)
 feed_poll_duration = meter.create_histogram(
     "yt_rss_feed_poll_duration",
     unit="s",

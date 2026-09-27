@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from youtube_subs_opml.opml import FEED_URL
 from youtube_subs_opml.web.db import Base
 from youtube_subs_opml.web.models import Channel, ChannelFeedCache, Subscription, Video
-from youtube_subs_opml.web.services import poller
+from youtube_subs_opml.web.services import poller, uploads_api
 
 FEED = (
     b'<?xml version="1.0"?>'
@@ -30,7 +30,9 @@ def _settings(monkeypatch):
     monkeypatch.setenv("LOCAL_MODE", "1")
     monkeypatch.setenv("POLL_CHANNEL_DELAY_SECONDS", "0")  # no real sleeping
     monkeypatch.setenv("POLL_MAX_RETRIES", "2")
+    monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
     config.get_settings.cache_clear()
+    poller._api_fallback_at.clear()
     yield
     config.get_settings.cache_clear()
 
@@ -59,10 +61,12 @@ class FakeClient:
     def __init__(self, script: dict[str, list[httpx.Response]]):
         self.script = script
         self.calls: list[str] = []
+        self.sent_headers: list[dict[str, str]] = []
         self.headers: dict[str, str] = {}
 
-    def get(self, url: str) -> httpx.Response:
+    def get(self, url: str, headers: dict[str, str] | None = None) -> httpx.Response:
         self.calls.append(url)
+        self.sent_headers.append(headers or {})
         return self.script[url].pop(0)
 
     def close(self) -> None:  # pragma: no cover - trivial
@@ -201,3 +205,116 @@ def test_warm_picks_up_channels_added_mid_run(db, monkeypatch):
     poller.warm_uncached_channels(db)
 
     assert polled == [first, second]
+
+
+# --- Data API fallback -------------------------------------------------------
+
+API_ITEMS = {
+    "items": [
+        {
+            "snippet": {
+                "publishedAt": "2026-09-26T22:30:00Z",
+                "channelTitle": "Fallback Channel",
+                "title": "From the API",
+                "description": "desc",
+                "videoOwnerChannelId": "UCchannel00000000000001",
+                "resourceId": {"kind": "youtube#video", "videoId": "vidBBBB2222"},
+            },
+            "contentDetails": {
+                "videoId": "vidBBBB2222",
+                "videoPublishedAt": "2026-09-26T22:26:23Z",
+            },
+        },
+    ]
+}
+
+
+def _api_client(cid: str, rss: list[httpx.Response], api: list[httpx.Response]) -> FakeClient:
+    return FakeClient(
+        {
+            FEED_URL.format(channel_id=cid): rss,
+            uploads_api.uploads_url(cid): api,
+        }
+    )
+
+
+def _with_api_key(monkeypatch):
+    from youtube_subs_opml.web import config
+
+    monkeypatch.setenv("YOUTUBE_API_KEY", "test-key")
+    config.get_settings.cache_clear()
+
+
+def test_failed_rss_falls_back_to_the_data_api(db, monkeypatch):
+    _with_api_key(monkeypatch)
+    cid = "UCchannel00000000000001"
+    api_url = uploads_api.uploads_url(cid)
+    fake = _api_client(
+        cid, [_resp(404, "u")] * 3, [httpx.Response(200, json=API_ITEMS, request=httpx.Request("GET", api_url))]
+    )
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    assert poller.poll_channel(cid, db) == 1
+    db.commit()
+
+    assert fake.calls[-1] == api_url
+    # The key travels in a header, not the (traced) URL.
+    assert fake.sent_headers[-1] == {"X-Goog-Api-Key": "test-key"}
+    assert "test-key" not in api_url
+    video = db.get(Video, "vidBBBB2222")
+    assert video.title == "From the API"
+    assert video.published_at.isoformat().startswith("2026-09-26T22:26:23")
+    assert b"yt:video:vidBBBB2222" in db.get(ChannelFeedCache, cid).xml
+
+
+def test_api_fallback_is_rate_limited_per_channel(db, monkeypatch):
+    _with_api_key(monkeypatch)
+    cid = "UCchannel00000000000001"
+    api_url = uploads_api.uploads_url(cid)
+    ok = httpx.Response(200, json=API_ITEMS, request=httpx.Request("GET", api_url))
+    fake = _api_client(cid, [_resp(404, "u")] * 6, [ok])
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    poller.poll_channel(cid, db)
+    poller.poll_channel(cid, db)  # next sweep, well inside the hour
+
+    assert fake.calls.count(api_url) == 1
+
+
+def test_api_failure_counts_toward_the_interval(db, monkeypatch):
+    _with_api_key(monkeypatch)
+    cid = "UCchannel00000000000001"
+    api_url = uploads_api.uploads_url(cid)
+    fake = _api_client(cid, [_resp(404, "u")] * 6, [_resp(403, api_url)])
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    assert poller.poll_channel(cid, db) == 0
+    assert poller.poll_channel(cid, db) == 0  # an exhausted quota isn't retried each sweep
+    db.commit()
+
+    assert fake.calls.count(api_url) == 1
+    assert db.get(ChannelFeedCache, cid) is None
+
+
+def test_no_api_key_means_no_fallback(db, monkeypatch):
+    cid = "UCchannel00000000000001"
+    fake = _api_client(cid, [_resp(404, "u")] * 3, [])
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    assert poller.poll_channel(cid, db) == 0
+    assert uploads_api.uploads_url(cid) not in fake.calls
+
+
+def test_nebula_never_falls_back(db, monkeypatch):
+    from youtube_subs_opml import nebula
+
+    _with_api_key(monkeypatch)
+    cid = "nebula-channel"
+    db.add(Channel(channel_id=cid, title="Neb", platform=nebula.PLATFORM))
+    db.commit()
+    url = nebula.feed_url(cid)
+    fake = FakeClient({url: [_resp(500, url)] * 3})
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    assert poller.poll_channel(cid, db) == 0
+    assert fake.calls == [url] * 3

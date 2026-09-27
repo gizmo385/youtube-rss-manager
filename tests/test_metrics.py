@@ -26,7 +26,7 @@ from youtube_subs_opml.web.models import (
     User,
     Video,
 )
-from youtube_subs_opml.web.services import library_metrics, poller
+from youtube_subs_opml.web.services import library_metrics, poller, uploads_api
 
 FEED = (
     b'<?xml version="1.0"?>'
@@ -136,6 +136,31 @@ def test_network_errors_are_counted_separately(db):
 
     assert _total("yt_rss_feed_polls", channel_id=cid, outcome="network_error") == 1
     assert _total("yt_rss_feed_fetch_attempts", status="network_error", attempt=3) >= 1
+
+
+def test_api_fallback_is_counted_per_channel_and_outcome(db, monkeypatch):
+    from youtube_subs_opml.web import config
+
+    monkeypatch.setenv("YOUTUBE_API_KEY", "test-key")
+    config.get_settings.cache_clear()
+    monkeypatch.setattr(poller, "_api_fallback_at", {})
+    cid = "UCmetric000000000000004"
+    db.add(Channel(channel_id=cid, title="Fallback Channel"))
+    db.commit()
+    client = scripted_client(
+        {
+            FEED_URL.format(channel_id=cid): [(404, b"")] * 6,
+            uploads_api.uploads_url(cid): [(200, b'{"items": []}')],
+        }
+    )
+
+    poller.poll_channel(cid, db, client)
+    poller.poll_channel(cid, db, client)  # inside the hour: skipped
+
+    # The RSS failure is still recorded as such; the fallback is counted beside it.
+    assert _total("yt_rss_feed_polls", channel_id=cid, outcome="http_error") == 2
+    assert _total("yt_rss_feed_api_fallbacks", channel_id=cid, channel="Fallback Channel", outcome="ok") == 1
+    assert _total("yt_rss_feed_api_fallbacks", channel_id=cid, outcome="rate_limited") == 1
 
 
 def test_record_download_classifies_outcomes():
