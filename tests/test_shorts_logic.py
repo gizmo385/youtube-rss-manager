@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import httpx
+from sqlalchemy.orm import Session
 
 from youtube_subs_opml.opml import build_opml
 from youtube_subs_opml.web.routes import feed
@@ -17,6 +20,9 @@ from youtube_subs_opml.web.services.shorts import (
 from youtube_subs_opml.youtube import Subscription
 
 CID = "UCabcdefghijklmnopqrstuv"
+
+# The classifiers are monkeypatched in these tests, so the session is never used.
+_NO_DB = cast(Session, None)
 
 SAMPLE_FEED = b"""<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom"
@@ -72,7 +78,7 @@ def test_filter_drops_shorts(monkeypatch):
         "classify_videos",
         lambda ids, db: {"shortone111": True, "realvideo22": False},
     )
-    out = feed._filter_feed(SAMPLE_FEED, db=None, drop_shorts=True, drop_live=False).decode()
+    out = feed._filter_feed(SAMPLE_FEED, db=_NO_DB, drop_shorts=True, drop_live=False).decode()
     assert "realvideo22" in out
     assert "shortone111" not in out
 
@@ -80,7 +86,7 @@ def test_filter_drops_shorts(monkeypatch):
 def test_filter_keeps_unknown(monkeypatch):
     """Fail open: a video with no verdict stays in the feed."""
     monkeypatch.setattr(feed, "classify_videos", lambda ids, db: {})
-    out = feed._filter_feed(SAMPLE_FEED, db=None, drop_shorts=True, drop_live=False).decode()
+    out = feed._filter_feed(SAMPLE_FEED, db=_NO_DB, drop_shorts=True, drop_live=False).decode()
     assert "shortone111" in out and "realvideo22" in out
 
 
@@ -90,7 +96,7 @@ def test_filter_drops_live_and_upcoming(monkeypatch):
         "classify_live",
         lambda ids, db: {"shortone111": "upcoming", "realvideo22": "none"},
     )
-    out = feed._filter_feed(SAMPLE_FEED, db=None, drop_shorts=False, drop_live=True).decode()
+    out = feed._filter_feed(SAMPLE_FEED, db=_NO_DB, drop_shorts=False, drop_live=True).decode()
     assert "realvideo22" in out  # status 'none' stays
     assert "shortone111" not in out  # 'upcoming' is dropped
 
@@ -105,61 +111,44 @@ def test_live_cascade_precedence():
     assert resolve_include_live(None, None, False) is False
 
 
-class _FakeLiveResp:
-    def __init__(self, text: str):
-        self.text = text
-
-    def raise_for_status(self):
-        return None
+def _mock_client(handler) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-class _FakeLiveClient:
-    def __init__(self, text):
-        self._text = text
-
-    def get(self, url, **kwargs):
-        return _FakeLiveResp(self._text)
+def _page_client(text: str) -> httpx.Client:
+    """A client whose every request returns ``text`` as a 200 page."""
+    return _mock_client(lambda request: httpx.Response(200, text=text))
 
 
 def test_probe_live_status_classifies():
-    assert _probe_live_status("x", _FakeLiveClient('"isUpcoming":true')) == "upcoming"
-    assert _probe_live_status("x", _FakeLiveClient('"isLiveNow":true')) == "live"
-    assert _probe_live_status("x", _FakeLiveClient('"isLiveContent":false')) == "none"
+    assert _probe_live_status("x", _page_client('"isUpcoming":true')) == "upcoming"
+    assert _probe_live_status("x", _page_client('"isLiveNow":true')) == "live"
+    assert _probe_live_status("x", _page_client('"isLiveContent":false')) == "none"
 
 
 # --- probe ---------------------------------------------------------------
 
 
-class _FakeResp:
-    def __init__(self, status: int):
-        self.status_code = status
-        self.is_redirect = status in (301, 302, 303, 307, 308)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
+def _status_client(status: int) -> httpx.Client:
+    """A client that answers every request with ``status``; 30x redirects to /watch."""
+    headers = {"Location": "https://www.youtube.com/watch?v=x"} if 300 <= status < 400 else {}
+    return _mock_client(lambda request: httpx.Response(status, headers=headers))
 
 
-class _FakeClient:
-    def __init__(self, status=None, raise_exc=False):
-        self._status = status
-        self._raise = raise_exc
+def _failing_client() -> httpx.Client:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=request)
 
-    def stream(self, method, url, **kwargs):
-        if self._raise:
-            raise httpx.ConnectError("boom")
-        return _FakeResp(self._status)
+    return _mock_client(handler)
 
 
 def test_probe_200_is_short():
-    assert _probe_is_short("x", _FakeClient(status=200)) is True
+    assert _probe_is_short("x", _status_client(200)) is True
 
 
 def test_probe_redirect_is_not_short():
-    assert _probe_is_short("x", _FakeClient(status=303)) is False
+    assert _probe_is_short("x", _status_client(303)) is False
 
 
 def test_probe_error_is_inconclusive():
-    assert _probe_is_short("x", _FakeClient(raise_exc=True)) is None
+    assert _probe_is_short("x", _failing_client()) is None

@@ -19,8 +19,8 @@ from youtube_subs_opml.web.routes import quickswitch
 def client():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    with Session() as s:
+    TestingSession = sessionmaker(bind=engine)
+    with TestingSession() as s:
         s.add(User(id=1, oidc_sub="s1", email="e1"))
         s.add(User(id=2, oidc_sub="s2", email="e2"))
         s.add(Channel(channel_id="UCa", title="Veritasium"))
@@ -33,7 +33,7 @@ def client():
         s.commit()
 
     def odb():
-        db = Session()
+        db = TestingSession()
         try:
             yield db
         finally:

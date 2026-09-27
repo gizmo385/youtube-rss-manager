@@ -32,7 +32,7 @@ def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(
         engine,
-        tables=[t.__table__ for t in (User, Video, Download, DownloadLink)],
+        tables=[Base.metadata.tables[t.__tablename__] for t in (User, Video, Download, DownloadLink)],
     )
     session = sessionmaker(bind=engine)()
     session.add(User(id=1, oidc_sub="s", email="e"))
@@ -63,9 +63,11 @@ def links_by_id(xml: bytes) -> dict[str, str]:
     root = ET.fromstring(xml)
     out = {}
     for entry in root.findall(f"{{{ATOM}}}entry"):
-        vid = entry.find(f"{{{YT}}}videoId").text
+        vid = entry.findtext(f"{{{YT}}}videoId")
         link = entry.find(f"{{{ATOM}}}link")
-        out[vid] = link.get("href")
+        assert vid is not None
+        assert link is not None
+        out[vid] = link.get("href", "")
     return out
 
 

@@ -7,6 +7,7 @@ stubbed — the point here is the on-disk layout and teardown, not YouTube.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -37,7 +38,7 @@ PUB = datetime(2026, 3, 2, tzinfo=UTC)
 
 
 @pytest.fixture
-def db() -> Session:
+def db() -> Iterator[Session]:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()

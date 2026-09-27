@@ -40,12 +40,7 @@ def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(
         engine,
-        tables=[
-            Channel.__table__,
-            Video.__table__,
-            Subscription.__table__,
-            ChannelFeedCache.__table__,
-        ],
+        tables=[Base.metadata.tables[t.__tablename__] for t in (Channel, Video, Subscription, ChannelFeedCache)],
     )
     session = sessionmaker(bind=engine)()
     try:

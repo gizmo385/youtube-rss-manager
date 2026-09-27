@@ -6,6 +6,7 @@ and NFO rewrites are exercised for real.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -31,7 +32,7 @@ PUB = datetime(2026, 3, 15, 9, 0, tzinfo=UTC)  # -> MMDD 315 -> E0315
 
 
 @pytest.fixture
-def db() -> Session:
+def db() -> Iterator[Session]:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
@@ -107,7 +108,7 @@ def test_renumber_renames_files_patches_nfo_and_backfills_description(db, tmp_pa
 
     # NFO <episode> patched to the date-based number.
     root = ET.parse(canon_dir / f"{new_stem}.nfo").getroot()
-    assert root.find("episode").text == "315"
+    assert root.findtext("episode") == "315"
 
     # Description backfilled from the NFO's <plot> so podcast notes work.
     assert db.get(Video, "vid00000001").description == "Cool description"

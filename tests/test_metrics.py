@@ -52,7 +52,9 @@ def _points(name: str, **attrs: object) -> list:
             for metric in scope.metrics:
                 if metric.name == name:
                     points += [
-                        p for p in metric.data.data_points if all(p.attributes.get(k) == v for k, v in attrs.items())
+                        p
+                        for p in metric.data.data_points
+                        if all((p.attributes or {}).get(k) == v for k, v in attrs.items())
                     ]
     return points
 
@@ -84,20 +86,16 @@ def db():
         session.close()
 
 
-class FakeClient:
+def scripted_client(script: dict[str, list]) -> httpx.Client:
     """Serves a scripted list of responses (or exceptions) per URL, in order."""
 
-    def __init__(self, script: dict[str, list]):
-        self.script = script
-
-    def get(self, url: str) -> httpx.Response:
-        item = self.script[url].pop(0)
+    def handler(request: httpx.Request) -> httpx.Response:
+        item = script[str(request.url)].pop(0)
         if isinstance(item, Exception):
             raise item
-        return httpx.Response(item[0], content=item[1], request=httpx.Request("GET", url))
+        return httpx.Response(item[0], content=item[1])
 
-    def close(self) -> None:  # pragma: no cover - trivial
-        pass
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
 def test_retried_404_counts_every_attempt_and_one_ok_poll(db):
@@ -106,7 +104,7 @@ def test_retried_404_counts_every_attempt_and_one_ok_poll(db):
     db.commit()
     url = FEED_URL.format(channel_id=cid)
 
-    new = poller.poll_channel(cid, db, FakeClient({url: [(404, b""), (200, FEED)]}))
+    new = poller.poll_channel(cid, db, scripted_client({url: [(404, b""), (200, FEED)]}))
 
     assert new == 1
     assert _total("yt_rss_feed_fetch_attempts", status="404", attempt=1, platform="youtube") >= 1
@@ -120,7 +118,7 @@ def test_persistent_404_is_a_failed_poll_with_its_status(db):
     cid = "UCmetric000000000000002"
     url = FEED_URL.format(channel_id=cid)
 
-    assert poller.poll_channel(cid, db, FakeClient({url: [(404, b"")] * 3})) == 0
+    assert poller.poll_channel(cid, db, scripted_client({url: [(404, b"")] * 3})) == 0
 
     assert _total("yt_rss_feed_polls", channel_id=cid, outcome="http_error", status="404") == 1
     assert _total("yt_rss_feed_polls", channel_id=cid, outcome="ok") == 0
@@ -134,7 +132,7 @@ def test_network_errors_are_counted_separately(db):
     url = FEED_URL.format(channel_id=cid)
     boom = httpx.ConnectError("boom", request=httpx.Request("GET", url))
 
-    poller.poll_channel(cid, db, FakeClient({url: [boom, boom, boom]}))
+    poller.poll_channel(cid, db, scripted_client({url: [boom, boom, boom]}))
 
     assert _total("yt_rss_feed_polls", channel_id=cid, outcome="network_error") == 1
     assert _total("yt_rss_feed_fetch_attempts", status="network_error", attempt=3) >= 1

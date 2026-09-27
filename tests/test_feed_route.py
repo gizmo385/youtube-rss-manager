@@ -34,6 +34,15 @@ SAMPLE_FEED = b"""<?xml version="1.0"?>
 </feed>"""
 
 
+class _FeedClient(TestClient):
+    """A TestClient that also exposes the app's session factory, for tests that
+    pre-seed the feed cache."""
+
+    def __init__(self, app: FastAPI, session_factory: sessionmaker) -> None:
+        super().__init__(app)
+        self.sessionmaker = session_factory
+
+
 @pytest.fixture
 def client(monkeypatch):
     engine = create_engine(
@@ -45,7 +54,7 @@ def client(monkeypatch):
     Base.metadata.create_all(
         engine,
         tables=[
-            t.__table__
+            Base.metadata.tables[t.__tablename__]
             for t in (
                 User,
                 Channel,
@@ -94,9 +103,7 @@ def client(monkeypatch):
         lambda ids, db: {"shortone111": "upcoming", "realvideo22": "none"},
     )
 
-    tc = TestClient(app)
-    tc.sessionmaker = TestingSession  # for tests that pre-seed the feed cache
-    return tc
+    return _FeedClient(app, TestingSession)
 
 
 def test_passthrough_keeps_shorts(client):

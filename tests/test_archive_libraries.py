@@ -7,6 +7,7 @@ inode behaviour is exercised for real — no Postgres, Keycloak, or network.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -46,7 +47,7 @@ BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture
-def db() -> Session:
+def db() -> Iterator[Session]:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -109,7 +110,7 @@ def add_videos(db: Session, n: int) -> list[str]:
 
 def complete_download(db: Session, media_root: str, vid: str, epnum: int) -> Path:
     """Write a canonical .mkv (+ sidecars) and a completed Download row."""
-    video = db.get(Video, vid)
+    video = db.get_one(Video, vid)
     canon_dir = naming.canonical_episode_dir(media_root, CHAN_TITLE, video.published_at)
     basename = naming.episode_basename(CHAN_TITLE, video.published_at, epnum, video.title)
     canon_dir.mkdir(parents=True, exist_ok=True)
@@ -423,6 +424,7 @@ def test_worker_fetches_audio_only_for_an_episode_past_the_video_window(db, tmp_
 
     assert row.status == "complete"
     assert row.file_path is None
+    assert row.audio_path is not None
     assert row.audio_path.endswith(".m4a")
 
 

@@ -7,6 +7,7 @@ add/remove reconcile — which is where the logic lives.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
@@ -43,7 +44,7 @@ def _local_settings(monkeypatch):
 
 
 @pytest.fixture
-def db() -> Session:
+def db() -> Iterator[Session]:
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()

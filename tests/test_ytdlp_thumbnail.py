@@ -46,11 +46,13 @@ def test_download_can_skip_thumbnail(tmp_path, monkeypatch):
         stdout = ""
         stderr = ""
 
+    captured = {}
+
     def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
         target.with_suffix(".mkv").write_bytes(b"mkv")
-        fake_run.cmd = cmd
         return _Result()
 
     monkeypatch.setattr(ytdlp.subprocess, "run", fake_run)
     ytdlp.download("vid00000001", target, video_format="best", write_thumbnail=False)
-    assert "--write-thumbnail" not in fake_run.cmd
+    assert "--write-thumbnail" not in captured["cmd"]

@@ -59,7 +59,7 @@ def client(audio_file):
     Base.metadata.create_all(
         engine,
         tables=[
-            t.__table__
+            Base.metadata.tables[t.__tablename__]
             for t in (
                 User,
                 Channel,
@@ -136,9 +136,23 @@ def client(audio_file):
     return TestClient(app)
 
 
-def _items(xml: bytes):
-    root = ET.fromstring(xml)
-    return root.find("channel").findall("item")
+def _child(el: ET.Element, path: str) -> ET.Element:
+    """The element at ``path`` under ``el``, failing the test if it's missing."""
+    child = el.find(path)
+    assert child is not None, f"missing <{path}>"
+    return child
+
+
+def _text(el: ET.Element, path: str) -> str:
+    return _child(el, path).text or ""
+
+
+def _channel(xml: bytes) -> ET.Element:
+    return _child(ET.fromstring(xml), "channel")
+
+
+def _items_by_guid(xml: bytes) -> dict[str, ET.Element]:
+    return {_text(it, "guid"): it for it in _channel(xml).findall("item")}
 
 
 def test_all_feed_lists_only_complete_with_audio(client):
@@ -146,70 +160,61 @@ def test_all_feed_lists_only_complete_with_audio(client):
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("application/rss+xml")
 
-    items = _items(resp.content)
-    guids = {it.find("guid").text for it in items}
-    assert guids == {"withaudio001", "otheraud0001"}  # noaudio excluded
+    assert set(_items_by_guid(resp.content)) == {"withaudio001", "otheraud0001"}  # noaudio excluded
 
 
 def test_feed_item_shape(client):
     resp = client.get(f"/podcast/{TOKEN}/all.xml")
-    root = ET.fromstring(resp.content)
-    channel = root.find("channel")
+    channel = _channel(resp.content)
     # channel-level iTunes bits Apple wants
-    assert channel.find("language").text == "en"
-    assert channel.find(f"{{{ITUNES}}}explicit").text == "false"
+    assert _text(channel, "language") == "en"
+    assert _text(channel, f"{{{ITUNES}}}explicit") == "false"
 
-    by_guid = {it.find("guid").text: it for it in channel.findall("item")}
-    it = by_guid["withaudio001"]
-    enc = it.find("enclosure")
-    assert enc.get("url").endswith(f"/media/{TOKEN}/withaudio001.m4a")
+    it = _items_by_guid(resp.content)["withaudio001"]
+    enc = _child(it, "enclosure")
+    assert enc.get("url", "").endswith(f"/media/{TOKEN}/withaudio001.m4a")
     assert enc.get("length") == "20"  # real byte count, not estimated
     assert enc.get("type") == "audio/x-m4a"
-    assert it.find(f"{{{ITUNES}}}duration").text == "1:01:01"  # 3661s
-    assert it.find("guid").get("isPermaLink") == "false"
+    assert _text(it, f"{{{ITUNES}}}duration") == "1:01:01"  # 3661s
+    assert _child(it, "guid").get("isPermaLink") == "false"
     assert it.find("pubDate") is not None
     # Per-episode art points at YouTube's stable thumbnail CDN.
-    img = it.find(f"{{{ITUNES}}}image")
-    assert img is not None
+    img = _child(it, f"{{{ITUNES}}}image")
     assert img.get("href") == "https://i.ytimg.com/vi/withaudio001/hqdefault.jpg"
 
 
 def test_episode_notes_include_description_and_source_link(client):
     resp = client.get(f"/podcast/{TOKEN}/all.xml")
-    channel = ET.fromstring(resp.content).find("channel")
-    by_guid = {it.find("guid").text: it for it in channel.findall("item")}
+    by_guid = _items_by_guid(resp.content)
 
     # A probed video surfaces its description plus a link back to the source.
     it = by_guid["withaudio001"]
-    desc = it.find("description").text
+    desc = _text(it, "description")
     assert "First line" in desc and "Second line" in desc
     assert "https://www.youtube.com/watch?v=withaudio001" in desc
-    assert it.find(f"{{{ITUNES}}}summary").text == desc
-    html = it.find(f"{{{CONTENT}}}encoded").text
+    assert _text(it, f"{{{ITUNES}}}summary") == desc
+    html = _text(it, f"{{{CONTENT}}}encoded")
     assert "<br/>" in html  # newlines preserved as HTML breaks
     assert '<a href="https://www.youtube.com/watch?v=withaudio001">' in html
 
     # A video with no stored description still carries the source link.
     other = by_guid["otheraud0001"]
-    assert other.find("description").text == ("Watch on YouTube: https://www.youtube.com/watch?v=otheraud0001")
+    assert _text(other, "description") == "Watch on YouTube: https://www.youtube.com/watch?v=otheraud0001"
 
 
 def test_channel_cover_falls_back_to_newest_episode(client):
     # podcast_cover_url is unset in local mode, so the show cover should be the
     # newest episode's thumbnail rather than blank.
     resp = client.get(f"/podcast/{TOKEN}/all.xml")
-    channel = ET.fromstring(resp.content).find("channel")
-    cover = channel.find(f"{{{ITUNES}}}image")
-    assert cover is not None
-    assert cover.get("href").startswith("https://i.ytimg.com/vi/")
-    assert cover.get("href").endswith("/hqdefault.jpg")
+    cover = _child(_channel(resp.content), f"{{{ITUNES}}}image")
+    assert cover.get("href", "").startswith("https://i.ytimg.com/vi/")
+    assert cover.get("href", "").endswith("/hqdefault.jpg")
 
 
 def test_category_feed_scopes_to_category(client):
     resp = client.get(f"/podcast/{TOKEN}/tech.xml")
     assert resp.status_code == 200
-    guids = {it.find("guid").text for it in _items(resp.content)}
-    assert guids == {"withaudio001"}  # otheraud is not in 'tech'
+    assert set(_items_by_guid(resp.content)) == {"withaudio001"}  # otheraud is not in 'tech'
 
 
 def test_unknown_token_404(client):

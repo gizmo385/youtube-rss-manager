@@ -86,9 +86,9 @@ def api_raising(calls, exc):
     return resolve
 
 
-def stored_channel(session_factory) -> Channel | None:
+def stored_channel(session_factory) -> Channel:
     with session_factory() as s:
-        return s.get(Channel, "UCnew")
+        return s.get_one(Channel, "UCnew")
 
 
 def test_add_without_account_uses_public_resolver(client, calls, session_factory):

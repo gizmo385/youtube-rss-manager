@@ -106,7 +106,7 @@ def test_latest_published_picks_newest_item():
 @pytest.fixture
 def upstream(monkeypatch):
     """Route nebula.py's httpx traffic to a dict of url -> (status, body)."""
-    routes: dict[str, tuple[int, object]] = {}
+    routes: dict[str, tuple[int, dict | bytes]] = {}
     real_client = httpx.Client
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -211,15 +211,6 @@ def _app(session_factory, *routers) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-class _FakeClient:
-    def __init__(self):
-        self.calls: list[str] = []
-
-    def get(self, url):
-        self.calls.append(url)
-        return httpx.Response(200, content=FEED, request=httpx.Request("GET", url))
-
-
 def test_poll_caches_nebula_feed_without_recording_videos(db, monkeypatch):
     monkeypatch.setattr(
         poller,
@@ -229,9 +220,15 @@ def test_poll_caches_nebula_feed_without_recording_videos(db, monkeypatch):
             poll_channel_delay_seconds=0,
         ),
     )
-    client = _FakeClient()
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(200, content=FEED)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
     assert poller.poll_channel(CID, db, client) == 0
-    assert client.calls == ["https://rss.nebula.app/video/channels/tomscott.rss"]
+    assert calls == ["https://rss.nebula.app/video/channels/tomscott.rss"]
     assert db.get(ChannelFeedCache, CID).xml == FEED
     assert db.execute(select(Video)).first() is None
 
