@@ -55,3 +55,57 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["youtube_subs_opml"]
+
+[dependency-groups]
+dev = [
+    "google-api-python-client-stubs>=1.37.0",
+    "pyrefly>=1.3.1",
+    "ruff>=0.16.9",
+]
+
+[tool.pyrefly]
+project-includes = ["youtube_subs_opml", "tests", "scripts", "alembic"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+    "C4",     # flake8-comprehensions
+    "PIE",    # flake8-pie
+    "PERF",   # perflint
+    "PT",     # flake8-pytest-style
+    "ASYNC",  # flake8-async
+    "DTZ",    # flake8-datetimez
+    "BLE",    # flake8-blind-except
+    "LOG",    # flake8-logging
+    "G",      # flake8-logging-format
+    "EXE",    # flake8-executable
+    "FURB",   # refurb
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "PT018",  # composite assertions read fine and pytest reports them well
+]
+# Typographic characters used deliberately in UI strings and comments.
+allowed-confusables = ["›", "–"]
+
+[tool.ruff.lint.per-file-ignores]
+# `test_jellyfin` is a route, not a pytest test.
+"youtube_subs_opml/web/routes/settings.py" = ["PT028"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["youtube_subs_opml"]
+# The repo's alembic/ migrations dir would otherwise shadow the real package.
+known-third-party = ["alembic"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency markers are meant to be called in argument defaults.
+extend-immutable-calls = ["fastapi.Depends"]
