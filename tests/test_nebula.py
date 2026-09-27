@@ -240,6 +240,7 @@ def test_sweep_polls_nebula_first_without_spacing(db, monkeypatch):
         lambda: SimpleNamespace(
             poll_max_retries=0,
             poll_channel_delay_seconds=5,
+            poll_interval_minutes=20,
         ),
     )
     sleeps: list[float] = []

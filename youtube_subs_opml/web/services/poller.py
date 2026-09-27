@@ -16,6 +16,12 @@ When a YouTube feed fails even after retries, and ``YOUTUBE_API_KEY`` is set, th
 channel's uploads are read from the Data API instead (see ``uploads_api``), at
 most once per channel per ``youtube_api_fallback_interval_minutes``.
 
+Channels that upload rarely are polled less often: anything that uploaded in
+the last month, and usually uploads at least monthly, is polled every sweep.
+Past that the interval stretches with the channel's typical gap between uploads
+or with how long it has now been quiet, whichever is longer (see
+``_poll_interval``), up to 12 hours for channels dormant for years.
+
 Nebula channels are polled on the same sweep, but only to warm the feed cache:
 nothing on Nebula is downloadable, so their entries aren't recorded as videos.
 """
@@ -25,11 +31,14 @@ from __future__ import annotations
 import logging
 import random
 import time
-from datetime import datetime
+from collections import defaultdict
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
+from statistics import median
 from xml.etree import ElementTree as ET
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from youtube_subs_opml import metrics, nebula
@@ -59,6 +68,20 @@ _RETRY_STATUSES = frozenset({404, 429, 500, 502, 503})
 # web app is a single process, and a restart costs at most one extra quota unit
 # per channel.
 _api_fallback_at: dict[str, float] = {}
+
+# channel_id -> time.monotonic() of its last poll in a sweep. In memory for the
+# same reason: after a restart every channel is simply due again.
+_polled_at: dict[str, float] = {}
+
+# A channel whose usual gap between uploads, or current silence, is longer
+# than this is polled less than every sweep, stretching linearly: 3 months is
+# polled hourly, a year about every 4 hours.
+_DORMANT_AFTER_DAYS = 30
+# How many recent gaps between uploads make up a channel's usual gap. Their
+# median, so one long break (or one burst) doesn't swing it, and a channel that
+# comes back from years away is on every sweep again after a few uploads.
+_RECENT_GAPS = 5
+_MAX_POLL_INTERVAL = timedelta(hours=12)
 
 
 def _new_client() -> httpx.Client:
@@ -253,6 +276,58 @@ def _api_fallback(channel_id: str, channel_attrs: dict[str, str], client: httpx.
     return content
 
 
+def _poll_interval(uploads: list[datetime], now: datetime, base: timedelta) -> timedelta:
+    """How often to poll a channel, given its recent uploads (newest first).
+
+    The channel's quiet period is the longer of its median recent gap between
+    uploads and the time since its last one. ``base`` (the sweep interval) when
+    that's within ``_DORMANT_AFTER_DAYS``, or when we know of no uploads yet;
+    beyond that, ``base`` scaled by how many of those periods it spans, capped
+    at ``_MAX_POLL_INTERVAL``.
+    """
+    if not uploads:
+        return base
+    # SQLite drops the zone.
+    uploads = [u if u.tzinfo else u.replace(tzinfo=UTC) for u in uploads]
+    gaps = [(newer - older).total_seconds() for newer, older in pairwise(uploads)]
+    quiet = max(now - uploads[0], timedelta(seconds=median(gaps) if gaps else 0))
+    scale = max(1.0, quiet / timedelta(days=_DORMANT_AFTER_DAYS))
+    return min(base * scale, max(base, _MAX_POLL_INTERVAL))
+
+
+def _due_channels(db: Session, channel_ids: list[str], base: timedelta) -> list[str]:
+    """The channels whose poll interval has come round since their last poll.
+
+    A sweep of slack keeps a channel from missing its turn by seconds and
+    waiting a whole extra sweep, and makes a ``base`` interval mean every sweep.
+    """
+    ranked = (
+        select(
+            Video.channel_id,
+            Video.published_at,
+            func.row_number().over(partition_by=Video.channel_id, order_by=Video.published_at.desc()).label("rank"),
+        )
+        .where(Video.channel_id.in_(channel_ids), Video.published_at.is_not(None))
+        .subquery()
+    )
+    uploads: dict[str, list[datetime]] = defaultdict(list)
+    for channel_id, published in db.execute(
+        select(ranked.c.channel_id, ranked.c.published_at)
+        .where(ranked.c.rank <= _RECENT_GAPS + 1)
+        .order_by(ranked.c.channel_id, ranked.c.rank)
+    ):
+        uploads[channel_id].append(published)
+    now = datetime.now(UTC)
+    mono = time.monotonic()
+    due = []
+    for channel_id in channel_ids:
+        polled = _polled_at.get(channel_id)
+        interval = _poll_interval(uploads[channel_id], now, base)
+        if polled is None or timedelta(seconds=mono - polled) >= interval - base:
+            due.append(channel_id)
+    return due
+
+
 def _poll_one(channel_id: str, db: Session, client: httpx.Client) -> int:
     """Poll one channel in its own transaction, so a failure can't sink the sweep."""
     try:
@@ -327,7 +402,11 @@ def warm_uncached_channels(db: Session) -> int:
 
 
 def poll_all_channels(db: Session) -> int:
-    """Poll every non-ignored subscribed channel, then enqueue downloads.
+    """Poll every due non-ignored subscribed channel, then enqueue downloads.
+
+    Every Nebula channel is due; YouTube channels are skipped until their
+    ``_poll_interval`` has passed, which only differs from every sweep for
+    channels that usually go, or have now gone, over a month between uploads.
 
     Shorts and live filtering are intentionally *not* applied here — videos are
     recorded unconditionally so the feed proxy keeps full control of what gets
@@ -348,17 +427,21 @@ def poll_all_channels(db: Session) -> int:
     # 404ing every request.
     nebula_ids = sorted(cid for cid, platform in rows if platform == nebula.PLATFORM)
     youtube_ids = sorted(cid for cid, platform in rows if platform != nebula.PLATFORM)
+    due_ids = _due_channels(db, youtube_ids, timedelta(minutes=settings.poll_interval_minutes))
 
     total = 0
     client = _new_client()
     try:
         for channel_id in nebula_ids:
             total += _poll_one(channel_id, db, client)
-        for i, channel_id in enumerate(youtube_ids):
+        for i, channel_id in enumerate(due_ids):
             # Space out the YouTube sweep so ~50 channels don't look like a
             # burst. Nebula needs none of this, so it isn't spaced.
             if i and delay > 0:
                 time.sleep(delay + random.uniform(0, delay))
+            # Counted as polled even if it fails, so a dormant channel that's
+            # also failing isn't retried every sweep.
+            _polled_at[channel_id] = time.monotonic()
             total += _poll_one(channel_id, db, client)
     finally:
         client.close()
@@ -370,5 +453,10 @@ def poll_all_channels(db: Session) -> int:
         logger.exception("Enqueue failed")
         db.rollback()
 
-    logger.info("Polled %d channels, %d new videos", len(rows), total)
+    logger.info(
+        "Polled %d channels (%d quiet ones not due yet), %d new videos",
+        len(nebula_ids) + len(due_ids),
+        len(youtube_ids) - len(due_ids),
+        total,
+    )
     return total

@@ -3,6 +3,8 @@ spaced-out sweep so ~50 channels don't burst YouTube into rate-limiting."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import httpx
 import pytest
 from sqlalchemy import create_engine, select
@@ -33,6 +35,7 @@ def _settings(monkeypatch):
     monkeypatch.delenv("YOUTUBE_API_KEY", raising=False)
     config.get_settings.cache_clear()
     poller._api_fallback_at.clear()
+    poller._polled_at.clear()
     yield
     config.get_settings.cache_clear()
 
@@ -152,6 +155,125 @@ def test_poll_all_spaces_out_requests(db, monkeypatch):
     # Two channels -> exactly one inter-channel sleep, and it respects the delay.
     assert len(sleeps) == 1
     assert sleeps[0] >= 3.0
+
+
+def test_poll_interval_stretches_with_time_since_last_upload():
+    now = datetime(2026, 9, 27, tzinfo=UTC)
+    base = timedelta(minutes=20)
+
+    def interval(days_quiet: float) -> timedelta:
+        return poller._poll_interval([now - timedelta(days=days_quiet)], now, base)
+
+    assert poller._poll_interval([], now, base) == base  # unknown: treat as active
+    assert interval(2) == base
+    assert interval(30) == base
+    assert interval(90) == timedelta(hours=1)
+    assert timedelta(hours=4) < interval(365) < timedelta(hours=4, minutes=5)
+    assert interval(5 * 365) == timedelta(hours=12)
+    # A premiere scheduled in the future is as active as it gets.
+    assert interval(-1) == base
+
+
+def test_poll_interval_follows_the_usual_gap_between_uploads():
+    now = datetime(2026, 9, 27, tzinfo=UTC)
+    base = timedelta(minutes=20)
+
+    def interval(*days_ago: float) -> timedelta:
+        return poller._poll_interval([now - timedelta(days=d) for d in days_ago], now, base)
+
+    # Twice a year stays slow even right after an upload.
+    assert interval(1, 181, 361, 541) == timedelta(hours=2)
+    # One long break doesn't slow down a weekly channel...
+    assert interval(1, 8, 15, 22, 29, 400) == base
+    # ...and one returning from years away is back to every sweep once most
+    # of its recent gaps are short again.
+    assert interval(1, 8, 15, 1100, 1500) > base
+    assert interval(1, 8, 15, 22, 1100, 1500) == base
+    # Gone quiet for longer than its usual gap: the silence wins.
+    assert interval(90, 97, 104) == timedelta(hours=1)
+
+
+def _feed(video_id: str, published: datetime) -> bytes:
+    return (
+        '<?xml version="1.0"?>'
+        '<feed xmlns="http://www.w3.org/2005/Atom" '
+        'xmlns:yt="http://www.youtube.com/xml/schemas/2015">'
+        f"<entry><yt:videoId>{video_id}</yt:videoId><title>t</title>"
+        f"<published>{published.isoformat()}</published></entry></feed>"
+    ).encode()
+
+
+def _sweep_setup(db, monkeypatch, channels: dict[str, list[bytes]]) -> FakeClient:
+    for cid in channels:
+        db.add(Subscription(user_id=1, channel_id=cid))
+    db.commit()
+    fake = FakeClient(
+        {FEED_URL.format(channel_id=cid): [_resp(200, "u", f) for f in feeds] for cid, feeds in channels.items()}
+    )
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+    monkeypatch.setattr(poller, "enqueue_pending", lambda db: 0)
+    return fake
+
+
+def test_sweep_polls_dormant_channels_less_often(db, monkeypatch):
+    now = datetime.now(UTC)
+    active, dormant = "UCchannel00000000000001", "UCchannel00000000000002"
+    active_feed = _feed("vidActive001", now - timedelta(days=2))
+    dormant_feed = _feed("vidDormant01", now - timedelta(days=3 * 365))
+    fake = _sweep_setup(
+        db,
+        monkeypatch,
+        {
+            active: [active_feed] * 3,
+            dormant: [dormant_feed] * 2,
+        },
+    )
+
+    poller.poll_all_channels(db)  # first sweep polls everything
+    poller.poll_all_channels(db)  # the dormant channel isn't due again yet
+    assert fake.calls.count(FEED_URL.format(channel_id=active)) == 2
+    assert fake.calls.count(FEED_URL.format(channel_id=dormant)) == 1
+
+    # Once its (12 hour) interval has passed, it's polled again.
+    poller._polled_at[dormant] -= timedelta(hours=12).total_seconds()
+    poller.poll_all_channels(db)
+    assert fake.calls.count(FEED_URL.format(channel_id=active)) == 3
+    assert fake.calls.count(FEED_URL.format(channel_id=dormant)) == 2
+
+
+def test_rare_uploader_stays_slow_after_a_new_upload(db, monkeypatch):
+    now = datetime.now(UTC)
+    cid = "UCchannel00000000000001"
+    for i, days in enumerate((180, 360)):
+        db.add(Video(video_id=f"vidOld00000{i}", channel_id=cid, published_at=now - timedelta(days=days)))
+    fake = _sweep_setup(db, monkeypatch, {cid: [_feed("vidNew000001", now)] * 2})
+
+    poller.poll_all_channels(db)  # finds the new upload
+    poller.poll_all_channels(db)  # still ~6 months between uploads: not due
+
+    assert fake.calls.count(FEED_URL.format(channel_id=cid)) == 1
+
+
+def test_failed_poll_still_waits_out_the_interval(db, monkeypatch):
+    cid = "UCchannel00000000000001"
+    db.add(
+        Video(
+            video_id="vidOld000001",
+            channel_id=cid,
+            published_at=datetime.now(UTC) - timedelta(days=800),
+        )
+    )
+    db.add(Subscription(user_id=1, channel_id=cid))
+    db.commit()
+    url = FEED_URL.format(channel_id=cid)
+    fake = FakeClient({url: [_resp(500, url)] * 6})
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+    monkeypatch.setattr(poller, "enqueue_pending", lambda db: 0)
+
+    poller.poll_all_channels(db)
+    poller.poll_all_channels(db)
+
+    assert fake.calls == [url] * 3  # one poll's worth of retries, not two
 
 
 def test_warm_polls_only_uncached_channels(db, monkeypatch):
