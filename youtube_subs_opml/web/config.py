@@ -54,7 +54,8 @@ class Settings(BaseSettings):
     # channel back-to-back looks like a burst and YouTube soft-throttles the IP
     # (intermittent 404/429/500). A small delay between channels plus a couple of
     # backoff retries keeps a sweep under the radar. Base delay also seeds the
-    # retry backoff. Set to 0 to disable spacing (e.g. in tests).
+    # retry backoff. Set to 0 to disable spacing (e.g. in tests). Retries are
+    # turned off while YouTube is failing most requests (see poller._RetryBreaker).
     poll_channel_delay_seconds: float = Field(2.0)
     poll_max_retries: int = Field(2)
     # YouTube Data API key (no OAuth) for when a channel's RSS feed fails: the
@@ -62,11 +63,10 @@ class Settings(BaseSettings):
     # sometimes 404s every request from this server for hours. Empty disables it.
     youtube_api_key: str = Field("")
     # Minimum gap between API fallbacks for one channel. Each costs 1 unit of the
-    # 10,000/day quota. During an RSS outage a sweep takes ~35 minutes (every
-    # channel burns its retries), so sweeps reach a channel every ~45 minutes;
-    # 30 lets each of those fall back (~5,300 units/day for 165 channels) while
-    # still capping the rate if sweeps ever speed up. At 60, every other sweep
-    # was skipped and channels went ~90 minutes between refreshes.
+    # 10,000/day quota. Chosen when an RSS outage made every channel burn its
+    # retries and a sweep took ~35 minutes; retries now turn off during an
+    # outage, so sweeps keep to the 20-minute interval and a channel falls back
+    # on every other one. At 60, channels went ~90 minutes between refreshes.
     youtube_api_fallback_interval_minutes: int = Field(30)
     # Keep this at 1. Concurrent downloads from one IP are the fastest route to
     # "Sign in to confirm you're not a bot".

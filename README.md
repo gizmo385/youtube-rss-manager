@@ -65,7 +65,7 @@ Authentication can either be managed via:
 2. Set the authorized redirect URI to `<BASE_URL>/auth/youtube/callback`.
 3. Enable the **YouTube Data API v3** on the same project.
 4. Set the OAuth consent screen's publishing status to **In production**. In Testing mode, Google expires refresh tokens after 7 days, so connected accounts stop syncing weekly until reconnected. The `youtube.readonly` scope is "sensitive", so an unverified app shows a "Google hasn't verified this app" warning when connecting and is capped at 100 users. Neither matters for household use, and no verification review is needed.
-5. Optionally, create an **API key** restricted to the YouTube Data API v3 and set it as `YOUTUBE_API_KEY`. When YouTube's RSS feeds fail (they sometimes 404 every request from a server for hours), the poller reads a channel's recent uploads from the API instead, at most once per channel per hour.
+5. Optionally, create an **API key** restricted to the YouTube Data API v3 and set it as `YOUTUBE_API_KEY`. When YouTube's RSS feeds fail (they sometimes 404 every request from a server for hours), the poller reads a channel's recent uploads from the API instead, at most once per channel per `YOUTUBE_API_FALLBACK_INTERVAL_MINUTES`. While most feeds are failing, the poller stops retrying them and falls back after one request, until feeds work again.
 
 ### 2. Configure environment
 

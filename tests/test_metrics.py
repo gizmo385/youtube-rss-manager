@@ -71,6 +71,8 @@ def _settings(monkeypatch):
     monkeypatch.setenv("POLL_CHANNEL_DELAY_SECONDS", "0")
     monkeypatch.setenv("POLL_MAX_RETRIES", "2")
     config.get_settings.cache_clear()
+    # Failures pile up across tests; a tripped breaker would cut their retries.
+    monkeypatch.setattr(poller, "_rss_breaker", poller._RetryBreaker())
     yield
     config.get_settings.cache_clear()
 
@@ -241,3 +243,17 @@ def test_library_snapshot(db):
     assert _observed(snap, "yt_rss_download_states", status="skipped", reason="too_long") == [1]
     assert _observed(snap, "yt_rss_archive_bytes", channel="Planes", kind="video") == [1000]
     assert _observed(snap, "yt_rss_archive_bytes", channel="Planes", kind="audio") == [50]
+
+
+def test_retry_breaker_transitions_are_counted(db):
+    before = {s: _total("yt_rss_feed_retry_breaker", state=s) for s in ("tripped", "reset")}
+    cids = [f"UCmetricbreaker{i:08d}" for i in range(10)]
+    script = {FEED_URL.format(channel_id=cid): [(404, b"")] * 3 for cid in cids[:5]}
+    script |= {FEED_URL.format(channel_id=cid): [(200, FEED)] for cid in cids[5:]}
+    client = scripted_client(script)
+
+    for cid in cids:
+        poller.poll_channel(cid, db, client)
+
+    assert _total("yt_rss_feed_retry_breaker", state="tripped") == before["tripped"] + 1
+    assert _total("yt_rss_feed_retry_breaker", state="reset") == before["reset"] + 1

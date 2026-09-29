@@ -16,6 +16,14 @@ When a YouTube feed fails even after retries, and ``YOUTUBE_API_KEY`` is set, th
 channel's uploads are read from the Data API instead (see ``uploads_api``), at
 most once per channel per ``youtube_api_fallback_interval_minutes``.
 
+YouTube's RSS outages block this server's IP rather than particular channels,
+and retries almost never get through (about 3% did in the nightly outages of
+late September 2026), so they only add requests and backoff. After
+``_BREAKER_STREAK`` YouTube channels in a row fail their first request, retries
+are turned off: each channel gets one request and then falls back. They come
+back on after the same number of first requests in a row succeed. See
+``_RetryBreaker``.
+
 Channels that upload rarely are polled less often: anything that uploaded in
 the last month, and usually uploads at least monthly, is polled every sweep.
 Past that the interval stretches with the channel's typical gap between uploads
@@ -83,6 +91,47 @@ _DORMANT_AFTER_DAYS = 30
 _RECENT_GAPS = 5
 _MAX_POLL_INTERVAL = timedelta(hours=12)
 
+# How many YouTube channels in a row must fail their first request to turn
+# retries off, and succeed to turn them back on. During an outage about 1 in 5
+# first requests still succeeds, so 5 successes in a row almost never happen
+# before it ends (0.2^5); outside one, 5 failures in a row never have.
+_BREAKER_STREAK = 5
+
+
+class _RetryBreaker:
+    """Turns RSS retries off while YouTube is failing nearly every request.
+
+    Fed the result of each YouTube channel's first request only, so a channel
+    counts once however many retries it gets. While tripped, each channel still
+    gets that one request: it's how recovery is noticed, and the ones that get
+    through don't use Data API quota. In memory: a restart starts with retries
+    on, and a still-running outage trips it again within a few channels.
+    """
+
+    def __init__(self) -> None:
+        self.tripped = False
+        # First requests in a row that went against the current state:
+        # failures while retries are on, successes while they're off.
+        self._streak = 0
+
+    def record(self, ok: bool) -> None:
+        if ok == self.tripped:
+            self._streak += 1
+        else:
+            self._streak = 0
+        if self._streak < _BREAKER_STREAK:
+            return
+        self.tripped = not self.tripped
+        self._streak = 0
+        if self.tripped:
+            logger.warning("YouTube RSS failed for %d channels in a row: turning retries off", _BREAKER_STREAK)
+        else:
+            logger.info("YouTube RSS worked for %d channels in a row: retries back on", _BREAKER_STREAK)
+        metrics.feed_retry_breaker.add(1, {"state": "tripped" if self.tripped else "reset"})
+
+
+_rss_breaker = _RetryBreaker()
+
 
 def _new_client() -> httpx.Client:
     return httpx.Client(
@@ -106,11 +155,14 @@ def _fetch_feed(
     max_retries: int,
     base_delay: float,
     platform: str = "youtube",
+    breaker: _RetryBreaker | None = None,
 ) -> httpx.Response:
     """Fetch one channel feed, retrying transient throttling responses.
 
     Every attempt is counted in ``yt_rss_feed_fetch_attempts``, so throttling
-    that a retry papers over still shows up.
+    that a retry papers over still shows up. With a ``breaker``, the first
+    attempt's result is fed to it, and there are no retries while it's tripped
+    (including when this attempt is the one that trips it).
 
     Raises ``httpx.HTTPError`` once retries are exhausted, for the caller to log.
     """
@@ -121,14 +173,19 @@ def _fetch_feed(
             metrics.feed_fetch_attempts.add(
                 1, {"platform": platform, "status": "network_error", "attempt": attempt + 1}
             )
-            if attempt >= max_retries:
+            if breaker is not None and attempt == 0:
+                breaker.record(ok=False)
+            if attempt >= max_retries or (breaker is not None and breaker.tripped):
                 raise
             _sleep_backoff(base_delay, attempt)
             continue
         metrics.feed_fetch_attempts.add(
             1, {"platform": platform, "status": str(resp.status_code), "attempt": attempt + 1}
         )
-        if resp.status_code in _RETRY_STATUSES and attempt < max_retries:
+        if breaker is not None and attempt == 0:
+            breaker.record(ok=resp.is_success)
+        retries_off = breaker is not None and breaker.tripped
+        if resp.status_code in _RETRY_STATUSES and attempt < max_retries and not retries_off:
             _sleep_backoff(base_delay, attempt)
             continue
         resp.raise_for_status()
@@ -182,6 +239,8 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
             max_retries=settings.poll_max_retries,
             base_delay=settings.poll_channel_delay_seconds,
             platform=platform,
+            # Nebula's feeds don't share YouTube's outages.
+            breaker=None if is_nebula else _rss_breaker,
         )
     except httpx.HTTPError as exc:
         logger.warning("Poll failed for %s: %s", channel_id, exc)

@@ -45,6 +45,14 @@ feed_api_fallbacks = meter.create_counter(
         "fell back too recently)."
     ),
 )
+feed_retry_breaker = meter.create_counter(
+    "yt_rss_feed_retry_breaker",
+    unit="{transition}",
+    description=(
+        "YouTube RSS retries being turned off ('tripped': several channels in a "
+        "row failed their first request) or back on ('reset'), by `state`."
+    ),
+)
 feed_poll_duration = meter.create_histogram(
     "yt_rss_feed_poll_duration",
     unit="s",

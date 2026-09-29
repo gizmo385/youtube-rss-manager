@@ -36,6 +36,7 @@ def _settings(monkeypatch):
     config.get_settings.cache_clear()
     poller._api_fallback_at.clear()
     poller._polled_at.clear()
+    monkeypatch.setattr(poller, "_rss_breaker", poller._RetryBreaker())
     yield
     config.get_settings.cache_clear()
 
@@ -440,3 +441,105 @@ def test_nebula_never_falls_back(db, monkeypatch):
 
     assert poller.poll_channel(cid, db) == 0
     assert fake.calls == [url] * 3
+
+
+# --- Retry breaker -----------------------------------------------------------
+
+
+def _channel(n: int) -> str:
+    return f"UCbreaker{n:014d}"
+
+
+def _breaker_client(outcomes: list[bool]) -> tuple[FakeClient, list[str]]:
+    """One channel per outcome: a working feed, or one that 404s on every request."""
+    cids = [_channel(i) for i in range(len(outcomes))]
+    return FakeClient(
+        {
+            FEED_URL.format(channel_id=cid): [_resp(200, "u", FEED)] if ok else [_resp(404, "u")] * 3
+            for cid, ok in zip(cids, outcomes, strict=True)
+        }
+    ), cids
+
+
+def _poll_each(db, monkeypatch, fake: FakeClient, cids: list[str]) -> list[int]:
+    """How many requests each channel's poll made."""
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+    counts = []
+    for cid in cids:
+        before = len(fake.calls)
+        poller.poll_channel(cid, db)
+        counts.append(len(fake.calls) - before)
+    return counts
+
+
+def test_retries_stop_after_a_run_of_failing_channels(db, monkeypatch):
+    fake, cids = _breaker_client([False] * 7)
+
+    # The fifth failure trips it, so that channel doesn't retry either.
+    assert _poll_each(db, monkeypatch, fake, cids) == [3, 3, 3, 3, 1, 1, 1]
+    assert poller._rss_breaker.tripped
+
+
+def test_a_working_channel_breaks_the_run(db, monkeypatch):
+    fake, cids = _breaker_client([False] * 4 + [True] + [False] * 4)
+
+    assert _poll_each(db, monkeypatch, fake, cids) == [3, 3, 3, 3, 1, 3, 3, 3, 3]
+    assert not poller._rss_breaker.tripped
+
+
+def test_a_retry_that_recovers_still_counts_as_a_failure(db, monkeypatch):
+    # A throttled IP occasionally gets through on a retry; the first request
+    # still failed, which is what the breaker counts.
+    cids = [_channel(i) for i in range(5)]
+    fake = FakeClient({FEED_URL.format(channel_id=cid): [_resp(404, "u"), _resp(200, "u", FEED)] for cid in cids})
+
+    assert _poll_each(db, monkeypatch, fake, cids) == [2, 2, 2, 2, 1]
+    assert poller._rss_breaker.tripped
+
+
+def test_retries_come_back_after_a_run_of_working_channels(db, monkeypatch):
+    poller._rss_breaker.tripped = True
+    fake, cids = _breaker_client([True] * 4 + [False] + [True] * 5 + [False])
+
+    # One failure while tripped restarts the count; five successes reset it.
+    assert _poll_each(db, monkeypatch, fake, cids) == [1] * 10 + [3]
+    assert not poller._rss_breaker.tripped
+
+
+def test_tripped_breaker_falls_back_after_one_request(db, monkeypatch):
+    _with_api_key(monkeypatch)
+    poller._rss_breaker.tripped = True
+    cid = "UCchannel00000000000001"
+    api_url = uploads_api.uploads_url(cid)
+    fake = _api_client(
+        cid, [_resp(404, "u")], [httpx.Response(200, json=API_ITEMS, request=httpx.Request("GET", api_url))]
+    )
+    monkeypatch.setattr(poller, "_new_client", lambda: fake)
+
+    assert poller.poll_channel(cid, db) == 1
+    assert fake.calls == [FEED_URL.format(channel_id=cid), api_url]
+
+
+def test_network_errors_trip_the_breaker_too(db, monkeypatch):
+    cids = [_channel(i) for i in range(6)]
+
+    class Unreachable(FakeClient):
+        def get(self, url, headers=None):
+            self.calls.append(url)
+            raise httpx.ConnectError("boom", request=httpx.Request("GET", url))
+
+    fake = Unreachable({})
+    assert _poll_each(db, monkeypatch, fake, cids) == [3, 3, 3, 3, 1, 1]
+
+
+def test_nebula_failures_leave_the_breaker_alone(db, monkeypatch):
+    from youtube_subs_opml import nebula
+
+    cids = [f"nebula-{i}" for i in range(6)]
+    for cid in cids:
+        db.add(Channel(channel_id=cid, title=cid, platform=nebula.PLATFORM))
+    db.commit()
+    fake = FakeClient({nebula.feed_url(cid): [_resp(500, "u")] * 3 for cid in cids})
+
+    assert _poll_each(db, monkeypatch, fake, cids) == [3] * 6
+    assert not poller._rss_breaker.tripped
