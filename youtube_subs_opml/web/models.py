@@ -370,6 +370,23 @@ class ChannelFeedCache(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class WatchedVideo(Base):
+    """A video the user has marked watched on the Watch tab.
+
+    Keyed by a free-form ``video_key`` rather than a foreign key to ``videos``:
+    YouTube videos use their video id, but Nebula videos never land in
+    ``videos`` (they're read straight from the cached feed), so they're keyed
+    ``nebula:{video slug}``. A row's presence is the whole state — unmarking
+    deletes it.
+    """
+
+    __tablename__ = "watched_videos"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    video_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    watched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class OpmlToken(Base):
     __tablename__ = "opml_tokens"
 

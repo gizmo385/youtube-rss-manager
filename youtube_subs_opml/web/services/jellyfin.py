@@ -210,6 +210,29 @@ class JellyfinClient:
             except httpx.HTTPError as exc:
                 raise JellyfinError(f"playlist remove failed: {exc}") from exc
 
+    def mark_played(self, item_id: str, user_id: str) -> None:
+        """Mark an item played for a user, as if they'd watched it in Jellyfin.
+
+        Uses the 10.9+ ``/UserPlayedItems`` route; the older
+        ``/Users/{userId}/PlayedItems`` form is deprecated.
+        """
+        try:
+            resp = httpx.post(
+                self._url(f"/UserPlayedItems/{item_id}"),
+                headers=self._headers(),
+                params={"userId": user_id},
+                timeout=_TIMEOUT,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise JellyfinError(f"mark played failed: {exc}") from exc
+
+
+def jellyfin_deep_link(base_url: str, item_id: str) -> str:
+    """A web deep link to a Jellyfin item. Jellyfin resolves the item and
+    redirects, so the server id can be omitted."""
+    return f"{base_url.rstrip('/')}/web/#/details?id={item_id}"
+
 
 def normalise_path(path: str) -> str:
     """Normalise a Jellyfin/OS path for comparison (posix separators, no trailing slash)."""

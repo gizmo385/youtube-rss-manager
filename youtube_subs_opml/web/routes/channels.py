@@ -42,6 +42,7 @@ from ..services.prefs import (
 from ..services.resolve import resolve_channel_public
 from ..services.stats import format_bytes, shell_stats
 from ..services.sync import build_google_credentials
+from ..services.watch import channel_videos
 from ..templating import templates
 
 # Archive prefs editable per subscription, and how each form value is parsed.
@@ -536,6 +537,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
             _pref_choice(sub, cats, user, "link_target", "Feed link target", link_opts),
         ],
         "activity": _archive_activity(channel_id, db),
+        "videos": channel_videos(user, db, ch),
     }
 
 

@@ -14,15 +14,16 @@ _globals: dict[str, Any] = templates.env.globals
 
 
 def _asset_version() -> str:
-    """A cache-busting token for static assets, from style.css's mtime.
+    """A cache-busting token for static assets: the newest mtime among them.
 
-    Appended to the stylesheet URL so a redeploy (which rewrites the file)
+    Appended to static URLs so a redeploy (which rewrites the files)
     invalidates any copy cached by the browser or the Caddy layer in front,
-    rather than serving stale CSS against freshly-changed markup.
+    rather than serving stale CSS or JS against freshly-changed markup. The
+    newest file rather than just style.css, so a JS-only change busts too.
     """
     try:
-        return str(int((_HERE / "static" / "style.css").stat().st_mtime))
-    except OSError:
+        return str(int(max(f.stat().st_mtime for f in (_HERE / "static").iterdir() if f.is_file())))
+    except (OSError, ValueError):
         return "0"
 
 

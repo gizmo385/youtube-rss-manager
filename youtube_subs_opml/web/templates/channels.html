@@ -82,6 +82,7 @@
   [{% for c in categories %}{"id": {{ c.id }}, "name": {{ c.name|tojson }}}{{ ',' if not loop.last }}{% endfor %}]
 </script>
 
+<script src="/static/watch.js?v={{ asset_v }}"></script>
 <script>
 var currentFilter = {{ active_filter|tojson }};
 
@@ -274,13 +275,75 @@ document.addEventListener('keydown', function(e){
   if (e.key === 'Escape' && !document.getElementById('add-modal').hidden) closeAddModal();
 });
 
+// --- Channel videos (cards + player from static/watch.js) -------------------
+var CV_INITIAL = 8;
+var cv = {channelId: null, videos: [], byKey: {}, expanded: false};
+
+function renderChannelVideos() {
+  var grid = document.getElementById('channel-videos');
+  var data = document.getElementById('channel-videos-data');
+  if (!grid || !data) return;
+  // Keep "show all" open across the pane's re-renders for the same channel.
+  if (grid.dataset.channelId !== cv.channelId) cv.expanded = false;
+  cv.channelId = grid.dataset.channelId;
+  cv.videos = JSON.parse(data.textContent);
+  cv.byKey = {};
+  cv.videos.forEach(function(v){ cv.byKey[v.key] = v; });
+  drawChannelVideos();
+}
+function drawChannelVideos() {
+  var grid = document.getElementById('channel-videos');
+  if (!grid) return;
+  var shown = cv.expanded ? cv.videos : cv.videos.slice(0, CV_INITIAL);
+  grid.innerHTML = shown.map(function(v){ return Watch.card(v, v.key, {hideChannel: true}); }).join('');
+  var more = document.getElementById('channel-videos-more');
+  more.hidden = cv.videos.length <= CV_INITIAL;
+  more.textContent = cv.expanded ? 'Show fewer' : 'Show all ' + cv.videos.length;
+}
+function setChannelVideoWatched(v, watched) {
+  if (v.watched === watched) return;
+  v.watched = watched;
+  drawChannelVideos();
+  Watch.saveWatched([v.key], watched).catch(function(){
+    v.watched = !watched;
+    drawChannelVideos();
+    showError("Couldn't save watched state");
+  });
+}
+
+document.getElementById('channel-detail').addEventListener('click', function(e){
+  if (e.target.closest('#channel-videos-more')) {
+    cv.expanded = !cv.expanded;
+    drawChannelVideos();
+    return;
+  }
+  var item = e.target.closest('#channel-videos [data-k]');
+  if (!item) return;
+  var v = cv.byKey[item.dataset.k];
+  if (!v) return;
+  if (e.target.closest('[data-act="watch"]')) {
+    e.preventDefault();
+    setChannelVideoWatched(v, !v.watched);
+    return;
+  }
+  // A modified click opens the link in a new tab as usual; so does Nebula,
+  // which has no embeddable player.
+  if (!(e.ctrlKey || e.metaKey || e.shiftKey) && Watch.canPlayHere(v)) {
+    e.preventDefault();
+    Watch.play(v);
+  }
+  setChannelVideoWatched(v, true);
+});
+
 // Keep the detail pane's hidden filter field in sync so its writes group correctly.
 document.body.addEventListener('htmx:afterSwap', function(evt){
   if (evt.detail.target.id === 'channel-detail') {
     var f = evt.detail.target.querySelector('[data-detail-filter]');
     if (f) f.value = currentFilter;
+    renderChannelVideos();
   }
   if (evt.detail.target.id === 'channel-groups') { reapplySearch(); updateBulk(); }
 });
+renderChannelVideos();
 </script>
 {% endblock %}

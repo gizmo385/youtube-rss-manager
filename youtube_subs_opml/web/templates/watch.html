@@ -1,0 +1,604 @@
+{% extends "base.html" %}
+{% block title %}Watch — YouTube Subs OPML{% endblock %}
+
+{% block body %}
+<div class="watch">
+  <div class="watch-toolbar">
+    <div class="w-search">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      <input id="watch-search" type="search" placeholder="Search videos and channels…" autocomplete="off" spellcheck="false">
+      <kbd>/</kbd>
+    </div>
+    <button type="button" id="w-unwatched" class="w-toggle"><span class="dot"></span>Unwatched only</button>
+    <div class="seg" id="w-platforms"></div>
+    <span id="w-channel-chip"></span>
+    <span id="w-count" class="w-count"></span>
+    <div class="w-view">
+      <span class="w-view-label">View</span>
+      <div class="seg" id="w-layouts"></div>
+      <button type="button" class="w-help-btn" id="w-help-btn" title="Keyboard shortcuts">?</button>
+    </div>
+  </div>
+
+  <div class="watch-body">
+    <aside class="watch-side" id="watch-side">
+      <div class="w-side-head">
+        <span class="eyebrow">Categories</span>
+        <button type="button" class="w-side-all" id="w-toggle-all"></button>
+      </div>
+      <div class="w-side-list sb" id="w-side-list"></div>
+    </aside>
+    <main class="watch-main sb" id="watch-main"></main>
+  </div>
+
+  <footer class="watch-legend" id="watch-legend"></footer>
+</div>
+
+<div id="w-help" class="w-help-overlay" hidden>
+  <div class="w-help-modal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <div class="w-help-title">Keyboard shortcuts</div>
+    <div class="w-help-rows" id="w-help-rows"></div>
+    <div class="w-help-foot"><kbd>esc</kbd> close</div>
+  </div>
+</div>
+
+<div id="toast-host"></div>
+
+<script id="watch-data" type="application/json">{{ feed|tojson }}</script>
+<script src="/static/watch.js?v={{ asset_v }}"></script>
+<script>
+(function () {
+  var FEED = JSON.parse(document.getElementById('watch-data').textContent);
+  var CATS = FEED.categories;
+  var VIDEOS = FEED.videos;
+  var BY_KEY = {};
+  VIDEOS.forEach(function (v) { BY_KEY[v.key] = v; });
+
+  var PLATS = [['all', 'All'], ['youtube', 'YouTube'], ['nebula', 'Nebula']];
+  var LAYOUTS = [['grid', 'Grid', '1'], ['shelves', 'Shelves', '2'], ['list', 'List', '3']];
+  var SHORTCUTS = [
+    [['J', 'K'], 'Next / previous video', 'Next · prev'],
+    [['[', ']'], 'Previous / next category', 'Category'],
+    [['X'], 'Collapse or expand this category', 'Collapse'],
+    [['⇧X'], 'Collapse or expand all categories', 'All'],
+    [['↵'], 'Play here (the archived copy when there is one)', 'Play'],
+    [['O'], 'Open in Jellyfin / YouTube / Nebula in a new tab', 'Open'],
+    [['W'], 'Toggle watched', 'Watched'],
+    [['⇧W'], 'Mark the whole category watched', null],
+    [['/'], 'Search', 'Search'],
+    [['U'], 'Unwatched only', 'Unwatched'],
+    [['P'], 'Cycle platform: All → YouTube → Nebula', 'Platform'],
+    [['1', '2', '3'], 'Grid · Shelves · List', 'View'],
+    [['?'], 'Show all shortcuts', 'Help']
+  ];
+
+  // View preferences are a per-browser convenience; watched state lives on
+  // the server so it follows you between devices.
+  var PREF_KEY = 'watch-prefs-v1';
+  var prefs = {};
+  try { prefs = JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch (e) {}
+
+  var S = {
+    collapsed: prefs.collapsed || {},
+    layout: prefs.layout || 'grid',
+    unwatchedOnly: !!prefs.unwatchedOnly,
+    platform: prefs.platform || 'all',
+    query: '',
+    channel: null,          // {id, title} when filtering to one channel
+    selCat: null,
+    selKey: null,           // card key: category id + '|' + video key
+    toast: null
+  };
+
+  function savePrefs() {
+    try {
+      localStorage.setItem(PREF_KEY, JSON.stringify({
+        collapsed: S.collapsed, layout: S.layout, unwatchedOnly: S.unwatchedOnly, platform: S.platform
+      }));
+    } catch (e) {}
+  }
+
+  // ---- helpers ----------------------------------------------------------
+  var esc = Watch.esc, ago = Watch.ago, agoShort = Watch.agoShort, dur = Watch.dur;
+  var badges = Watch.badges, watchBtn = Watch.watchBtn;
+  function cardKey(catId, v) { return catId + '|' + v.key; }
+  function videoOf(k) { return k ? BY_KEY[k.slice(k.indexOf('|') + 1)] : null; }
+  function catName(id) { for (var i = 0; i < CATS.length; i++) if (CATS[i].id === id) return CATS[i].name; return ''; }
+
+  function matches(v) {
+    var q = S.query.trim().toLowerCase();
+    if (S.unwatchedOnly && v.watched) return false;
+    if (S.platform === 'youtube' && v.nebula) return false;
+    if (S.platform === 'nebula' && !v.nebula) return false;
+    if (S.channel && v.channelId !== S.channel.id) return false;
+    if (q && v.title.toLowerCase().indexOf(q) < 0 && v.channel.toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  }
+  function model() {
+    return CATS.map(function (c) {
+      var all = VIDEOS.filter(function (v) { return v.cats.indexOf(c.id) >= 0; });
+      return {
+        id: c.id, name: c.name, channels: c.channels, all: all,
+        vids: all.filter(matches),
+        unw: all.filter(function (v) { return !v.watched; }).length,
+        collapsed: !!S.collapsed[c.id]
+      };
+    });
+  }
+  function sections() { return model().filter(function (c) { return c.vids.length; }); }
+  function flat() {
+    var out = [];
+    sections().forEach(function (c) {
+      if (!c.collapsed) c.vids.forEach(function (v) { out.push({cat: c.id, v: v, k: cardKey(c.id, v)}); });
+    });
+    return out;
+  }
+
+  // ---- rendering --------------------------------------------------------
+  var CHEV_OPEN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>';
+  var CHEV_SHUT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>';
+  function card(c, v) { return Watch.card(v, cardKey(c.id, v)); }
+  function row(c, v) {
+    return '<a class="w-row' + (v.watched ? ' watched' : '') + '" data-k="' + esc(cardKey(c.id, v)) +
+      '" href="' + esc(v.url) + '" target="_blank" rel="noopener">' +
+      '<span class="w-row-dot"></span>' +
+      '<span class="w-row-title">' + esc(v.title) + '</span>' +
+      '<span class="w-row-ch">' + esc(v.channel) + '</span>' +
+      '<span class="w-row-tags">' + badges(v) + '</span>' +
+      '<span class="w-row-num">' + dur(v.duration) + '</span>' +
+      '<span class="w-row-num w-row-age">' + agoShort(v) + '</span>' +
+      watchBtn(v) + '</a>';
+  }
+  function countLabel(c) {
+    return c.unw + ' unwatched · ' + c.vids.length + (c.vids.length !== c.all.length ? ' of ' + c.all.length : '');
+  }
+  function secHead(c, cls, hint) {
+    return '<div class="' + cls + '" data-act="toggle-sec">' +
+      '<span class="w-chev">' + (c.collapsed ? CHEV_SHUT : CHEV_OPEN) + '</span>' +
+      '<span class="w-sec-name">' + esc(c.name) + '</span>' +
+      '<span class="w-sec-count">' + countLabel(c) + '</span>' +
+      (c.collapsed ? '<span class="w-sec-peek">Latest — ' + esc(c.vids[0].title) + '</span>' : '') +
+      '<span class="w-sec-hint">' + hint + '</span></div>';
+  }
+
+  function renderMain(secs) {
+    var main = document.getElementById('watch-main');
+    // Shelves scroll sideways; keep each one's position across re-renders.
+    var shelfScroll = {};
+    main.querySelectorAll('.w-shelf').forEach(function (el) { shelfScroll[el.dataset.sec] = el.scrollLeft; });
+
+    if (!VIDEOS.length) {
+      main.innerHTML = '<div class="w-empty"><div class="eyebrow">Nothing new in the last ' + FEED.windowDays +
+        ' days</div><p class="w-empty-sub">Videos appear here as the poller picks them up from your subscriptions.</p></div>';
+      return;
+    }
+    if (!secs.length) {
+      main.innerHTML = '<div class="w-empty"><div class="eyebrow">Nothing matches these filters</div>' +
+        '<button type="button" class="btn" data-act="clear-filters">Clear filters</button></div>';
+      return;
+    }
+    var html = '';
+    secs.forEach(function (c) {
+      if (S.layout === 'grid') {
+        html += '<section class="w-sec" data-sec="' + c.id + '">' +
+          secHead(c, 'w-sec-head', '[ ] switch · X collapse · ⇧W mark all watched') +
+          (c.collapsed ? '' : '<div class="w-grid">' + c.vids.map(function (v) { return card(c, v); }).join('') + '</div>') +
+          '</section>';
+      } else if (S.layout === 'shelves') {
+        html += '<section class="w-sec w-sec-shelf" data-sec="' + c.id + '">' +
+          secHead(c, 'w-shelf-head', '[ ] switch · X collapse') +
+          (c.collapsed ? '' : '<div class="w-shelf sb" data-sec="' + c.id + '">' +
+            c.vids.map(function (v) { return card(c, v); }).join('') + '</div>') +
+          '</section>';
+      } else {
+        html += '<section class="w-sec" data-sec="' + c.id + '">' +
+          secHead(c, 'w-sec-head w-list-head', '') +
+          (c.collapsed ? '' : c.vids.map(function (v) { return row(c, v); }).join('')) +
+          '</section>';
+      }
+    });
+    if (S.layout === 'list') html += '<div class="w-end">End of feed</div>';
+    main.innerHTML = html;
+    main.querySelectorAll('.w-shelf').forEach(function (el) {
+      if (shelfScroll[el.dataset.sec]) el.scrollLeft = shelfScroll[el.dataset.sec];
+    });
+  }
+
+  function renderSide(mdl) {
+    var html = '';
+    mdl.forEach(function (c) {
+      html += '<div class="w-side-cat" data-cat="' + c.id + '">' +
+        '<div class="w-side-row">' +
+          '<button type="button" class="w-side-chev" data-act="toggle-cat" title="Collapse / expand">' +
+            (c.collapsed ? CHEV_SHUT : CHEV_OPEN) + '</button>' +
+          '<button type="button" class="w-side-name' + (c.vids.length ? '' : ' empty') + '" data-act="jump">' + esc(c.name) + '</button>' +
+          '<span class="w-badge' + (c.unw ? ' on' : '') + '">' + c.unw + '</span>' +
+        '</div>';
+      if (!c.collapsed) {
+        c.channels.forEach(function (ch) {
+          var n = c.all.filter(function (v) { return v.channelId === ch.id && !v.watched; }).length;
+          var on = S.channel && S.channel.id === ch.id;
+          html += '<button type="button" class="w-side-ch' + (on ? ' on' : '') + '" data-act="channel" data-ch="' + esc(ch.id) + '">' +
+            '<span class="w-side-ch-name">' + esc(ch.title) + '</span>' +
+            (ch.nebula ? '<span class="w-tag">NEB</span>' : '') +
+            '<span class="w-side-ch-n">' + (n || '') + '</span></button>';
+        });
+      }
+      html += '</div>';
+    });
+    document.getElementById('w-side-list').innerHTML = html;
+    var anyOpen = CATS.some(function (c) { return !S.collapsed[c.id]; });
+    document.getElementById('w-toggle-all').innerHTML = (anyOpen ? 'Collapse all' : 'Expand all') + '<span class="w-key">⇧X</span>';
+  }
+
+  function renderToolbar(mdl) {
+    document.getElementById('w-unwatched').classList.toggle('on', S.unwatchedOnly);
+    document.getElementById('w-platforms').innerHTML = PLATS.map(function (p) {
+      return '<button type="button" data-platform="' + p[0] + '"' + (S.platform === p[0] ? ' class="on"' : '') + '>' + p[1] + '</button>';
+    }).join('');
+    document.getElementById('w-layouts').innerHTML = LAYOUTS.map(function (l) {
+      return '<button type="button" data-layout="' + l[0] + '"' + (S.layout === l[0] ? ' class="on"' : '') + '>' +
+        l[1] + '<span class="w-key">' + l[2] + '</span></button>';
+    }).join('');
+    document.getElementById('w-channel-chip').innerHTML = S.channel
+      ? '<span class="w-chip">' + esc(S.channel.title) +
+        '<button type="button" id="w-clear-channel" title="Clear channel"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button></span>'
+      : '';
+    var totalUnw = VIDEOS.filter(function (v) { return !v.watched; }).length;
+    var shown = 0, seen = {};
+    mdl.forEach(function (c) { c.vids.forEach(function (v) { if (!seen[v.key]) { seen[v.key] = 1; shown++; } }); });
+    document.getElementById('w-count').textContent =
+      totalUnw + ' unwatched' + (shown !== VIDEOS.length ? ' · ' + shown + ' shown' : '');
+  }
+
+  function render() {
+    var mdl = model(), secs = mdl.filter(function (c) { return c.vids.length; });
+    // Keep the selection valid after filters change underneath it.
+    if (S.selKey && !flat().some(function (f) { return f.k === S.selKey; })) S.selKey = null;
+    if (!S.selCat || !secs.some(function (c) { return c.id === S.selCat; })) S.selCat = secs.length ? secs[0].id : null;
+
+    document.querySelector('.watch').classList.toggle('no-side', S.layout === 'shelves');
+    renderToolbar(mdl);
+    renderSide(mdl);
+    renderMain(secs);
+    applySel();
+    savePrefs();
+  }
+
+  // Selection only toggles classes, so moving through the feed doesn't rebuild
+  // (and re-decode) every thumbnail on each keypress.
+  function applySel() {
+    document.querySelectorAll('.w-card.sel, .w-row.sel').forEach(function (el) { el.classList.remove('sel'); });
+    document.querySelectorAll('[data-sec].focused, .w-side-cat.focused').forEach(function (el) { el.classList.remove('focused'); });
+    if (S.selKey) {
+      var el = document.querySelector('[data-k="' + CSS.escape(S.selKey) + '"]');
+      if (el) el.classList.add('sel');
+    }
+    if (S.selCat) {
+      var sec = document.querySelector('section[data-sec="' + S.selCat + '"]');
+      if (sec) sec.classList.add('focused');
+      var side = document.querySelector('.w-side-cat[data-cat="' + S.selCat + '"]');
+      if (side) side.classList.add('focused');
+    }
+  }
+
+  function ensureVisible(el) {
+    if (!el) return;
+    for (var p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      var cs = getComputedStyle(p), r = el.getBoundingClientRect(), pr = p.getBoundingClientRect();
+      if (/(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight) {
+        var top = pr.top + 44;   // clear the sticky section header
+        if (r.top < top) p.scrollTop -= top - r.top + 8;
+        else if (r.bottom > pr.bottom) p.scrollTop += r.bottom - pr.bottom + 12;
+      }
+      if (/(auto|scroll)/.test(cs.overflowX) && p.scrollWidth > p.clientWidth) {
+        if (r.left < pr.left) p.scrollLeft -= pr.left - r.left + 20;
+        else if (r.right > pr.right) p.scrollLeft += r.right - pr.right + 20;
+      }
+    }
+  }
+  function scrollToSection(id) {
+    var main = document.getElementById('watch-main'), sec = main.querySelector('section[data-sec="' + id + '"]');
+    if (sec) main.scrollTop += sec.getBoundingClientRect().top - main.getBoundingClientRect().top;
+  }
+
+  // ---- actions ----------------------------------------------------------
+  function select(k, cat) {
+    S.selKey = k;
+    if (cat) S.selCat = cat;
+    applySel();
+    if (k) ensureVisible(document.querySelector('[data-k="' + CSS.escape(k) + '"]'));
+  }
+  function moveVid(d) {
+    var f = flat();
+    if (!f.length) return;
+    var i = -1;
+    for (var j = 0; j < f.length; j++) if (f[j].k === S.selKey) { i = j; break; }
+    if (i < 0) {
+      var first = -1;
+      for (var m = 0; m < f.length; m++) if (f[m].cat === S.selCat) { first = m; break; }
+      i = first >= 0 ? first : (d < 0 ? f.length - 1 : 0);
+    } else {
+      i = Math.max(0, Math.min(f.length - 1, i + d));
+    }
+    select(f[i].k, f[i].cat);
+  }
+  function moveCat(d) {
+    var secs = sections();
+    if (!secs.length) return;
+    var i = -1;
+    for (var j = 0; j < secs.length; j++) if (secs[j].id === S.selCat) { i = j; break; }
+    i = i < 0 ? 0 : Math.max(0, Math.min(secs.length - 1, i + d));
+    var c = secs[i];
+    S.selCat = c.id;
+    S.selKey = c.collapsed ? null : cardKey(c.id, c.vids[0]);
+    applySel();
+    scrollToSection(c.id);
+  }
+  function jump(id) {
+    S.collapsed[id] = false;
+    render();
+    var c = sections().filter(function (x) { return x.id === id; })[0];
+    S.selCat = id;
+    S.selKey = c ? cardKey(id, c.vids[0]) : null;
+    applySel();
+    scrollToSection(id);
+  }
+  function toggleCollapse(id) {
+    if (!id) return;
+    S.collapsed[id] = !S.collapsed[id];
+    S.selCat = id;
+    if (S.collapsed[id] && S.selKey && S.selKey.indexOf(id + '|') === 0) S.selKey = null;
+    render();
+  }
+  function toggleAll() {
+    var anyOpen = CATS.some(function (c) { return !S.collapsed[c.id]; });
+    CATS.forEach(function (c) { S.collapsed[c.id] = anyOpen; });
+    if (anyOpen) S.selKey = null;
+    render();
+  }
+
+  // Apply {key: watched} locally at once, then save; roll back if saving fails.
+  function applyWatched(changes) {
+    var prev = {}, groups = {true: [], false: []};
+    Object.keys(changes).forEach(function (k) {
+      var v = BY_KEY[k];
+      if (!v || v.watched === changes[k]) return;
+      prev[k] = v.watched;
+      v.watched = changes[k];
+      groups[changes[k]].push(k);
+    });
+    // In unwatched-only mode a newly-watched selection is about to vanish;
+    // hand the selection to its neighbour first.
+    if (S.unwatchedOnly && S.selKey) {
+      var sv = videoOf(S.selKey);
+      if (sv && sv.watched && prev[sv.key] === false) {
+        var f = flat().filter(function (x) { return !x.v.watched || x.k === S.selKey; });
+        var i = f.map(function (x) { return x.k; }).indexOf(S.selKey);
+        var nx = f[i + 1] || f[i - 1];
+        S.selKey = nx ? nx.k : null;
+        if (nx) S.selCat = nx.cat;
+      }
+    }
+    render();
+    var saves = [];
+    if (groups[true].length) saves.push(Watch.saveWatched(groups[true], true));
+    if (groups[false].length) saves.push(Watch.saveWatched(groups[false], false));
+    Promise.all(saves).catch(function () {
+      Object.keys(prev).forEach(function (k) { BY_KEY[k].watched = prev[k]; });
+      render();
+      showToast({text: "Couldn't save watched state", sub: 'Check your connection and try again', prev: null});
+    });
+    return prev;
+  }
+  function toggleWatched(k) {
+    var v = videoOf(k);
+    if (!v) return;
+    var c = {}; c[v.key] = !v.watched;
+    applyWatched(c);
+  }
+  function markCat(id) {
+    var vids = VIDEOS.filter(function (v) { return v.cats.indexOf(id) >= 0 && !v.watched; });
+    if (!vids.length) return;
+    var c = {};
+    vids.forEach(function (v) { c[v.key] = true; });
+    var prev = applyWatched(c);
+    showToast({text: 'Marked ' + vids.length + ' watched in ' + catName(id), sub: 'Undo restores them', prev: prev});
+  }
+  // Called when a video is opened (the link itself does the navigating).
+  function opened(k) {
+    var v = videoOf(k);
+    if (!v) return;
+    var dest = v.jellyfin ? 'Jellyfin' : v.nebula ? 'Nebula' : 'YouTube';
+    S.selKey = k;
+    S.selCat = k.slice(0, k.indexOf('|'));
+    var c = {}; c[v.key] = true;
+    var prev = applyWatched(c);
+    showToast({
+      text: 'Opened in ' + dest,
+      sub: v.title + (v.jellyfin ? ' · archived copy' : '') + (prev[v.key] === false ? ' · marked watched' : ''),
+      prev: prev
+    });
+  }
+  function openSelected() {
+    var v = videoOf(S.selKey);
+    if (!v) return;
+    window.open(v.url, '_blank', 'noopener');
+    opened(S.selKey);
+  }
+
+  // ---- in-page player (watch.js) ---------------------------------------
+  function play(k) {
+    var v = videoOf(k);
+    if (!v) return;
+    if (!Watch.canPlayHere(v)) { window.open(v.url, '_blank', 'noopener'); opened(k); return; }
+    Watch.play(v, {onClose: function () {
+      var sel = S.selKey && document.querySelector('[data-k="' + CSS.escape(S.selKey) + '"]');
+      if (sel) ensureVisible(sel);
+    }});
+    S.selKey = k;
+    S.selCat = k.slice(0, k.indexOf('|'));
+    var c = {}; c[v.key] = true;
+    var prev = applyWatched(c);
+    if (prev[v.key] === false) showToast({text: 'Marked watched', sub: v.title, prev: prev});
+  }
+
+  function cyclePlatform() {
+    var i = PLATS.map(function (p) { return p[0]; }).indexOf(S.platform);
+    S.platform = PLATS[(i + 1) % PLATS.length][0];
+    S.selKey = null;
+    render();
+  }
+  function clearFilters() {
+    S.query = ''; S.channel = null; S.unwatchedOnly = false; S.platform = 'all';
+    document.getElementById('watch-search').value = '';
+    render();
+  }
+
+  // ---- toast ------------------------------------------------------------
+  function showToast(t) {
+    S.toast = t;
+    var host = document.getElementById('toast-host');
+    var undo = t.prev && Object.keys(t.prev).length;
+    host.innerHTML = '<div class="toast"><div><div class="toast-text">' + esc(t.text) + '</div>' +
+      '<div class="toast-sub">' + esc(t.sub) + '</div></div>' +
+      (undo ? '<button type="button" class="btn btn-sm btn-ghost" id="w-undo">Undo</button>' : '') +
+      '<button type="button" class="toast-x" id="w-toast-x">&times;</button></div>';
+    clearTimeout(window._toastT);
+    window._toastT = setTimeout(dismissToast, 6000);
+  }
+  function dismissToast() {
+    S.toast = null;
+    document.getElementById('toast-host').innerHTML = '';
+    clearTimeout(window._toastT);
+  }
+  function undo() {
+    var t = S.toast;
+    if (!t || !t.prev) return;
+    dismissToast();
+    applyWatched(t.prev);
+  }
+
+  // ---- help + legend ----------------------------------------------------
+  function keysHtml(keys) { return keys.map(function (k) { return '<kbd>' + esc(k) + '</kbd>'; }).join(''); }
+  document.getElementById('watch-legend').innerHTML = SHORTCUTS.filter(function (r) { return r[2]; }).map(function (r) {
+    return '<span class="w-legend-item">' + keysHtml(r[0]) + '<span>' + esc(r[2]) + '</span></span>';
+  }).join('');
+  document.getElementById('w-help-rows').innerHTML = SHORTCUTS.map(function (r) {
+    return '<div class="w-help-row"><span>' + esc(r[1]) + '</span><span class="w-help-keys">' + keysHtml(r[0]) + '</span></div>';
+  }).join('');
+  var helpEl = document.getElementById('w-help');
+  function toggleHelp(on) { helpEl.hidden = on === undefined ? !helpEl.hidden : !on; }
+
+  // ---- events -----------------------------------------------------------
+  var search = document.getElementById('watch-search');
+  search.addEventListener('input', function () { S.query = search.value; S.selKey = null; render(); });
+  document.getElementById('w-unwatched').addEventListener('click', function () { S.unwatchedOnly = !S.unwatchedOnly; render(); });
+  document.getElementById('w-platforms').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-platform]');
+    if (b) { S.platform = b.dataset.platform; S.selKey = null; render(); }
+  });
+  document.getElementById('w-layouts').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-layout]');
+    if (b) { S.layout = b.dataset.layout; render(); }
+  });
+  document.getElementById('w-channel-chip').addEventListener('click', function (e) {
+    if (e.target.closest('#w-clear-channel')) { S.channel = null; render(); }
+  });
+  document.getElementById('w-help-btn').addEventListener('click', function () { toggleHelp(); });
+  helpEl.addEventListener('mousedown', function (e) { if (e.target === helpEl) toggleHelp(false); });
+  document.getElementById('w-toggle-all').addEventListener('click', toggleAll);
+  document.getElementById('toast-host').addEventListener('click', function (e) {
+    if (e.target.closest('#w-undo')) undo();
+    else if (e.target.closest('#w-toast-x')) dismissToast();
+  });
+
+  document.getElementById('w-side-list').addEventListener('click', function (e) {
+    var cat = e.target.closest('.w-side-cat');
+    if (!cat) return;
+    var id = cat.dataset.cat, act = e.target.closest('[data-act]');
+    if (!act) return;
+    if (act.dataset.act === 'toggle-cat') toggleCollapse(id);
+    else if (act.dataset.act === 'jump') jump(id);
+    else if (act.dataset.act === 'channel') {
+      var chId = act.dataset.ch;
+      var ch = CATS.filter(function (c) { return c.id === id; })[0].channels.filter(function (c) { return c.id === chId; })[0];
+      var on = S.channel && S.channel.id === chId;
+      S.channel = on ? null : {id: ch.id, title: ch.title};
+      S.selCat = id; S.selKey = null; S.collapsed[id] = false;
+      render();
+    }
+  });
+
+  var main = document.getElementById('watch-main');
+  main.addEventListener('click', function (e) {
+    var act = e.target.closest('[data-act]');
+    if (act && act.dataset.act === 'clear-filters') { clearFilters(); return; }
+    if (act && act.dataset.act === 'toggle-sec') {
+      toggleCollapse(act.closest('section').dataset.sec);
+      return;
+    }
+    var item = e.target.closest('[data-k]');
+    if (!item) return;
+    if (act && act.dataset.act === 'watch') {
+      e.preventDefault();
+      S.selKey = item.dataset.k;
+      toggleWatched(item.dataset.k);
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      // A modified click opens the link in a new tab/window as usual.
+      opened(item.dataset.k);
+      return;
+    }
+    e.preventDefault();
+    play(item.dataset.k);
+  });
+  main.addEventListener('auxclick', function (e) {
+    var item = e.button === 1 && !e.target.closest('[data-act]') && e.target.closest('[data-k]');
+    if (item) opened(item.dataset.k);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    var qs = document.getElementById('qs-overlay');
+    if (qs && !qs.hidden) return;   // the quick switcher owns the keyboard while open
+    if (Watch.isOpen()) return;   // keys belong to the video (watch.js handles Esc)
+    var t = e.target, typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    if (typing) {
+      if (t !== search) return;
+      if (e.key === 'Escape') { search.blur(); if (S.query) { search.value = ''; S.query = ''; render(); } }
+      else if (e.key === 'Enter' || e.key === 'ArrowDown') { e.preventDefault(); search.blur(); S.selKey = null; moveVid(1); }
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!helpEl.hidden && e.key !== '?' && e.key !== 'Escape') return;
+    switch (e.key) {
+      case 'j': case 'ArrowDown': case 'ArrowRight': moveVid(1); break;
+      case 'k': case 'ArrowUp': case 'ArrowLeft': moveVid(-1); break;
+      case ']': moveCat(1); break;
+      case '[': moveCat(-1); break;
+      case 'x': toggleCollapse(S.selCat); break;
+      case 'X': toggleAll(); break;
+      case 'w': toggleWatched(S.selKey); break;
+      case 'W': markCat(S.selCat); break;
+      case 'Enter': if (S.selKey) play(S.selKey); break;
+      case 'o': openSelected(); break;
+      case '/': search.focus(); break;
+      case 'u': S.unwatchedOnly = !S.unwatchedOnly; render(); break;
+      case 'p': cyclePlatform(); break;
+      case '1': case '2': case '3': S.layout = LAYOUTS[+e.key - 1][0]; render(); break;
+      case '?': toggleHelp(); break;
+      case 'Escape':
+        if (!helpEl.hidden) toggleHelp(false);
+        else if (S.channel) { S.channel = null; render(); }
+        else if (S.toast) dismissToast();
+        break;
+      default: return;
+    }
+    e.preventDefault();
+  });
+
+  render();
+})();
+</script>
+{% endblock %}

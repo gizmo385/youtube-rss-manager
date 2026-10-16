@@ -65,6 +65,22 @@
 </div>
 {% endif %}
 
+{# Rendered client-side by static/watch.js (see renderChannelVideos in
+   channels.html), so cards look and play exactly as on the Watch tab. #}
+<div class="detail-videos">
+  <div class="detail-videos-head">
+    <h2 class="section-label" style="margin:0">Videos</h2>
+    {% if d.videos %}<span class="detail-videos-count">{{ d.videos|length }} stored</span>{% endif %}
+  </div>
+  {% if d.videos %}
+  <div class="cv-grid" id="channel-videos" data-channel-id="{{ d.channel_id }}"></div>
+  <button type="button" class="btn btn-sm btn-ghost cv-more" id="channel-videos-more" hidden></button>
+  <script type="application/json" id="channel-videos-data">{{ d.videos|tojson }}</script>
+  {% else %}
+  <div class="empty" style="padding:4px 0">No videos stored yet — they appear here as the poller picks them up.</div>
+  {% endif %}
+</div>
+
 <div class="detail-grid">
   <div class="detail-col-l">
     <h2 class="section-label">Categories</h2>

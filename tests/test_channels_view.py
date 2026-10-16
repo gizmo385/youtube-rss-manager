@@ -82,6 +82,13 @@ def test_selected_channel_still_opens_its_detail(client):
     assert "Ignore channel" in html
 
 
+def test_detail_lists_the_channels_videos(client):
+    html = client.get("/channels?selected=UCa").text
+    # No stored videos in this fixture: the section says so rather than vanishing.
+    assert "No videos stored yet" in html
+    assert 'src="/static/watch.js' in html
+
+
 def test_detail_offers_a_separate_audio_retention_field(client):
     """Both keep rows PATCH their own field — the template used to infer the
     field name from the label, which two "Keep" rows would have collided on."""

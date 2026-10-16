@@ -15,10 +15,11 @@
   {% if user %}
   <header class="app-header">
     <div class="brand">
-      <a href="/channels" class="brand-name">YouTube Subs OPML</a>
+      <a href="/watch" class="brand-name">YouTube Subs OPML</a>
       <span class="brand-tag">Subscription &amp; archive manager</span>
     </div>
     <nav class="app-nav">
+      <a href="/watch" class="nav-link{% if active_nav == 'watch' %} active{% endif %}">Watch</a>
       <a href="/channels" class="nav-link{% if active_nav == 'channels' %} active{% endif %}">Channels</a>
       <a href="/categories" class="nav-link{% if active_nav == 'categories' %} active{% endif %}">Categories</a>
       <a href="/channels/board" class="nav-link{% if active_nav == 'board' %} active{% endif %}">Board</a>
@@ -73,6 +74,7 @@
     if (kbd && !isMac) kbd.textContent = 'Ctrl K';
 
     var PAGES = [
+      {label: 'Watch', kind: 'Page', url: '/watch'},
       {label: 'Channels', kind: 'Page', url: '/channels'},
       {label: 'Categories', kind: 'Page', url: '/categories'},
       {label: 'Board', kind: 'Page', url: '/channels/board'},

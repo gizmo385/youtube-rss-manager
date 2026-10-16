@@ -23,6 +23,7 @@ from ..models import (
     User,
 )
 from ..services.feed_cache import load_feed
+from ..services.jellyfin import jellyfin_deep_link
 from ..services.live import classify_live, resolve_include_live
 from ..services.prefs import resolve
 from ..services.shorts import classify_videos, resolve_include_shorts
@@ -43,12 +44,6 @@ _HOLD_FALLBACK = timedelta(hours=48)
 ET.register_namespace("", _ATOM)
 ET.register_namespace("yt", _YT)
 ET.register_namespace("media", _MEDIA)
-
-
-def jellyfin_deep_link(base_url: str, item_id: str) -> str:
-    """A web deep link to a Jellyfin item. Jellyfin resolves the item and
-    redirects, so the server id can be omitted."""
-    return f"{base_url.rstrip('/')}/web/#/details?id={item_id}"
 
 
 def _rewrite_link(entry: ET.Element, href: str) -> None:

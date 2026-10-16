@@ -21,6 +21,7 @@ from .routes.opml import router as opml_router
 from .routes.podcast import router as podcast_router
 from .routes.quickswitch import router as quickswitch_router
 from .routes.settings import router as settings_router
+from .routes.watch import router as watch_router
 from .services import library_metrics
 from .services.scheduler import start_scheduler, stop_scheduler
 from .templating import templates
@@ -58,6 +59,7 @@ app.include_router(opml_router)
 app.include_router(podcast_router)
 app.include_router(quickswitch_router)
 app.include_router(settings_router)
+app.include_router(watch_router)
 
 
 @app.exception_handler(401)
@@ -79,5 +81,5 @@ def index(
     user: User | None = Depends(get_optional_user),
 ):
     if user is not None:
-        return RedirectResponse("/channels", status_code=303)
+        return RedirectResponse("/watch", status_code=303)
     return templates.TemplateResponse(request, "login.html", context={"user": None})
