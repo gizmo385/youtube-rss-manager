@@ -326,8 +326,8 @@ document.getElementById('channel-detail').addEventListener('click', function(e){
     setChannelVideoWatched(v, !v.watched);
     return;
   }
-  // A modified click opens the link in a new tab as usual; so does Nebula,
-  // which has no embeddable player.
+  // A modified click opens the link in a new tab as usual; so do Nebula,
+  // which has no embeddable player, and phones (see Watch.canPlayHere).
   if (!(e.ctrlKey || e.metaKey || e.shiftKey) && Watch.canPlayHere(v)) {
     e.preventDefault();
     Watch.play(v);
@@ -335,12 +335,26 @@ document.getElementById('channel-detail').addEventListener('click', function(e){
   setChannelVideoWatched(v, true);
 });
 
+// On phones the detail pane sits below the list, so opening a channel would
+// otherwise change nothing on screen. Scroll to it — but only when a different
+// channel loads, not on every settings write that re-renders the same one.
+function detailId() {
+  var sel = document.querySelector('#channel-detail input[name="selected"]');
+  return sel ? sel.value : '';
+}
+var shownDetailId = detailId();
+
 // Keep the detail pane's hidden filter field in sync so its writes group correctly.
 document.body.addEventListener('htmx:afterSwap', function(evt){
   if (evt.detail.target.id === 'channel-detail') {
     var f = evt.detail.target.querySelector('[data-detail-filter]');
     if (f) f.value = currentFilter;
     renderChannelVideos();
+    var id = detailId();
+    if (id !== shownDetailId && window.matchMedia('(max-width: 860px)').matches) {
+      evt.detail.target.scrollIntoView({block: 'start'});
+    }
+    shownDetailId = id;
   }
   if (evt.detail.target.id === 'channel-groups') { reapplySearch(); updateBulk(); }
 });

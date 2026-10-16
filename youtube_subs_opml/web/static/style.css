@@ -1207,9 +1207,18 @@ label { display: block; }
    ===================================================================== */
 
 @media (max-width: 860px) {
-  .app-header { flex-direction: column; height: auto; gap: 6px; padding: 8px 12px; position: static; }
-  .app-nav { flex-wrap: wrap; justify-content: center; }
-  .subbar { position: static; }
+  .app-header { flex-wrap: wrap; height: auto; gap: 6px 12px; padding: 8px 12px; position: static; }
+  .brand-tag { display: none; }
+  .app-nav {
+    order: 3; width: 100%; flex-wrap: nowrap; justify-content: flex-start;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .app-nav::-webkit-scrollbar { display: none; }
+  .nav-link { flex-shrink: 0; }
+  .nav-divider, .nav-user { display: none; }
+  .nav-logout { margin-left: auto; padding-left: 10px; white-space: nowrap; }
+  .subbar { position: static; padding: 8px 12px; }
+  .toast { left: 12px; right: 12px; bottom: 12px; }
 
   .split { display: block; height: auto; }
   .list-pane { border-right: 0; border-bottom: 2px solid var(--line); height: auto; max-height: 60vh; }
@@ -1232,6 +1241,7 @@ label { display: block; }
   margin-left: 4px;
 }
 .qs-trigger:hover { color: var(--ink); border-color: var(--faint); }
+.qs-trigger-mobile { display: none; }
 .qs-kbd, .qs-foot kbd {
   font-family: inherit; font-size: 10px; font-weight: 600; color: var(--muted-2);
   background: var(--bg); border: 1px solid var(--line); padding: 1px 5px;
@@ -1278,6 +1288,17 @@ label { display: block; }
   .qs-trigger .qs-kbd { display: none; }
 }
 
+/* Phones: the nav row scrolls sideways, so the switcher moves up beside the
+   brand. Kept after the base .qs-* rules above so it wins at equal
+   specificity. */
+@media (max-width: 860px) {
+  .app-nav .qs-trigger { display: none; }
+  .qs-trigger-mobile { display: inline-flex; order: 2; margin-left: auto; padding: 6px 10px; }
+  /* Sit near the top so results stay above the on-screen keyboard. */
+  .qs-overlay { padding: 12px; }
+  .qs-modal { max-height: 60vh; }
+}
+
 /* =====================================================================
    Watch
    ===================================================================== */
@@ -1320,6 +1341,8 @@ label { display: block; }
 .w-chip button { background: transparent; border: 0; color: var(--muted); cursor: pointer; padding: 0; display: flex; }
 .w-chip button:hover { color: var(--accent-2); }
 
+.w-controls { display: contents; }
+.w-cat-strip { display: none; }
 .w-count { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-2); font-variant-numeric: tabular-nums; }
 .w-view { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .w-view-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
@@ -1506,13 +1529,71 @@ section.focused > * > .w-sec-hint { display: inline; }
 .w-help-keys kbd { font-size: 11px; padding: 1px 6px; min-width: 20px; }
 .w-help-foot { border-top: 1px solid var(--line); padding: 8px 14px; font-size: 11px; color: var(--muted-2); }
 
-@media (max-width: 760px) {
-  .watch-side { display: none; }
+/* Phones: one page scroll instead of fixed-height panes (the header wraps
+   taller here, so the desktop height calc no longer fits), a category strip in
+   place of the sidebar, and no keyboard-only furniture. Matches the 860px
+   breakpoint where the header and channels split collapse, and where
+   watch.js stops using the in-page player. */
+@media (max-width: 860px) {
+  .watch { height: auto; }
+  .watch-body { display: block; }
+  .watch-side, .watch-legend { display: none; }
+  .watch-main { overflow: visible; }
+
+  .watch-toolbar { padding: 8px 12px; gap: 8px; }
   .w-search { width: 100%; }
-  .w-view { margin-left: 0; }
-  .watch-legend { display: none; }
-  .w-row { grid-template-columns: 8px minmax(0, 1fr) 44px 24px; }
-  .w-row-ch, .w-row-tags, .w-row-num:not(.w-row-age) { display: none; }
+  .w-search input { font-size: 16px; }  /* below 16px, iOS zooms the page on focus */
+  .w-search kbd { display: none; }
+  .w-controls {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .w-controls::-webkit-scrollbar { display: none; }
+  .w-controls > * { flex-shrink: 0; }
+  .w-count, .w-view-label, .w-help-btn, .w-key, .w-sec-hint { display: none !important; }
+  .w-view { margin-left: auto; }
+  .seg button, .w-toggle { padding: 6px 10px; }
+
+  .w-cat-strip {
+    display: flex; gap: 6px; padding: 8px 12px; overflow-x: auto; scrollbar-width: none;
+    border-bottom: 1px solid var(--line-2); background: var(--panel-2);
+  }
+  .w-cat-strip::-webkit-scrollbar { display: none; }
+  .w-cat-chip {
+    display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap;
+    background: transparent; border: 1px solid var(--line); color: var(--ink-2); cursor: pointer;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 8px;
+  }
+  .w-cat-chip.focused { border-color: var(--accent); color: var(--ink); background: var(--accent-tint); }
+
+  .w-sec-head, .w-list-head { padding: 8px 12px 8px 6px; }
+  .w-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px 12px 16px; }
+  .w-shelf-head { padding: 10px 12px 8px 6px; }
+  .w-shelf-head .w-sec-name { font-size: 15px; }
+  .w-shelf { padding: 0 12px 14px; }
+  .w-shelf .w-card { width: min(260px, 70vw); }
+  .w-card-body { padding: 6px 8px 8px; gap: 6px; }
+
+  /* List rows go two-line: title over "channel · age". */
+  .w-row {
+    grid-template-columns: 8px minmax(0, 1fr) auto 32px;
+    grid-template-areas: "dot title title check" "dot ch age check";
+    column-gap: 10px; row-gap: 2px; padding: 8px 12px;
+  }
+  .w-row-dot { grid-area: dot; }
+  .w-row-title { grid-area: title; }
+  .w-row-ch { grid-area: ch; font-size: 11px; color: var(--muted-2); }
+  .w-row-age { grid-area: age; }
+  .w-row .w-check { grid-area: check; }
+  .w-row-tags, .w-row-num:not(.w-row-age) { display: none; }
+
+  .detail-videos { padding: 14px 12px 16px; }
+  .cv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+}
+
+/* Touch: the watched check is the one small target on a card. */
+@media (pointer: coarse) {
+  .w-check, .w-row .w-check { width: 32px; height: 32px; }
 }
 
 /* In-page player */
@@ -1540,11 +1621,6 @@ section.focused > * > .w-sec-hint { display: inline; }
 .w-player-error-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 /* Keep the "marked watched" toast (and its Undo) above the player. */
 #toast-host .toast { z-index: 950; }
-
-@media (max-width: 760px) {
-  .w-player-overlay { padding: 0; }
-  .w-player-links { display: none; }
-}
 
 /* Channel page: the channel's videos, as Watch-tab cards */
 .detail-videos { padding: 16px 20px 18px; border-bottom: 2px solid var(--line); }

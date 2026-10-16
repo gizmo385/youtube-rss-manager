@@ -103,7 +103,11 @@ window.Watch = (function () {
     }, true);
   }
 
-  function canPlayHere(v) { return !v.nebula && !!v.videoId; }
+  // Phones and touch tablets hand videos to their own apps (YouTube,
+  // Jellyfin) via the plain link instead of the overlay. Matches the 860px
+  // breakpoint where the layout goes single-column.
+  var handOff = window.matchMedia('(max-width: 860px), (hover: none) and (pointer: coarse)');
+  function canPlayHere(v) { return !handOff.matches && !v.nebula && !!v.videoId; }
   function youtubeUrl(v) { return 'https://www.youtube.com/watch?v=' + encodeURIComponent(v.videoId); }
   function isOpen() { return !!overlay && !overlay.hidden; }
 

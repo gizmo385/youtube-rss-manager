@@ -9,16 +9,23 @@
       <input id="watch-search" type="search" placeholder="Search videos and channels…" autocomplete="off" spellcheck="false">
       <kbd>/</kbd>
     </div>
-    <button type="button" id="w-unwatched" class="w-toggle"><span class="dot"></span>Unwatched only</button>
-    <div class="seg" id="w-platforms"></div>
-    <span id="w-channel-chip"></span>
-    <span id="w-count" class="w-count"></span>
-    <div class="w-view">
-      <span class="w-view-label">View</span>
-      <div class="seg" id="w-layouts"></div>
-      <button type="button" class="w-help-btn" id="w-help-btn" title="Keyboard shortcuts">?</button>
+    {# One swipeable row on phones; dissolves into the toolbar (display:
+       contents) on wider screens. #}
+    <div class="w-controls">
+      <button type="button" id="w-unwatched" class="w-toggle"><span class="dot"></span>Unwatched only</button>
+      <div class="seg" id="w-platforms"></div>
+      <span id="w-channel-chip"></span>
+      <span id="w-count" class="w-count"></span>
+      <div class="w-view">
+        <span class="w-view-label">View</span>
+        <div class="seg" id="w-layouts"></div>
+        <button type="button" class="w-help-btn" id="w-help-btn" title="Keyboard shortcuts">?</button>
+      </div>
     </div>
   </div>
+
+  {# Stands in for the sidebar on phones. #}
+  <nav class="w-cat-strip" id="w-cat-strip" aria-label="Categories"></nav>
 
   <div class="watch-body">
     <aside class="watch-side" id="watch-side">
@@ -227,6 +234,10 @@
       html += '</div>';
     });
     document.getElementById('w-side-list').innerHTML = html;
+    document.getElementById('w-cat-strip').innerHTML = mdl.filter(function (c) { return c.all.length; }).map(function (c) {
+      return '<button type="button" class="w-cat-chip" data-cat="' + c.id + '">' + esc(c.name) +
+        '<span class="w-badge' + (c.unw ? ' on' : '') + '">' + c.unw + '</span></button>';
+    }).join('');
     var anyOpen = CATS.some(function (c) { return !S.collapsed[c.id]; });
     document.getElementById('w-toggle-all').innerHTML = (anyOpen ? 'Collapse all' : 'Expand all') + '<span class="w-key">⇧X</span>';
   }
@@ -269,7 +280,7 @@
   // (and re-decode) every thumbnail on each keypress.
   function applySel() {
     document.querySelectorAll('.w-card.sel, .w-row.sel').forEach(function (el) { el.classList.remove('sel'); });
-    document.querySelectorAll('[data-sec].focused, .w-side-cat.focused').forEach(function (el) { el.classList.remove('focused'); });
+    document.querySelectorAll('[data-sec].focused, .w-side-cat.focused, .w-cat-chip.focused').forEach(function (el) { el.classList.remove('focused'); });
     if (S.selKey) {
       var el = document.querySelector('[data-k="' + CSS.escape(S.selKey) + '"]');
       if (el) el.classList.add('sel');
@@ -279,6 +290,8 @@
       if (sec) sec.classList.add('focused');
       var side = document.querySelector('.w-side-cat[data-cat="' + S.selCat + '"]');
       if (side) side.classList.add('focused');
+      var chip = document.querySelector('.w-cat-chip[data-cat="' + S.selCat + '"]');
+      if (chip) chip.classList.add('focused');
     }
   }
 
@@ -299,7 +312,13 @@
   }
   function scrollToSection(id) {
     var main = document.getElementById('watch-main'), sec = main.querySelector('section[data-sec="' + id + '"]');
-    if (sec) main.scrollTop += sec.getBoundingClientRect().top - main.getBoundingClientRect().top;
+    if (!sec) return;
+    if (getComputedStyle(main).overflowY === 'visible') {
+      // Phone layout: the page scrolls rather than #watch-main.
+      window.scrollTo({top: sec.getBoundingClientRect().top + window.scrollY});
+    } else {
+      main.scrollTop += sec.getBoundingClientRect().top - main.getBoundingClientRect().top;
+    }
   }
 
   // ---- actions ----------------------------------------------------------
@@ -530,6 +549,11 @@
     }
   });
 
+  document.getElementById('w-cat-strip').addEventListener('click', function (e) {
+    var chip = e.target.closest('.w-cat-chip');
+    if (chip) jump(chip.dataset.cat);
+  });
+
   var main = document.getElementById('watch-main');
   main.addEventListener('click', function (e) {
     var act = e.target.closest('[data-act]');
@@ -546,8 +570,10 @@
       toggleWatched(item.dataset.k);
       return;
     }
-    if (e.ctrlKey || e.metaKey || e.shiftKey) {
-      // A modified click opens the link in a new tab/window as usual.
+    var v = videoOf(item.dataset.k);
+    if (e.ctrlKey || e.metaKey || e.shiftKey || !v || !Watch.canPlayHere(v)) {
+      // The link opens the video itself — a modified click, Nebula, or a
+      // phone handing off to the YouTube/Jellyfin app. Just record it.
       opened(item.dataset.k);
       return;
     }
