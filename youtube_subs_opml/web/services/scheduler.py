@@ -79,6 +79,44 @@ def sync_jellyfin() -> None:
         db.close()
 
 
+@tracer.start_as_current_span("job sync_freshrss")
+def sync_freshrss(user_id: int | None = None) -> None:
+    """Scheduled job: reconcile watched state with FreshRSS read state, for
+    everyone or just ``user_id``. A no-op for users without FreshRSS set up."""
+    from .freshrss_sync import sync_all, sync_one
+
+    db = get_session_factory()()
+    try:
+        if user_id is None:
+            sync_all(db)
+        else:
+            sync_one(db, user_id)
+    except Exception:
+        logger.exception("FreshRSS sync failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def sync_freshrss_soon(user_id: int, delay_seconds: float = 3) -> None:
+    """Schedule a one-off FreshRSS sync for ``user_id``, to push a watched change
+    made here without waiting for the interval. A burst of changes (marking a
+    category, toggling back and forth) collapses into the one pending run.
+    Best-effort: if it doesn't run, the interval job catches up."""
+    try:
+        scheduler.add_job(
+            sync_freshrss,
+            "date",
+            args=[user_id],
+            run_date=datetime.now(UTC) + timedelta(seconds=delay_seconds),
+            id=f"sync_freshrss_{user_id}",
+            replace_existing=True,
+            misfire_grace_time=60,
+        )
+    except Exception:
+        logger.debug("Could not schedule FreshRSS sync (scheduler not running?)", exc_info=True)
+
+
 def start_scheduler() -> None:
     scheduler.add_job(
         sync_all_accounts,
@@ -111,11 +149,23 @@ def start_scheduler() -> None:
         id="sync_jellyfin",
         replace_existing=True,
     )
+    freshrss_interval = settings.freshrss_sync_interval_minutes
+    scheduler.add_job(
+        sync_freshrss,
+        "interval",
+        minutes=freshrss_interval,
+        id="sync_freshrss",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
     logger.info(
-        "Schedulers started (subscription sync every 6h, video poll every %dm, Jellyfin sync every %dm)",
+        "Schedulers started (subscription sync every 6h, video poll every %dm, Jellyfin sync every %dm, "
+        "FreshRSS sync every %dm)",
         interval,
         jellyfin_interval,
+        freshrss_interval,
     )
 
 

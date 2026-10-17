@@ -66,6 +66,10 @@ def update_watched(
     db: Session = Depends(get_db),
 ) -> Response:
     set_watched(user, db, [k[:255] for k in body.keys], body.watched)
+    # Push the change to FreshRSS (a no-op without an account there).
+    from ..services.scheduler import sync_freshrss_soon
+
+    sync_freshrss_soon(user.id)
     return Response(status_code=204)
 
 

@@ -179,6 +179,70 @@
 
   <section class="card">
     <div class="card-head">
+      <h2 class="card-title">FreshRSS</h2>
+      {% if freshrss and freshrss.last_synced_at %}
+      <span class="status-inline ok"><span class="dot"></span>Synced {{ freshrss.last_synced_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% elif freshrss and freshrss.last_verified_at %}
+      <span class="status-inline ok"><span class="dot"></span>Verified {{ freshrss.last_verified_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% elif freshrss %}
+      <span class="status-inline fail"><span class="dot"></span>Not yet verified</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if freshrss_test == 'ok' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Connection succeeded.</p>
+      {% elif freshrss_test == 'fail' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Connection failed — check the URL, username and API password.</p>
+      {% elif freshrss_test == 'missing' or freshrss_sync == 'missing' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Save your FreshRSS connection first.</p>
+      {% endif %}
+
+      {% if freshrss_sync == 'ok' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Sync complete.</p>
+      {% elif freshrss_sync == 'fail' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>Sync failed — check the connection and the app logs.</p>
+      {% endif %}
+
+      <p class="help-text" style="margin:0 0 12px">
+        Keeps watched videos here and read items in FreshRSS in step, both ways, for the feeds FreshRSS
+        gets from this app. Watching something here marks it read there within seconds; reading in
+        FreshRSS shows up here within a few minutes.
+      </p>
+
+      <form method="post" action="/settings/freshrss">
+        <div class="field-grid">
+          <label class="field">
+            <span class="field-label">FreshRSS URL</span>
+            <input type="url" name="base_url" placeholder="https://rss.example.com"
+                   value="{{ freshrss.base_url if freshrss else '' }}" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Username</span>
+            <input type="text" name="username" autocomplete="off"
+                   value="{{ freshrss.username if freshrss else user.email }}" required>
+          </label>
+          <label class="field">
+            <span class="field-label">API password</span>
+            <input type="password" name="api_password" autocomplete="new-password"
+                   placeholder="{% if freshrss %}•••••• (blank keeps current){% else %}Profile → API management{% endif %}"
+                   {% if not freshrss %}required{% endif %}>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Save connection</button>
+          {% if freshrss %}
+          <button type="submit" class="btn btn-ghost" formaction="/settings/freshrss/test" formnovalidate>Test</button>
+          <button type="submit" class="btn" formaction="/settings/freshrss/sync" formnovalidate>Sync now</button>
+          <button type="submit" class="btn btn-ghost" formaction="/settings/freshrss/delete" formnovalidate
+                  onclick="return confirm('Stop syncing with FreshRSS? Watched and read state stay as they are.')">Disconnect</button>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
       <h2 class="card-title">YouTube accounts</h2>
     </div>
     <div class="card-body">

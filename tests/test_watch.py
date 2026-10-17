@@ -203,6 +203,15 @@ def test_watched_endpoint_round_trips(client, sessionmaker_):
         assert s.get(WatchedVideo, (1, "b_arch")) is None
 
 
+def test_watched_endpoint_pushes_to_freshrss(client, monkeypatch):
+    from youtube_subs_opml.web.services import scheduler
+
+    pushed = []
+    monkeypatch.setattr(scheduler, "sync_freshrss_soon", lambda user_id: pushed.append(user_id))
+    client.post("/watch/watched", json={"keys": ["b_arch"], "watched": True})
+    assert pushed == [1]
+
+
 def test_watched_endpoint_rejects_bad_bodies(client):
     assert client.post("/watch/watched", json={"keys": "b_arch", "watched": True}).status_code == 422
     assert client.post("/watch/watched", json={"keys": ["x"] * 2001, "watched": True}).status_code == 422

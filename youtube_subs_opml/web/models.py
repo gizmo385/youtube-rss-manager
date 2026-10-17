@@ -387,6 +387,50 @@ class WatchedVideo(Base):
     watched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class FreshRssAccount(Base):
+    """Per-user FreshRSS credentials, for syncing watched state with read state.
+
+    FreshRSS's Google Reader API authenticates with the username plus an *API
+    password* the user sets in FreshRSS (Profile → API management) — separate
+    from their login, which here goes through Keycloak. The API password is
+    encrypted with the same Fernet key as the other stored credentials.
+    """
+
+    __tablename__ = "freshrss_accounts"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_freshrss_account_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    base_url: Mapped[str] = mapped_column(String(512))
+    username: Mapped[str] = mapped_column(String(255))
+    api_password_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FreshRssItem(Base):
+    """A FreshRSS item seen by the read-state sync, and what it maps to.
+
+    FreshRSS's API doesn't expose an item's feed guid, only its link, so mapping
+    an item to a ``video_key`` takes a contents fetch; recording it here means
+    each item is fetched once. Items that aren't one of this app's videos are
+    recorded too (``video_key`` null) so they aren't fetched again either.
+
+    ``synced_read`` is the state both sides agreed on at the last sync (null
+    until the first one). Comparing each side against it is how the sync tells
+    which side changed. ``item_id`` is FreshRSS's id: the crawl time in
+    microseconds, which is also what old rows are pruned by.
+    """
+
+    __tablename__ = "freshrss_items"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    video_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    synced_read: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
 class OpmlToken(Base):
     __tablename__ = "opml_tokens"
 

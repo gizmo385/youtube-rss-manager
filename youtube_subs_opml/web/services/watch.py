@@ -321,20 +321,25 @@ def channel_videos(user: User, db: Session, channel: Channel) -> list[dict]:
 
 def set_watched(user: User, db: Session, keys: list[str], watched: bool) -> None:
     """Mark ``keys`` watched or unwatched for ``user``. Idempotent either way."""
+    stage_watched(db, user.id, keys, watched)
+    db.commit()
+
+
+def stage_watched(db: Session, user_id: int, keys: list[str], watched: bool) -> None:
+    """``set_watched`` without the commit, for callers with more to write."""
     keys = list(dict.fromkeys(keys))
     if not keys:
         return
     existing = set(
         db.execute(
-            select(WatchedVideo.video_key).where(WatchedVideo.user_id == user.id, WatchedVideo.video_key.in_(keys))
+            select(WatchedVideo.video_key).where(WatchedVideo.user_id == user_id, WatchedVideo.video_key.in_(keys))
         )
         .scalars()
         .all()
     )
     if watched:
-        db.add_all(WatchedVideo(user_id=user.id, video_key=k) for k in keys if k not in existing)
+        db.add_all(WatchedVideo(user_id=user_id, video_key=k) for k in keys if k not in existing)
     elif existing:
         db.execute(
-            delete(WatchedVideo).where(WatchedVideo.user_id == user.id, WatchedVideo.video_key.in_(list(existing)))
+            delete(WatchedVideo).where(WatchedVideo.user_id == user_id, WatchedVideo.video_key.in_(list(existing)))
         )
-    db.commit()

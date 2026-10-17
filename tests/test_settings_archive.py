@@ -21,6 +21,8 @@ from youtube_subs_opml.web.models import (
     Channel,
     ChannelCategory,
     Download,
+    FreshRssAccount,
+    FreshRssItem,
     JellyfinAccount,
     Subscription,
     User,
@@ -232,6 +234,85 @@ def test_jellyfin_sync_runs_for_this_user(app_db, monkeypatch):
     resp = client.post("/settings/jellyfin/sync", follow_redirects=False)
     assert resp.headers["location"] == "/settings?jellyfin_sync=ok"
     assert seen == {"user_id": USER_ID, "guid": "guid-1"}
+
+
+def test_freshrss_account_upsert_keeps_password_when_blank(app_db):
+    client, Session_ = app_db
+    form = {"base_url": "https://rss.example.com", "username": "me@example.com", "api_password": "pw-1"}
+    client.post("/settings/freshrss", data=form, follow_redirects=False)
+    with Session_() as db:
+        acct = db.query(FreshRssAccount).one()
+        assert (acct.base_url, acct.username) == ("https://rss.example.com", "me@example.com")
+        assert decrypt_token(acct.api_password_encrypted) == "pw-1"
+
+    client.post("/settings/freshrss", data={**form, "username": "other", "api_password": ""}, follow_redirects=False)
+    with Session_() as db:
+        acct = db.query(FreshRssAccount).one()
+        assert acct.username == "other"
+        assert decrypt_token(acct.api_password_encrypted) == "pw-1"
+
+
+def test_freshrss_create_requires_password(app_db):
+    client, _ = app_db
+    resp = client.post(
+        "/settings/freshrss",
+        data={"base_url": "https://rss.example.com", "username": "me", "api_password": ""},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+
+
+def test_freshrss_test_and_sync(app_db, monkeypatch):
+    client, Session_ = app_db
+    assert client.post("/settings/freshrss/sync", follow_redirects=False).headers["location"] == (
+        "/settings?freshrss_sync=missing"
+    )
+    client.post(
+        "/settings/freshrss",
+        data={"base_url": "https://rss.example.com", "username": "me", "api_password": "pw"},
+        follow_redirects=False,
+    )
+
+    from youtube_subs_opml.web.services.freshrss import FreshRssClient
+
+    monkeypatch.setattr(FreshRssClient, "verify", lambda self: True)
+    assert client.post("/settings/freshrss/test", follow_redirects=False).headers["location"] == (
+        "/settings?freshrss_test=ok"
+    )
+    with Session_() as db:
+        assert db.query(FreshRssAccount).one().last_verified_at is not None
+
+    from youtube_subs_opml.web.routes import settings as settings_routes
+
+    seen = []
+    monkeypatch.setattr(settings_routes, "sync_one", lambda db, user_id: seen.append(user_id))
+    assert client.post("/settings/freshrss/sync", follow_redirects=False).headers["location"] == (
+        "/settings?freshrss_sync=ok"
+    )
+    assert seen == [USER_ID]
+
+
+def test_freshrss_disconnect_forgets_items(app_db):
+    client, Session_ = app_db
+    client.post(
+        "/settings/freshrss",
+        data={"base_url": "https://rss.example.com", "username": "me", "api_password": "pw"},
+        follow_redirects=False,
+    )
+    with Session_() as db:
+        db.add(FreshRssItem(user_id=USER_ID, item_id=1, video_key="v", synced_read=True))
+        db.commit()
+    client.post("/settings/freshrss/delete", follow_redirects=False)
+    with Session_() as db:
+        assert db.query(FreshRssAccount).count() == 0
+        assert db.query(FreshRssItem).count() == 0
+
+
+def test_settings_page_renders_freshrss_card(app_db):
+    client, _ = app_db
+    resp = client.get("/settings")
+    assert 'action="/settings/freshrss"' in resp.text
+    assert 'name="username"' in resp.text and 'value="e"' in resp.text  # prefilled from the user's email
 
 
 def test_settings_page_renders_library_path(app_db):

@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     # How often to resolve Jellyfin item ids and reconcile playlists. HTTP-only,
     # runs in the web process. A no-op for users without a Jellyfin account.
     jellyfin_sync_interval_minutes: int = Field(30)
+    # How often to reconcile Watch-tab watched state with FreshRSS read state.
+    # Watched changes made here are pushed within seconds regardless; this is
+    # how quickly reads in FreshRSS show up here. A no-op for users without a
+    # FreshRSS account.
+    freshrss_sync_interval_minutes: int = Field(5)
     # --- Podcast feeds ------------------------------------------------------
     # RSS <language> for generated podcast feeds.
     podcast_language: str = Field("en")

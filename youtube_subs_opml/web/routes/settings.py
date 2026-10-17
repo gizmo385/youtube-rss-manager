@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
 
@@ -15,9 +15,10 @@ from ..config import get_settings
 from ..db import get_db
 from ..deps import get_current_user
 from ..forms import FormValues, form_text
-from ..models import Category, JellyfinAccount, OpmlToken, User, YoutubeAccount
+from ..models import Category, FreshRssAccount, FreshRssItem, JellyfinAccount, OpmlToken, User, YoutubeAccount
 from ..services import downloads as downloads_service
 from ..services.crypto import decrypt_token, encrypt_token
+from ..services.freshrss_sync import client_for, sync_one
 from ..services.jellyfin import JellyfinClient
 from ..services.prefs import (
     LINK_TARGETS,
@@ -99,6 +100,8 @@ def settings_page(
     tab: str | None = None,
     jellyfin_test: str | None = None,
     jellyfin_sync: str | None = None,
+    freshrss_test: str | None = None,
+    freshrss_sync: str | None = None,
     dl: str | None = None,
     dl_n: int | None = None,
     user: User = Depends(get_current_user),
@@ -111,6 +114,7 @@ def settings_page(
     categories = db.execute(select(Category).where(Category.user_id == user.id).order_by(Category.name)).scalars().all()
 
     jellyfin = db.execute(select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)).scalar_one_or_none()
+    freshrss = db.execute(select(FreshRssAccount).where(FreshRssAccount.user_id == user.id)).scalar_one_or_none()
 
     from ..services.stats import shell_stats
 
@@ -133,6 +137,9 @@ def settings_page(
         "jellyfin": jellyfin,
         "jellyfin_test": jellyfin_test,
         "jellyfin_sync": jellyfin_sync,
+        "freshrss": freshrss,
+        "freshrss_test": freshrss_test,
+        "freshrss_sync": freshrss_sync,
         "library_path": library_path,
         "library_subpath": library_subpath,
         "canonical_subdir": CANONICAL_SUBDIR,
@@ -302,6 +309,100 @@ def sync_jellyfin_now(
         db.rollback()
         return RedirectResponse("/settings?jellyfin_sync=fail", status_code=303)
     return RedirectResponse("/settings?jellyfin_sync=ok", status_code=303)
+
+
+@router.post("/settings/freshrss")
+async def update_freshrss(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Save the user's FreshRSS connection.
+
+    Like the Jellyfin key, the API password is write-only: blank on an existing
+    account keeps the stored one. Creating a new account requires it.
+    """
+    form = await request.form()
+    base_url = (form_text(form, "base_url") or "").strip()
+    username = (form_text(form, "username") or "").strip()
+    api_password = form_text(form, "api_password") or ""
+
+    if not base_url or not username:
+        raise HTTPException(status_code=400, detail="FreshRSS URL and username are required")
+
+    account = db.execute(select(FreshRssAccount).where(FreshRssAccount.user_id == user.id)).scalar_one_or_none()
+
+    if account is None:
+        if not api_password:
+            raise HTTPException(status_code=400, detail="An API password is required")
+        db.add(
+            FreshRssAccount(
+                user_id=user.id,
+                base_url=base_url,
+                username=username,
+                api_password_encrypted=encrypt_token(api_password),
+            )
+        )
+    else:
+        if (account.base_url, account.username) != (base_url, username) or api_password:
+            account.last_verified_at = None
+        account.base_url = base_url
+        account.username = username
+        if api_password:
+            account.api_password_encrypted = encrypt_token(api_password)
+
+    db.commit()
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/freshrss/delete")
+def delete_freshrss(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Disconnect FreshRSS: stop syncing and forget the item map. Watched state
+    here and read state there are both left as they are."""
+    account = db.execute(select(FreshRssAccount).where(FreshRssAccount.user_id == user.id)).scalar_one_or_none()
+    if account is not None:
+        db.delete(account)
+    db.execute(delete(FreshRssItem).where(FreshRssItem.user_id == user.id))
+    db.commit()
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/freshrss/test")
+def test_freshrss(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Verify stored FreshRSS credentials against the live instance."""
+    account = db.execute(select(FreshRssAccount).where(FreshRssAccount.user_id == user.id)).scalar_one_or_none()
+    if account is None:
+        return RedirectResponse("/settings?freshrss_test=missing", status_code=303)
+
+    if client_for(account).verify():
+        account.last_verified_at = func.now()
+        db.commit()
+        return RedirectResponse("/settings?freshrss_test=ok", status_code=303)
+    return RedirectResponse("/settings?freshrss_test=fail", status_code=303)
+
+
+@router.post("/settings/freshrss/sync")
+def sync_freshrss_now(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    """Run the watched/read sync for this user now, rather than on the next
+    interval — handy right after connecting, to see the first sync land."""
+    if db.execute(select(FreshRssAccount.id).where(FreshRssAccount.user_id == user.id)).scalar_one_or_none() is None:
+        return RedirectResponse("/settings?freshrss_sync=missing", status_code=303)
+    try:
+        sync_one(db, user.id)
+    except Exception:
+        logger.exception("Manual FreshRSS sync failed for user %s", user.id)
+        db.rollback()
+        return RedirectResponse("/settings?freshrss_sync=fail", status_code=303)
+    return RedirectResponse("/settings?freshrss_sync=ok", status_code=303)
 
 
 @router.get("/settings/downloads/table")
