@@ -17,6 +17,7 @@
       <span id="w-channel-chip"></span>
       <span id="w-count" class="w-count"></span>
       <div class="w-view">
+        <button type="button" id="w-pack" class="w-toggle w-pack-btn" title="Let small categories share rows (G)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="18" height="7"></rect></svg>Pack<span class="w-key">G</span></button>
         <span class="w-view-label">View</span>
         <div class="seg" id="w-layouts"></div>
         <button type="button" class="w-help-btn" id="w-help-btn" title="Keyboard shortcuts">?</button>
@@ -76,6 +77,7 @@
     [['U'], 'Unwatched only', 'Unwatched'],
     [['P'], 'Cycle platform: All → YouTube → Nebula', 'Platform'],
     [['1', '2', '3'], 'Grid · Shelves · List', 'View'],
+    [['G'], 'Pack small categories into shared rows', 'Pack'],
     [['?'], 'Show all shortcuts', 'Help']
   ];
 
@@ -88,6 +90,8 @@
   var S = {
     collapsed: prefs.collapsed || {},
     layout: prefs.layout || 'grid',
+    packed: typeof prefs.packed === 'boolean' ? prefs.packed : true,
+    cols: 0,                // packed-grid columns; 0 when not packing
     unwatchedOnly: !!prefs.unwatchedOnly,
     platform: prefs.platform || 'all',
     query: '',
@@ -100,7 +104,7 @@
   function savePrefs() {
     try {
       localStorage.setItem(PREF_KEY, JSON.stringify({
-        collapsed: S.collapsed, layout: S.layout, unwatchedOnly: S.unwatchedOnly, platform: S.platform
+        collapsed: S.collapsed, layout: S.layout, packed: S.packed, unwatchedOnly: S.unwatchedOnly, platform: S.platform
       }));
     } catch (e) {}
   }
@@ -132,7 +136,57 @@
       };
     });
   }
-  function sections() { return model().filter(function (c) { return c.vids.length; }); }
+  // ---- packing ----------------------------------------------------------
+  // Packed Grid/Shelves lay categories out on a column grid so small ones
+  // share a row instead of each taking a full-width band. Not on phones,
+  // where a column is a whole screen wide anyway.
+  var NARROW = window.matchMedia('(max-width: 860px)');
+  var PACK_MIN = 190, PACK_GAP = 14;
+  function packing() { return S.packed && S.layout !== 'list' && !NARROW.matches; }
+  function measure() {
+    var main = document.getElementById('watch-main');
+    var inner = Math.max(200, main.clientWidth - 40);
+    var cols = Math.max(1, Math.floor((inner + PACK_GAP) / (PACK_MIN + PACK_GAP)));
+    // Packed shelf cards are one column wide.
+    main.style.setProperty('--w-pack-card', Math.floor((inner - (cols - 1) * PACK_GAP) / cols) + 'px');
+    return packing() ? cols : 0;
+  }
+  // Fill each row in order, pulling a later small category (looking 3 ahead)
+  // into leftover space, or letting it narrow into the leftover if that wraps
+  // it to at most 2 rows. Returns [{c, span}] in visual order.
+  function pack(secs, cols) {
+    var colW = Math.min(cols, cols >= 4 ? 2 : 1);   // span of a collapsed category
+    // The span that fits c in r columns using at most 2 card rows (0 = doesn't fit).
+    function fit(c, r) {
+      if (c.collapsed) return colW <= r ? colW : 0;
+      var n = c.vids.length;
+      return n <= r ? n : n <= 2 * r ? r : 0;
+    }
+    var q = secs.slice(), out = [];
+    while (q.length) {
+      var c0 = q.shift(), n0 = c0.vids.length;
+      var s0 = c0.collapsed ? colW : n0 <= cols ? n0 : (n0 <= 2 * cols && cols >= 2) ? Math.ceil(n0 / 2) : cols;
+      var row = [{c: c0, span: s0}], r = cols - s0;
+      while (r > 0 && q.length) {
+        var i = -1;
+        for (var j = 0; j < Math.min(4, q.length); j++) if (fit(q[j], r) > 0) { i = j; break; }
+        if (i < 0) break;
+        var c = q.splice(i, 1)[0], s = fit(c, r);
+        row.push({c: c, span: s});
+        r -= s;
+      }
+      if (row.length === 1 && !c0.collapsed && n0 > cols) row[0].span = cols;
+      out.push.apply(out, row);
+    }
+    return out;
+  }
+  function placed(secs) {
+    return S.cols ? pack(secs, S.cols) : secs.map(function (c) { return {c: c, span: 0}; });
+  }
+  // Sections in visual order, so [ ] and J/K follow the packed layout.
+  function sections() {
+    return placed(model().filter(function (c) { return c.vids.length; })).map(function (p) { return p.c; });
+  }
   function flat() {
     var out = [];
     sections().forEach(function (c) {
@@ -167,8 +221,27 @@
       (c.collapsed ? '<span class="w-sec-peek">Latest — ' + esc(c.vids[0].title) + '</span>' : '') +
       '<span class="w-sec-hint">' + hint + '</span></div>';
   }
+  // A packed category: a box (Grid) or a ruled shelf (Shelves) spanning
+  // ``span`` columns of the packed grid.
+  function packedSec(c, span) {
+    var shelf = S.layout === 'shelves';
+    var peek = c.collapsed ? '<div class="w-pk-peek">Latest — ' + esc(c.vids[0].title) + '</div>' : '';
+    var cards = c.vids.map(function (v) { return card(c, v); }).join('');
+    return '<section class="' + (shelf ? 'w-pk-shelf' : 'w-pk-box') + '" data-sec="' + c.id +
+      '" style="grid-column:span ' + span + '">' +
+      '<div class="w-pk-head" data-act="toggle-sec">' +
+        '<span class="w-chev">' + (c.collapsed ? CHEV_SHUT : CHEV_OPEN) + '</span>' +
+        '<span class="w-sec-name">' + esc(c.name) + '</span>' +
+        '<span class="w-sec-count">' + c.unw + ' new · ' + c.vids.length + '</span>' +
+        (shelf && !c.collapsed && c.vids.length > span ? '<span class="w-pk-more">Scroll →</span>' : '') +
+      '</div>' + peek +
+      (c.collapsed ? '' : shelf
+        ? '<div class="w-shelf w-pk-row sb" data-sec="' + c.id + '">' + cards + '</div>'
+        : '<div class="w-pk-cards" style="grid-template-columns:repeat(' + span + ',minmax(0,1fr))">' + cards + '</div>') +
+      '</section>';
+  }
 
-  function renderMain(secs) {
+  function renderMain(secs) {   // [{c, span}] from placed()
     var main = document.getElementById('watch-main');
     // Shelves scroll sideways; keep each one's position across re-renders.
     var shelfScroll = {};
@@ -185,7 +258,12 @@
       return;
     }
     var html = '';
-    secs.forEach(function (c) {
+    if (S.cols) {
+      html = '<div class="w-pack ' + (S.layout === 'shelves' ? 'w-pack-shelves' : 'w-pack-grid') +
+        '" style="grid-template-columns:repeat(' + S.cols + ',minmax(0,1fr))">' +
+        secs.map(function (p) { return packedSec(p.c, p.span); }).join('') + '</div>';
+    } else secs.forEach(function (p) {
+      var c = p.c;
       if (S.layout === 'grid') {
         html += '<section class="w-sec" data-sec="' + c.id + '">' +
           secHead(c, 'w-sec-head', '[ ] switch · X collapse · ⇧W mark all watched') +
@@ -244,6 +322,9 @@
 
   function renderToolbar(mdl) {
     document.getElementById('w-unwatched').classList.toggle('on', S.unwatchedOnly);
+    var packBtn = document.getElementById('w-pack');
+    packBtn.hidden = S.layout === 'list';
+    packBtn.classList.toggle('on', S.packed);
     document.getElementById('w-platforms').innerHTML = PLATS.map(function (p) {
       return '<button type="button" data-platform="' + p[0] + '"' + (S.platform === p[0] ? ' class="on"' : '') + '>' + p[1] + '</button>';
     }).join('');
@@ -263,12 +344,14 @@
   }
 
   function render() {
-    var mdl = model(), secs = mdl.filter(function (c) { return c.vids.length; });
+    // The sidebar changes the feed's width, so settle it before measuring.
+    document.querySelector('.watch').classList.toggle('no-side', S.layout === 'shelves');
+    S.cols = measure();
+    var mdl = model(), secs = placed(mdl.filter(function (c) { return c.vids.length; }));
     // Keep the selection valid after filters change underneath it.
     if (S.selKey && !flat().some(function (f) { return f.k === S.selKey; })) S.selKey = null;
-    if (!S.selCat || !secs.some(function (c) { return c.id === S.selCat; })) S.selCat = secs.length ? secs[0].id : null;
+    if (!S.selCat || !secs.some(function (p) { return p.c.id === S.selCat; })) S.selCat = secs.length ? secs[0].c.id : null;
 
-    document.querySelector('.watch').classList.toggle('no-side', S.layout === 'shelves');
     renderToolbar(mdl);
     renderSide(mdl);
     renderMain(secs);
@@ -462,6 +545,7 @@
     if (prev[v.key] === false) showToast({text: 'Marked watched', sub: v.title, prev: prev});
   }
 
+  function togglePack() { S.packed = !S.packed; render(); }
   function cyclePlatform() {
     var i = PLATS.map(function (p) { return p[0]; }).indexOf(S.platform);
     S.platform = PLATS[(i + 1) % PLATS.length][0];
@@ -524,6 +608,7 @@
   document.getElementById('w-channel-chip').addEventListener('click', function (e) {
     if (e.target.closest('#w-clear-channel')) { S.channel = null; render(); }
   });
+  document.getElementById('w-pack').addEventListener('click', togglePack);
   document.getElementById('w-help-btn').addEventListener('click', function () { toggleHelp(); });
   helpEl.addEventListener('mousedown', function (e) { if (e.target === helpEl) toggleHelp(false); });
   document.getElementById('w-toggle-all').addEventListener('click', toggleAll);
@@ -613,6 +698,7 @@
       case 'u': S.unwatchedOnly = !S.unwatchedOnly; render(); break;
       case 'p': cyclePlatform(); break;
       case '1': case '2': case '3': S.layout = LAYOUTS[+e.key - 1][0]; render(); break;
+      case 'g': if (S.layout !== 'list') togglePack(); break;
       case '?': toggleHelp(); break;
       case 'Escape':
         if (!helpEl.hidden) toggleHelp(false);
@@ -623,6 +709,12 @@
     }
     e.preventDefault();
   });
+
+  // Re-pack when the feed's width changes the column count (or crosses the
+  // phone breakpoint); otherwise just resize the packed shelf cards.
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () { if (measure() !== S.cols) render(); }).observe(document.getElementById('watch-main'));
+  }
 
   render();
 })();
