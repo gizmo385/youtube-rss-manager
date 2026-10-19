@@ -18,6 +18,7 @@
       <span id="w-count" class="w-count"></span>
       <div class="w-view">
         <button type="button" id="w-pack" class="w-toggle w-pack-btn" title="Let small categories share rows (G)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="18" height="7"></rect></svg>Pack<span class="w-key">G</span></button>
+        <button type="button" id="w-theater" class="w-toggle w-theater-btn" title="Play videos in theater mode — player center, feed docked right (T)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><rect x="2" y="5" width="14" height="14"></rect><path d="M19 5v14"></path><path d="M22 5v14"></path></svg>Theater<span class="w-key">T</span></button>
         <span class="w-view-label">View</span>
         <div class="seg" id="w-layouts"></div>
         <button type="button" class="w-help-btn" id="w-help-btn" title="Keyboard shortcuts">?</button>
@@ -37,6 +38,16 @@
       <div class="w-side-list sb" id="w-side-list"></div>
     </aside>
     <main class="watch-main sb" id="watch-main"></main>
+    {# watch.js puts the player here; in theater mode it takes the feed's
+       place, with the feed docked beside it as the rail. #}
+    <div id="w-player-host" class="w-player-host"></div>
+    <aside class="w-rail" id="w-rail" aria-label="Up next">
+      <div class="w-side-head">
+        <span class="eyebrow">Up next · by category</span>
+        <button type="button" class="w-side-all" id="w-rail-all"></button>
+      </div>
+      <div class="w-rail-list sb" id="w-rail-list"></div>
+    </aside>
   </div>
 
   <footer class="watch-legend" id="watch-legend"></footer>
@@ -65,11 +76,13 @@
   var PLATS = [['all', 'All'], ['youtube', 'YouTube'], ['nebula', 'Nebula']];
   var LAYOUTS = [['grid', 'Grid', '1'], ['shelves', 'Shelves', '2'], ['list', 'List', '3']];
   var SHORTCUTS = [
-    [['J', 'K'], 'Next / previous video', 'Next · prev'],
+    [['J', 'K'], 'Next / previous video (plays it while the player is open)', 'Next · prev'],
     [['[', ']'], 'Previous / next category', 'Category'],
     [['X'], 'Collapse or expand this category', 'Collapse'],
     [['⇧X'], 'Collapse or expand all categories', 'All'],
     [['↵'], 'Play here (the archived copy when there is one)', 'Play'],
+    [['T'], 'Theater mode — player center, feed docked right', 'Theater'],
+    [['Esc'], 'Close the player', null],
     [['O'], 'Open in Jellyfin / YouTube / Nebula in a new tab', 'Open'],
     [['W'], 'Toggle watched', 'Watched'],
     [['⇧W'], 'Mark the whole category watched', null],
@@ -91,6 +104,8 @@
     collapsed: prefs.collapsed || {},
     layout: prefs.layout || 'grid',
     packed: typeof prefs.packed === 'boolean' ? prefs.packed : true,
+    theater: !!prefs.theater,   // play in theater mode rather than the overlay
+    playing: null,          // card key of the video in the player
     cols: 0,                // packed-grid columns; 0 when not packing
     unwatchedOnly: !!prefs.unwatchedOnly,
     platform: prefs.platform || 'all',
@@ -106,7 +121,8 @@
   function savePrefs() {
     try {
       localStorage.setItem(PREF_KEY, JSON.stringify({
-        collapsed: S.collapsed, layout: S.layout, packed: S.packed, unwatchedOnly: S.unwatchedOnly, platform: S.platform
+        collapsed: S.collapsed, layout: S.layout, packed: S.packed, theater: S.theater,
+        unwatchedOnly: S.unwatchedOnly, platform: S.platform
       }));
     } catch (e) {}
   }
@@ -116,11 +132,17 @@
   var badges = Watch.badges, watchBtn = Watch.watchBtn;
   function cardKey(catId, v) { return catId + '|' + v.key; }
   function videoOf(k) { return k ? BY_KEY[k.slice(k.indexOf('|') + 1)] : null; }
+  function isPlaying(v) { return !!S.playing && videoOf(S.playing) === v; }
+  function theaterOn() { return S.theater && !!S.playing && Watch.isOpen(); }
+  // Where the feed's cards are on screen: the rail in theater mode, else the
+  // main feed (which stays in the DOM, hidden, while the rail shows).
+  function feedRoot() { return document.getElementById(theaterOn() ? 'w-rail-list' : 'watch-main'); }
   function catName(id) { for (var i = 0; i < CATS.length; i++) if (CATS[i].id === id) return CATS[i].name; return ''; }
 
   function matches(v) {
     var q = S.query.trim().toLowerCase();
-    if (S.unwatchedOnly && v.watched) return false;
+    // The video playing stays put even though playing it marked it watched.
+    if (S.unwatchedOnly && v.watched && !isPlaying(v)) return false;
     if (S.platform === 'youtube' && v.nebula) return false;
     if (S.platform === 'nebula' && !v.nebula) return false;
     if (S.channel && v.channelId !== S.channel.id) return false;
@@ -144,7 +166,7 @@
   // where a column is a whole screen wide anyway.
   var NARROW = window.matchMedia('(max-width: 860px)');
   var PACK_MIN = 190, PACK_GAP = 14;
-  function packing() { return S.packed && S.layout !== 'list' && !NARROW.matches; }
+  function packing() { return S.packed && S.layout !== 'list' && !NARROW.matches && !theaterOn(); }
   function measure() {
     var main = document.getElementById('watch-main');
     var inner = Math.max(200, main.clientWidth - 40);
@@ -291,6 +313,36 @@
     });
   }
 
+  // Theater mode's rail: the feed by category as compact rows, so the next
+  // video is a glance away.
+  function railRow(c, v) {
+    var d = dur(v.duration), playing = cardKey(c.id, v) === S.playing;
+    return '<a class="w-rrow' + (v.watched ? ' watched' : '') + (playing ? ' playing' : '') +
+      '" data-k="' + esc(cardKey(c.id, v)) + '" href="' + esc(v.url) + '" target="_blank" rel="noopener">' +
+      '<div class="w-thumb">' + Watch.thumb(v) +
+        (playing ? '<span class="w-rrow-playing">Playing</span>' : '') +
+        (d ? '<span class="w-dur">' + d + '</span>' : '') + '</div>' +
+      '<div class="w-rrow-text"><div class="w-rrow-title">' + esc(v.title) + '</div>' +
+        '<div class="w-meta">' + (v.watched ? '' : '<span class="dot"></span>') +
+          '<span class="w-meta-ch">' + esc(v.channel) + '</span><span>·</span>' +
+          '<span class="nowrap">' + agoShort(v) + '</span>' +
+          (v.jellyfin ? '<span class="w-tag w-tag-arch">JF</span>' : '') +
+          (v.nebula ? '<span class="w-tag">NEB</span>' : '') + '</div>' +
+      '</div></a>';
+  }
+  function renderRail(secs) {   // [{c, span}] from placed()
+    document.getElementById('w-rail-list').innerHTML = secs.map(function (p) {
+      var c = p.c;
+      return '<section data-sec="' + c.id + '">' +
+        '<div class="w-rail-head" data-act="toggle-sec">' +
+          '<span class="w-chev">' + (c.collapsed ? CHEV_SHUT : CHEV_OPEN) + '</span>' +
+          '<span class="w-sec-name">' + esc(c.name) + '</span>' +
+          '<span class="w-sec-count">' + c.unw + ' new · ' + c.vids.length + '</span></div>' +
+        (c.collapsed ? '' : c.vids.map(function (v) { return railRow(c, v); }).join('')) +
+        '</section>';
+    }).join('') || '<div class="w-empty"><div class="eyebrow">Nothing matches these filters</div></div>';
+  }
+
   function renderSide(mdl) {
     var html = '';
     mdl.forEach(function (c) {
@@ -319,7 +371,8 @@
         '<span class="w-badge' + (c.unw ? ' on' : '') + '">' + c.unw + '</span></button>';
     }).join('');
     var anyOpen = CATS.some(function (c) { return !S.collapsed[c.id]; });
-    document.getElementById('w-toggle-all').innerHTML = (anyOpen ? 'Collapse all' : 'Expand all') + '<span class="w-key">⇧X</span>';
+    document.getElementById('w-toggle-all').innerHTML =
+      document.getElementById('w-rail-all').innerHTML = (anyOpen ? 'Collapse all' : 'Expand all') + '<span class="w-key">⇧X</span>';
   }
 
   function renderToolbar(mdl) {
@@ -327,6 +380,7 @@
     var packBtn = document.getElementById('w-pack');
     packBtn.hidden = S.layout === 'list';
     packBtn.classList.toggle('on', S.packed);
+    document.getElementById('w-theater').classList.toggle('on', S.theater);
     document.getElementById('w-platforms').innerHTML = PLATS.map(function (p) {
       return '<button type="button" data-platform="' + p[0] + '"' + (S.platform === p[0] ? ' class="on"' : '') + '>' + p[1] + '</button>';
     }).join('');
@@ -347,7 +401,9 @@
 
   function render() {
     // The sidebar changes the feed's width, so settle it before measuring.
-    document.querySelector('.watch').classList.toggle('no-side', S.layout === 'shelves');
+    var watch = document.querySelector('.watch');
+    watch.classList.toggle('no-side', S.layout === 'shelves');
+    watch.classList.toggle('theater', theaterOn());
     S.cols = measure();
     var mdl = model(), secs = placed(mdl.filter(function (c) { return c.vids.length; }));
     // Keep the selection valid after filters change underneath it.
@@ -356,22 +412,26 @@
 
     renderToolbar(mdl);
     renderSide(mdl);
-    renderMain(secs);
+    // The main feed is hidden in theater mode, so leave it (and its shelves'
+    // scroll positions) alone until it's back.
+    if (theaterOn()) renderRail(secs); else renderMain(secs);
     applySel();
+    Watch.refresh();
     savePrefs();
   }
 
   // Selection only toggles classes, so moving through the feed doesn't rebuild
   // (and re-decode) every thumbnail on each keypress.
   function applySel() {
-    document.querySelectorAll('.w-card.sel, .w-row.sel').forEach(function (el) { el.classList.remove('sel'); });
+    var root = feedRoot();
+    document.querySelectorAll('.w-card.sel, .w-row.sel, .w-rrow.sel').forEach(function (el) { el.classList.remove('sel'); });
     document.querySelectorAll('[data-sec].focused, .w-side-cat.focused, .w-cat-chip.focused').forEach(function (el) { el.classList.remove('focused'); });
     if (S.selKey) {
-      var el = document.querySelector('[data-k="' + CSS.escape(S.selKey) + '"]');
+      var el = root.querySelector('[data-k="' + CSS.escape(S.selKey) + '"]');
       if (el) el.classList.add('sel');
     }
     if (S.selCat) {
-      var sec = document.querySelector('section[data-sec="' + S.selCat + '"]');
+      var sec = root.querySelector('section[data-sec="' + S.selCat + '"]');
       if (sec) sec.classList.add('focused');
       var side = document.querySelector('.w-side-cat[data-cat="' + S.selCat + '"]');
       if (side) side.classList.add('focused');
@@ -396,7 +456,7 @@
     }
   }
   function scrollToSection(id) {
-    var main = document.getElementById('watch-main'), sec = main.querySelector('section[data-sec="' + id + '"]');
+    var main = feedRoot(), sec = main.querySelector('section[data-sec="' + id + '"]');
     if (!sec) return;
     if (getComputedStyle(main).overflowY === 'visible') {
       // Phone layout: the page scrolls rather than #watch-main.
@@ -411,7 +471,7 @@
     S.selKey = k;
     if (cat) S.selCat = cat;
     applySel();
-    if (k) ensureVisible(document.querySelector('[data-k="' + CSS.escape(k) + '"]'));
+    if (k) ensureVisible(feedRoot().querySelector('[data-k="' + CSS.escape(k) + '"]'));
   }
   function moveVid(d) {
     var f = flat();
@@ -476,7 +536,7 @@
     // hand the selection to its neighbour first.
     if (S.unwatchedOnly && S.selKey) {
       var sv = videoOf(S.selKey);
-      if (sv && sv.watched && prev[sv.key] === false) {
+      if (sv && sv.watched && prev[sv.key] === false && !isPlaying(sv)) {
         var f = flat().filter(function (x) { return !x.v.watched || x.k === S.selKey; });
         var i = f.map(function (x) { return x.k; }).indexOf(S.selKey);
         var nx = f[i + 1] || f[i - 1];
@@ -538,15 +598,61 @@
     var v = videoOf(k);
     if (!v) return;
     if (!Watch.canPlayHere(v)) { window.open(v.url, '_blank', 'noopener'); opened(k); return; }
-    Watch.play(v, {onClose: function () {
-      var sel = S.selKey && document.querySelector('[data-k="' + CSS.escape(S.selKey) + '"]');
-      if (sel) ensureVisible(sel);
-    }});
+    S.playing = k;
     S.selKey = k;
     S.selCat = k.slice(0, k.indexOf('|'));
+    Watch.play(v, {
+      info: playerInfo, onClose: closed,
+      onPrev: function () { playRel(-1); }, onNext: function () { playRel(1); },
+      onWatch: function () { toggleWatched(S.playing); }, onTheater: toggleTheater
+    });
     var c = {}; c[v.key] = true;
-    var prev = applyWatched(c);
+    var prev = applyWatched(c);   // renders, which lays out theater mode
     if (prev[v.key] === false) showToast({text: 'Marked watched', sub: v.title, prev: prev});
+    if (theaterOn()) select(k);   // bring it into view in the rail
+  }
+  // The player's neighbours in feed order, skipping what can't play here.
+  function playable(d) {
+    var f = flat(), i = -1;
+    for (var j = 0; j < f.length; j++) if (f[j].k === S.playing) { i = j; break; }
+    if (i < 0) return null;
+    for (var n = i + d; n >= 0 && n < f.length; n += d) if (Watch.canPlayHere(f[n].v)) return f[n];
+    return null;
+  }
+  function playRel(d) { var f = playable(d); if (f) play(f.k); }
+  function playerInfo() {
+    var k = S.playing, cat = k.slice(0, k.indexOf('|'));
+    var inCat = flat().filter(function (f) { return f.cat === cat; }).map(function (f) { return f.k; });
+    var ci = inCat.indexOf(k);
+    return {
+      cat: catName(cat), pos: ci >= 0 ? (ci + 1) + ' of ' + inCat.length : '',
+      watched: !!(videoOf(k) || {}).watched, hasPrev: !!playable(-1), hasNext: !!playable(1), theater: S.theater
+    };
+  }
+  function closed() {
+    // In unwatched-only mode the video just played drops out of the feed now;
+    // hand its selection to a neighbour, as marking it watched would have.
+    var k = S.playing, v = videoOf(k);
+    if (S.unwatchedOnly && v && v.watched && S.selKey === k) {
+      var f = flat().filter(function (x) { return !x.v.watched || x.k === k; });
+      var i = f.map(function (x) { return x.k; }).indexOf(k);
+      var nx = f[i + 1] || f[i - 1];
+      S.selKey = nx ? nx.k : null;
+      if (nx) S.selCat = nx.cat;
+    }
+    S.playing = null;
+    render();
+    var sel = S.selKey && feedRoot().querySelector('[data-k="' + CSS.escape(S.selKey) + '"]');
+    if (sel) ensureVisible(sel);
+  }
+  // T: switch the player between the overlay and theater mode, or with
+  // nothing playing, set which one videos open in (and play the selection
+  // when that's theater).
+  function toggleTheater() {
+    S.theater = !S.theater;
+    if (!S.playing && S.theater && S.selKey) { play(S.selKey); return; }
+    render();
+    if (theaterOn()) select(S.playing);
   }
 
   function togglePack() { S.packed = !S.packed; render(); }
@@ -613,6 +719,8 @@
     if (e.target.closest('#w-clear-channel')) { S.channel = null; render(); }
   });
   document.getElementById('w-pack').addEventListener('click', togglePack);
+  document.getElementById('w-theater').addEventListener('click', function () { S.theater = !S.theater; render(); });
+  document.getElementById('w-rail-all').addEventListener('click', toggleAll);
   document.getElementById('w-help-btn').addEventListener('click', function () { toggleHelp(); });
   helpEl.addEventListener('mousedown', function (e) { if (e.target === helpEl) toggleHelp(false); });
   document.getElementById('w-toggle-all').addEventListener('click', toggleAll);
@@ -643,8 +751,8 @@
     if (chip) jump(chip.dataset.cat);
   });
 
-  var main = document.getElementById('watch-main');
-  main.addEventListener('click', function (e) {
+  // Clicks in the main feed and in theater mode's rail.
+  function onFeedClick(e) {
     var act = e.target.closest('[data-act]');
     if (act && act.dataset.act === 'clear-filters') { clearFilters(); return; }
     if (act && act.dataset.act === 'toggle-sec') {
@@ -667,17 +775,33 @@
       return;
     }
     e.preventDefault();
-    play(item.dataset.k);
-  });
-  main.addEventListener('auxclick', function (e) {
+    if (item.dataset.k !== S.playing) play(item.dataset.k);
+  }
+  function onFeedAuxClick(e) {
     var item = e.button === 1 && !e.target.closest('[data-act]') && e.target.closest('[data-k]');
     if (item) opened(item.dataset.k);
+  }
+  ['watch-main', 'w-rail-list'].forEach(function (id) {
+    var el = document.getElementById(id);
+    el.addEventListener('click', onFeedClick);
+    el.addEventListener('auxclick', onFeedAuxClick);
   });
+
+  // Esc closes the help before the player under it (watch.js closes the
+  // player on Esc in the capture phase too, but registers later).
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !helpEl.hidden) { e.preventDefault(); e.stopImmediatePropagation(); toggleHelp(false); }
+  }, true);
 
   document.addEventListener('keydown', function (e) {
     var qs = document.getElementById('qs-overlay');
     if (qs && !qs.hidden) return;   // the quick switcher owns the keyboard while open
-    if (Watch.isOpen()) return;   // keys belong to the video (watch.js handles Esc)
+    // With the player open, the overlay takes only J/K/W/T and leaves the rest
+    // (space, arrows, f, m…) to the video; theater mode is still the page, so
+    // its other shortcuts work too — bar the arrows. watch.js handles Esc.
+    var playing = Watch.isOpen();
+    if (playing && !theaterOn() && 'jkwtJKWT'.indexOf(e.key) < 0) return;
+    if (playing && e.key.indexOf('Arrow') === 0) return;
     var t = e.target, typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
     if (typing) {
       if (t !== search) return;
@@ -688,15 +812,16 @@
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (!helpEl.hidden && e.key !== '?' && e.key !== 'Escape') return;
     switch (e.key) {
-      case 'j': case 'ArrowDown': case 'ArrowRight': moveVid(1); break;
-      case 'k': case 'ArrowUp': case 'ArrowLeft': moveVid(-1); break;
+      case 'j': case 'ArrowDown': case 'ArrowRight': if (playing) playRel(1); else moveVid(1); break;
+      case 'k': case 'ArrowUp': case 'ArrowLeft': if (playing) playRel(-1); else moveVid(-1); break;
+      case 't': toggleTheater(); break;
       case ']': moveCat(1); break;
       case '[': moveCat(-1); break;
       case 'x': toggleCollapse(S.selCat); break;
       case 'X': toggleAll(); break;
-      case 'w': toggleWatched(S.selKey); break;
+      case 'w': toggleWatched(S.playing || S.selKey); break;
       case 'W': markCat(S.selCat); break;
-      case 'Enter': if (S.selKey) play(S.selKey); break;
+      case 'Enter': if (S.selKey && S.selKey !== S.playing) play(S.selKey); break;
       case 'o': openSelected(); break;
       case '/': search.focus(); break;
       case 'u': S.unwatchedOnly = !S.unwatchedOnly; render(); break;

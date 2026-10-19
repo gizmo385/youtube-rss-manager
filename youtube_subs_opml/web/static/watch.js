@@ -75,7 +75,11 @@ window.Watch = (function () {
   // Archived videos play from this app's copy of the file; everything else on
   // YouTube plays in YouTube's embed. Nebula has no embeddable player, so the
   // caller opens those in a new tab instead (see canPlayHere).
-  var overlay = null, stage = null, onClose = null;
+  //
+  // The player is a modal overlay, or — when the page puts it in theater mode
+  // (see refresh) — a pane in the page's own layout. Both are the same element
+  // restyled, never moved, since moving an iframe reloads it.
+  var overlay = null, stage = null, info = null, cur = null, curSource = null, opts = {};
 
   function ensureOverlay() {
     if (overlay) return;
@@ -84,18 +88,24 @@ window.Watch = (function () {
     overlay.hidden = true;
     overlay.innerHTML =
       '<div class="w-player" role="dialog" aria-modal="true" aria-labelledby="w-player-title">' +
-        '<div class="w-player-head">' +
-          '<div class="w-player-meta"><div class="w-player-title" id="w-player-title"></div>' +
-            '<div class="w-player-sub"></div></div>' +
-          '<div class="w-player-links"></div>' +
-          '<button type="button" class="toast-x" data-act="close" title="Close (Esc)">&times;</button>' +
-        '</div>' +
         '<div class="w-player-stage"></div>' +
+        '<div class="w-player-info"></div>' +
       '</div>';
-    document.body.appendChild(overlay);
+    // A page can give the player a place in its layout for theater mode.
+    (document.getElementById('w-player-host') || document.body).appendChild(overlay);
     stage = overlay.querySelector('.w-player-stage');
-    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) close(); });
-    overlay.querySelector('[data-act="close"]').addEventListener('click', close);
+    info = overlay.querySelector('.w-player-info');
+    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay && !isTheater()) close(); });
+    info.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-act]');
+      if (!b) return;
+      var act = b.dataset.act;
+      if (act === 'close') close();
+      else if (act === 'prev' && opts.onPrev) opts.onPrev();
+      else if (act === 'next' && opts.onNext) opts.onNext();
+      else if (act === 'watch' && opts.onWatch) opts.onWatch();
+      else if (act === 'theater' && opts.onTheater) opts.onTheater();
+    });
     // Capture phase, so Esc closes the player before the page's own shortcuts
     // see it. Everything else is left to the video element (space, f, m…).
     document.addEventListener('keydown', function (e) {
@@ -110,20 +120,59 @@ window.Watch = (function () {
   function canPlayHere(v) { return !handOff.matches && !v.nebula && !!v.videoId; }
   function youtubeUrl(v) { return 'https://www.youtube.com/watch?v=' + encodeURIComponent(v.videoId); }
   function isOpen() { return !!overlay && !overlay.hidden; }
+  function isTheater() { return !!overlay && overlay.classList.contains('theater'); }
 
-  // Play ``v`` in the overlay. ``opts.source`` forces 'file' or 'youtube';
-  // ``opts.onClose`` runs when the player is dismissed.
-  function play(v, opts) {
-    opts = opts || {};
+  function pbtn(act, label, key, extra) {
+    return '<button type="button" class="w-pbtn' + (extra || '') + '" data-act="' + act + '">' + label +
+      (key ? '<kbd>' + key + '</kbd>' : '') + '</button>';
+  }
+  // The panel under the video. What the page passes in ``opts`` decides
+  // which controls show: ``info()`` returns {cat, pos, watched, hasPrev,
+  // hasNext, theater}; onPrev/onNext/onWatch/onTheater wire up the buttons.
+  function renderInfo() {
+    var v = cur, i = opts.info ? opts.info() : {};
+    overlay.classList.toggle('theater', !!i.theater);
+    overlay.querySelector('.w-player').setAttribute('aria-modal', i.theater ? 'false' : 'true');
+    var source = curSource === 'file' ? (v.jellyfin ? 'Jellyfin' : 'Archived copy') : 'YouTube';
+    var eyebrow = (i.cat ? '<span class="w-player-cat">' + esc(i.cat) + '</span>' : '') +
+      (i.pos ? '<span>' + esc(i.pos) + '</span>' : '') +
+      '<span class="w-tag">' + esc(source) + '</span>';
+    var d = dur(v.duration);
+    var actions = '';
+    if (opts.onPrev || opts.onNext) {
+      actions += '<div class="w-pbtn-pair">' +
+        pbtn('prev', '← Prev', 'K', i.hasPrev ? '' : ' dim') +
+        pbtn('next', 'Next →', 'J', i.hasNext ? '' : ' dim') + '</div>';
+    }
+    if (opts.onWatch) {
+      actions += pbtn('watch', CHECK + (i.watched ? 'Watched' : 'Mark watched'), 'W', i.watched ? ' on' : '');
+    }
+    if (opts.onTheater) actions += pbtn('theater', i.theater ? 'Exit theater' : 'Theater', 'T');
+    actions +=
+      (v.jellyfin ? '<a class="w-plink" href="' + esc(v.url) + '" target="_blank" rel="noopener">Open in Jellyfin ↗</a>' : '') +
+      '<a class="w-plink" href="' + esc(youtubeUrl(v)) + '" target="_blank" rel="noopener">Open on YouTube ↗</a>' +
+      '<span class="w-pspacer"></span>' + pbtn('close', 'Close', 'Esc');
+    info.innerHTML =
+      '<div class="w-player-eyebrow">' + eyebrow + '</div>' +
+      '<h2 class="w-player-title" id="w-player-title">' + esc(v.title) + '</h2>' +
+      '<div class="w-player-sub">' + esc(v.channel) + ' · ' + ago(v) + (d ? ' · ' + d : '') + '</div>' +
+      '<div class="w-player-actions">' + actions + '</div>';
+  }
+  // Re-draw the panel and mode after the page's state changes underneath it.
+  function refresh() { if (isOpen()) renderInfo(); }
+
+  // Play ``v``. ``o.source`` forces 'file' or 'youtube'; ``o.onClose`` runs
+  // when the player is dismissed; the rest is described at renderInfo.
+  // Playing another video while open replaces the one playing.
+  function play(v, o) {
+    o = o || {};
     ensureOverlay();
-    var source = opts.source || (v.archived ? 'file' : 'youtube');
-    onClose = opts.onClose || onClose;
-    overlay.querySelector('.w-player-title').textContent = v.title;
-    overlay.querySelector('.w-player-sub').textContent =
-      v.channel + ' · ' + ago(v) + ' · ' + (source === 'file' ? 'Archived copy' : 'YouTube');
-    overlay.querySelector('.w-player-links').innerHTML =
-      (v.jellyfin ? '<a class="btn btn-sm btn-ghost" href="' + esc(v.url) + '" target="_blank" rel="noopener">Open in Jellyfin ↗</a>' : '') +
-      '<a class="btn btn-sm btn-ghost" href="' + esc(youtubeUrl(v)) + '" target="_blank" rel="noopener">Open on YouTube ↗</a>';
+    var onClose = o.onClose || opts.onClose;
+    opts = o;
+    opts.onClose = onClose;
+    var source = o.source || (v.archived ? 'file' : 'youtube');
+    cur = v;
+    curSource = source;
 
     if (source === 'file') {
       stage.innerHTML = '<video controls autoplay preload="metadata" src="/watch/media/' + encodeURIComponent(v.videoId) + '"></video>';
@@ -145,6 +194,7 @@ window.Watch = (function () {
         ' allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>';
     }
     overlay.hidden = false;
+    renderInfo();
   }
   function playError(v) {
     stage.innerHTML = '<div class="w-player-error"><div class="eyebrow">Can\'t play the archived copy in this browser</div>' +
@@ -152,20 +202,26 @@ window.Watch = (function () {
       '<button type="button" class="btn btn-primary" data-act="play-youtube">Play the YouTube version</button>' +
       (v.jellyfin ? '<a class="btn" href="' + esc(v.url) + '" target="_blank" rel="noopener">Open in Jellyfin ↗</a>' : '') +
       '</div></div>';
-    stage.querySelector('[data-act="play-youtube"]').addEventListener('click', function () { play(v, {source: 'youtube'}); });
+    stage.querySelector('[data-act="play-youtube"]').addEventListener('click', function () {
+      var o = {}; Object.keys(opts).forEach(function (k) { o[k] = opts[k]; });
+      o.source = 'youtube';
+      play(v, o);
+    });
   }
   function close() {
     if (!overlay) return;
     stage.innerHTML = '';   // removing the element is what stops playback
     overlay.hidden = true;
-    var cb = onClose;
-    onClose = null;
+    overlay.classList.remove('theater');
+    var cb = opts.onClose;
+    opts = {};
+    cur = null;
     if (cb) cb();
   }
 
   return {
     esc: esc, hue: hue, ago: ago, agoShort: agoShort, dur: dur,
-    badges: badges, watchBtn: watchBtn, card: card, saveWatched: saveWatched,
-    canPlayHere: canPlayHere, play: play, close: close, isOpen: isOpen
+    badges: badges, watchBtn: watchBtn, thumb: thumb, card: card, saveWatched: saveWatched,
+    canPlayHere: canPlayHere, play: play, close: close, isOpen: isOpen, refresh: refresh
   };
 })();
