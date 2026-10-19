@@ -194,6 +194,13 @@ def test_page_embeds_the_feed(client):
     assert data["videos"][0]["key"] == "a_new"
 
 
+def test_feed_endpoint_serves_the_page_feed(client, sessionmaker_):
+    client.post("/watch/watched", json={"keys": ["a_new"], "watched": True})
+    data = client.get("/watch/feed").json()
+    assert data["videos"][0]["key"] == "a_new"
+    assert data["videos"][0]["watched"] is True
+
+
 def test_watched_endpoint_round_trips(client, sessionmaker_):
     assert client.post("/watch/watched", json={"keys": ["b_arch"], "watched": True}).status_code == 204
     with sessionmaker_() as s:

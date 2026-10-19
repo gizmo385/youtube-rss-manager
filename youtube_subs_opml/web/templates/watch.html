@@ -98,7 +98,9 @@
     channel: null,          // {id, title} when filtering to one channel
     selCat: null,
     selKey: null,           // card key: category id + '|' + video key
-    toast: null
+    toast: null,
+    edits: 0,               // watched changes made here, and how many are
+    saving: 0               // still saving — see refresh()
   };
 
   function savePrefs() {
@@ -486,11 +488,13 @@
     var saves = [];
     if (groups[true].length) saves.push(Watch.saveWatched(groups[true], true));
     if (groups[false].length) saves.push(Watch.saveWatched(groups[false], false));
+    if (!saves.length) return prev;
+    S.edits++; S.saving++;   // holds off a background refresh (see refresh())
     Promise.all(saves).catch(function () {
-      Object.keys(prev).forEach(function (k) { BY_KEY[k].watched = prev[k]; });
+      Object.keys(prev).forEach(function (k) { if (BY_KEY[k]) BY_KEY[k].watched = prev[k]; });
       render();
       showToast({text: "Couldn't save watched state", sub: 'Check your connection and try again', prev: null});
-    });
+    }).then(function () { S.saving--; });
     return prev;
   }
   function toggleWatched(k) {
@@ -715,6 +719,38 @@
   if (window.ResizeObserver) {
     new ResizeObserver(function () { if (measure() !== S.cols) render(); }).observe(document.getElementById('watch-main'));
   }
+
+  // ---- background refresh ----------------------------------------------
+  // While the window has focus, swap in a fresh feed every couple of minutes
+  // (and straight away on coming back to a stale one), so new uploads and
+  // watched state from other devices / FreshRSS show up. Not mid-video, and
+  // never over a watched change the server may not have seen yet.
+  var REFRESH_MS = 2 * 60 * 1000;
+  var lastRefresh = Date.now(), refreshing = false;
+  function canRefresh() {
+    return document.visibilityState === 'visible' && document.hasFocus() && !Watch.isOpen();
+  }
+  function refresh() {
+    if (refreshing || !canRefresh()) return;
+    refreshing = true;
+    var edits = S.edits;
+    fetch('/watch/feed', {headers: {'Accept': 'application/json'}})
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (feed) {
+        lastRefresh = Date.now();
+        if (S.edits !== edits || S.saving || Watch.isOpen()) return;   // try again next tick
+        FEED = feed; CATS = feed.categories; VIDEOS = feed.videos;
+        BY_KEY = {};
+        VIDEOS.forEach(function (v) { BY_KEY[v.key] = v; });
+        render();
+      })
+      .catch(function () { lastRefresh = Date.now(); })
+      .then(function () { refreshing = false; });
+  }
+  function refreshIfStale() { if (Date.now() - lastRefresh >= REFRESH_MS) refresh(); }
+  setInterval(refreshIfStale, 15000);
+  window.addEventListener('focus', refreshIfStale);
+  document.addEventListener('visibilitychange', refreshIfStale);
 
   render();
 })();

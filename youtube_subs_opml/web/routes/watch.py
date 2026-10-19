@@ -59,6 +59,15 @@ def watch_page(
     )
 
 
+@router.get("/feed")
+def watch_feed(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The same feed the page embeds, for its periodic refresh."""
+    return build_watch_feed(user, db)
+
+
 @router.post("/watched", status_code=204)
 def update_watched(
     body: WatchedUpdate,
