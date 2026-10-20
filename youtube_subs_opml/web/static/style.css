@@ -1600,8 +1600,8 @@ section.focused > * > .w-sec-hint { display: inline; }
 /* Phones: one page scroll instead of fixed-height panes (the header wraps
    taller here, so the desktop height calc no longer fits), a category strip in
    place of the sidebar, and no keyboard-only furniture. Matches the 860px
-   breakpoint where the header and channels split collapse, and where
-   watch.js stops using the in-page player. */
+   breakpoint where the header and channels split collapse. (Whether videos
+   play in the page is up to the device, not this width — see watch.js.) */
 @media (max-width: 860px) {
   .watch { height: auto; }
   .watch-body { display: block; }

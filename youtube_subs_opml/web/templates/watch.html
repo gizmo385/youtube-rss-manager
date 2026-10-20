@@ -135,7 +135,9 @@
   function cardKey(catId, v) { return catId + '|' + v.key; }
   function videoOf(k) { return k ? BY_KEY[k.slice(k.indexOf('|') + 1)] : null; }
   function isPlaying(v) { return !!S.playing && videoOf(S.playing) === v; }
-  function theaterOn() { return S.theater && !!S.playing && Watch.isOpen(); }
+  // Not in a narrow window, whose single-column layout has no room for the
+  // rail; the player opens as the overlay there instead.
+  function theaterOn() { return S.theater && !!S.playing && Watch.isOpen() && !NARROW.matches; }
   // Where the feed's cards are on screen: the rail in theater mode, else the
   // main feed (which stays in the DOM, hidden, while the rail shows).
   function feedRoot() { return document.getElementById(theaterOn() ? 'w-rail-list' : 'watch-main'); }
@@ -732,7 +734,8 @@
     var ci = inCat.indexOf(k);
     return {
       cat: catName(cat), pos: ci >= 0 ? (ci + 1) + ' of ' + inCat.length : '',
-      watched: !!(videoOf(k) || {}).watched, hasPrev: !!playable(-1), hasNext: !!playable(1), theater: S.theater
+      watched: !!(videoOf(k) || {}).watched, hasPrev: !!playable(-1), hasNext: !!playable(1),
+      theater: S.theater && !NARROW.matches
     };
   }
   function closed() {
