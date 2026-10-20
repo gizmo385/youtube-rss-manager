@@ -27,7 +27,7 @@ from ..models import Download, DownloadLink, JellyfinAccount, Subscription, User
 from ..services.crypto import decrypt_token
 from ..services.jellyfin import JellyfinClient, JellyfinError
 from ..services.stats import shell_stats
-from ..services.watch import build_watch_feed, set_watched
+from ..services.watch import build_watch_feed, save_progress, set_watched
 from ..templating import templates
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,12 @@ class WatchedUpdate(BaseModel):
     # Bounded so "mark the whole category watched" fits but nothing silly does.
     keys: list[str] = Field(max_length=2000)
     watched: bool
+
+
+class ProgressUpdate(BaseModel):
+    key: str = Field(max_length=255)
+    position: float = Field(ge=0)
+    duration: float | None = Field(default=None, ge=0)
 
 
 @router.get("")
@@ -79,6 +85,17 @@ def update_watched(
     from ..services.scheduler import sync_freshrss_soon
 
     sync_freshrss_soon(user.id)
+    return Response(status_code=204)
+
+
+@router.post("/progress", status_code=204)
+def update_progress(
+    body: ProgressUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Save the in-page player's position, for resuming and "Continue watching"."""
+    save_progress(user, db, body.key, body.position, body.duration)
     return Response(status_code=204)
 
 

@@ -3,7 +3,7 @@
 
    A video here is the JSON shape built by services/watch.py: {key, videoId,
    title, channel, published, duration, url, thumb, nebula, archived,
-   jellyfin, watched}. */
+   jellyfin, watched, progress}. */
 window.Watch = (function () {
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -32,9 +32,10 @@ window.Watch = (function () {
       (v.archived ? '<span class="w-tag w-tag-arch" title="' +
         (v.jellyfin ? 'Archived — opens in Jellyfin' : 'Archived — not in your Jellyfin library yet') + '">Archived</span>' : '');
   }
-  function watchBtn(v) {
+  // ``title`` overrides the tooltip, for where the button means something else.
+  function watchBtn(v, title) {
     return '<button type="button" class="w-check" data-act="watch" title="' +
-      (v.watched ? 'Mark unwatched (W)' : 'Mark watched (W)') + '">' + CHECK + '</button>';
+      (title || (v.watched ? 'Mark unwatched (W)' : 'Mark watched (W)')) + '">' + CHECK + '</button>';
   }
   function thumb(v) {
     if (v.thumb) return '<img src="' + esc(v.thumb) + '" alt="" loading="lazy" decoding="async">';
@@ -53,6 +54,7 @@ window.Watch = (function () {
         '<div class="w-thumb-tl">' + badges(v) + '</div>' +
         '<div class="w-thumb-bl">' + (d ? '<span class="w-dur">' + d + '</span>' : '') +
           (v.watched ? '<span class="w-watched-tag">Watched</span>' : '') + '</div>' +
+        progressBar(v) +
       '</div>' +
       '<div class="w-card-body"><div class="w-card-text">' +
         '<div class="w-title">' + esc(v.title) + '</div>' +
@@ -80,6 +82,7 @@ window.Watch = (function () {
   // (see refresh) — a pane in the page's own layout. Both are the same element
   // restyled, never moved, since moving an iframe reloads it.
   var overlay = null, stage = null, info = null, cur = null, curSource = null, opts = {};
+  var resumedAt = 0;   // where the video playing picked up from, if it resumed
 
   function ensureOverlay() {
     if (overlay) return;
@@ -105,6 +108,7 @@ window.Watch = (function () {
       else if (act === 'next' && opts.onNext) opts.onNext();
       else if (act === 'watch' && opts.onWatch) opts.onWatch();
       else if (act === 'theater' && opts.onTheater) opts.onTheater();
+      else if (act === 'restart') play(cur, withOpts({fromStart: true}));
     });
     // Capture phase, so Esc closes the player before the page's own shortcuts
     // see it. Everything else is left to the video element (space, f, m…).
@@ -148,6 +152,7 @@ window.Watch = (function () {
       actions += pbtn('watch', CHECK + (i.watched ? 'Watched' : 'Mark watched'), 'W', i.watched ? ' on' : '');
     }
     if (opts.onTheater) actions += pbtn('theater', i.theater ? 'Exit theater' : 'Theater', 'T');
+    if (resumedAt) actions += pbtn('restart', 'Resumed at ' + dur(resumedAt) + ' · Start over');
     actions +=
       (v.jellyfin ? '<a class="w-plink" href="' + esc(v.url) + '" target="_blank" rel="noopener">Open in Jellyfin ↗</a>' : '') +
       '<a class="w-plink" href="' + esc(youtubeUrl(v)) + '" target="_blank" rel="noopener">Open on YouTube ↗</a>' +
@@ -161,23 +166,111 @@ window.Watch = (function () {
   // Re-draw the panel and mode after the page's state changes underneath it.
   function refresh() { if (isOpen()) renderInfo(); }
 
-  // Play ``v``. ``o.source`` forces 'file' or 'youtube'; ``o.onClose`` runs
-  // when the player is dismissed; the rest is described at renderInfo.
-  // Playing another video while open replaces the one playing.
+  // ---- resume points ----------------------------------------------------
+  // Where each video was left, saved while it plays so the next play picks
+  // up there. ``v.progress`` is {pos, dur, at} or null, and follows the same
+  // rules as the server (services/watch.py): too near the start or the end
+  // and there's nothing to resume.
+  var RESUME_MIN = 10, RESUME_DONE = 0.9, SAVE_EVERY_MS = 10000;
+  var track = null;   // the video playing: {v, pos(), dur(), started, saved}
+
+  function resumable(pos, d) { return pos >= RESUME_MIN && !(d && pos >= d * RESUME_DONE); }
+  function resumeAt(v) { return v.progress && resumable(v.progress.pos, v.progress.dur) ? v.progress.pos : 0; }
+  function startTracking(v, pos, d) {
+    var t = {v: v, pos: pos, dur: d, started: false, saved: null};
+    t.timer = setInterval(function () { saveProgress(t); }, SAVE_EVERY_MS);
+    track = t;
+    return t;
+  }
+  // Nothing is saved until playback has actually started: before that the
+  // position reads 0, which would wipe out the point being resumed from.
+  function saveProgress(t, keepalive) {
+    if (!t || !t.started) return;
+    var pos, d;
+    try { pos = Math.floor(t.pos() || 0); d = Math.round(t.dur() || t.v.duration || 0) || null; } catch (e) { return; }
+    if (pos === t.saved) return;
+    t.saved = pos;
+    // Keep the first ``at`` this session, so "Continue watching" doesn't
+    // reshuffle under the video as it plays.
+    var at = (t.v.progress && t.v.progress.at) || new Date().toISOString();
+    t.v.progress = resumable(pos, d) ? {pos: pos, dur: d, at: at} : null;
+    fetch('/watch/progress', {
+      method: 'POST', keepalive: !!keepalive,
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({key: t.v.key, position: pos, duration: d})
+    }).catch(function () {});
+  }
+  // Save where the video playing got to, then stop following it — nothing
+  // fired later (a removed <video>'s pause event, say) can save over that.
+  function stopTracking() {
+    if (!track) return;
+    clearInterval(track.timer);
+    saveProgress(track, true);
+    track.started = false;
+    track = null;
+  }
+  window.addEventListener('pagehide', function () { if (track) saveProgress(track, true); });
+
+  // Set or (with null) forget ``v``'s resume point by hand, outside of
+  // playback. Resolves on success, rejects on failure.
+  function setProgress(v, p) {
+    v.progress = p;
+    return fetch('/watch/progress', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      // Position 0 is too near the start to resume from, so the server drops it.
+      body: JSON.stringify({key: v.key, position: p ? p.pos : 0, duration: p ? p.dur : null})
+    }).then(function (r) { if (!r.ok) throw new Error(r.status); });
+  }
+
+  // A thin bar along the foot of a thumbnail showing how far in the resume
+  // point is.
+  function progressBar(v) {
+    var p = v.progress, d = p && (p.dur || v.duration);
+    if (!d) return '';
+    return '<div class="w-prog"><span style="width:' + Math.min(100, Math.round(p.pos / d * 100)) + '%"></span></div>';
+  }
+
+  // YouTube's iframe API, loaded the first time a YouTube video plays: the
+  // embed can't otherwise be asked where it's up to.
+  var ytApi = null;
+  function youTubeApi() {
+    if (!ytApi) ytApi = new Promise(function (resolve, reject) {
+      var prev = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = function () { if (prev) prev(); resolve(window.YT); };
+      var s = document.createElement('script');
+      s.src = 'https://www.youtube.com/iframe_api';
+      s.onerror = function () { ytApi = null; reject(new Error('iframe API failed to load')); };
+      document.head.appendChild(s);
+    });
+    return ytApi;
+  }
+
+  // Play ``v``, from its resume point unless ``o.fromStart``. ``o.source``
+  // forces 'file' or 'youtube'; ``o.onClose`` runs when the player is
+  // dismissed; the rest is described at renderInfo. Playing another video
+  // while open replaces the one playing.
   function play(v, o) {
     o = o || {};
     ensureOverlay();
+    stopTracking();   // the video being replaced
     var onClose = o.onClose || opts.onClose;
     opts = o;
     opts.onClose = onClose;
     var source = o.source || (v.archived ? 'file' : 'youtube');
     cur = v;
     curSource = source;
+    resumedAt = o.fromStart ? 0 : resumeAt(v);
+    var t;
 
     if (source === 'file') {
       stage.innerHTML = '<video controls autoplay preload="metadata" src="/watch/media/' + encodeURIComponent(v.videoId) + '"></video>';
       var video = stage.querySelector('video');
       video.addEventListener('error', function () { playError(v); });
+      if (resumedAt) video.addEventListener('loadedmetadata', function () { video.currentTime = resumedAt; }, {once: true});
+      t = startTracking(v, function () { return video.currentTime; }, function () { return video.duration; });
+      video.addEventListener('playing', function () { if (track === t) t.started = true; });
+      video.addEventListener('pause', function () { saveProgress(t); });
       if (v.jellyfin) {
         // Tell Jellyfin once it's essentially been watched, so it stops
         // offering the episode as unplayed.
@@ -190,26 +283,51 @@ window.Watch = (function () {
       }
     } else {
       stage.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + encodeURIComponent(v.videoId) +
-        '?autoplay=1&rel=0" title="' + esc(v.title) + '" allow="autoplay; encrypted-media; picture-in-picture; fullscreen"' +
+        '?autoplay=1&rel=0&enablejsapi=1&origin=' + encodeURIComponent(location.origin) +
+        (resumedAt ? '&start=' + resumedAt : '') + '" title="' + esc(v.title) +
+        '" allow="autoplay; encrypted-media; picture-in-picture; fullscreen"' +
         ' allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>';
+      var iframe = stage.querySelector('iframe');
+      t = startTracking(v, function () { return t.yt && t.yt.getCurrentTime(); }, function () { return t.yt && t.yt.getDuration(); });
+      // Without the API the video still plays; it just isn't tracked.
+      youTubeApi().then(function (YT) {
+        if (track !== t) return;   // closed or replaced while the API loaded
+        var playing = function (state) { return state === YT.PlayerState.PLAYING; };
+        t.yt = new YT.Player(iframe, {events: {
+          // The embed autoplays, so it may be playing before the API attaches.
+          onReady: function (e) { if (track === t && playing(e.target.getPlayerState())) t.started = true; },
+          onStateChange: function (e) {
+            if (track !== t) return;
+            if (playing(e.data)) t.started = true;
+            else if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED) saveProgress(t);
+          }
+        }});
+      }).catch(function () {});
     }
     overlay.hidden = false;
     renderInfo();
   }
+  // ``opts`` with ``extra`` on top, to play the same video again differently.
+  function withOpts(extra) {
+    var o = {};
+    Object.keys(opts).forEach(function (k) { o[k] = opts[k]; });
+    Object.keys(extra).forEach(function (k) { o[k] = extra[k]; });
+    return o;
+  }
   function playError(v) {
+    stopTracking();
     stage.innerHTML = '<div class="w-player-error"><div class="eyebrow">Can\'t play the archived copy in this browser</div>' +
       '<p>The file is Matroska (.mkv), which this browser may not support.</p><div class="w-player-error-actions">' +
       '<button type="button" class="btn btn-primary" data-act="play-youtube">Play the YouTube version</button>' +
       (v.jellyfin ? '<a class="btn" href="' + esc(v.url) + '" target="_blank" rel="noopener">Open in Jellyfin ↗</a>' : '') +
       '</div></div>';
     stage.querySelector('[data-act="play-youtube"]').addEventListener('click', function () {
-      var o = {}; Object.keys(opts).forEach(function (k) { o[k] = opts[k]; });
-      o.source = 'youtube';
-      play(v, o);
+      play(v, withOpts({source: 'youtube'}));
     });
   }
   function close() {
     if (!overlay) return;
+    stopTracking();
     stage.innerHTML = '';   // removing the element is what stops playback
     overlay.hidden = true;
     overlay.classList.remove('theater');
@@ -221,7 +339,7 @@ window.Watch = (function () {
 
   return {
     esc: esc, hue: hue, ago: ago, agoShort: agoShort, dur: dur,
-    badges: badges, watchBtn: watchBtn, thumb: thumb, card: card, saveWatched: saveWatched,
+    badges: badges, watchBtn: watchBtn, thumb: thumb, card: card, progressBar: progressBar, setProgress: setProgress, saveWatched: saveWatched,
     canPlayHere: canPlayHere, play: play, close: close, isOpen: isOpen, refresh: refresh
   };
 })();

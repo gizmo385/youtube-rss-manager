@@ -387,6 +387,27 @@ class WatchedVideo(Base):
     watched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class WatchProgress(Base):
+    """Where the user left off in a video played in the in-page player, so the
+    next play resumes there and the Watch tab can offer it under "Continue
+    watching".
+
+    Keyed like ``WatchedVideo``. Only in-progress videos have a row: saving a
+    position too near the start or the end deletes it (see
+    ``services.watch.save_progress``). Independent of watched state — playing a
+    video marks it watched straight away, long before it's finished.
+    """
+
+    __tablename__ = "watch_progress"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    video_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    position_seconds: Mapped[int] = mapped_column(Integer)
+    # As the player reported it; NULL when it didn't know yet.
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class FreshRssAccount(Base):
     """Per-user FreshRSS credentials, for syncing watched state with read state.
 

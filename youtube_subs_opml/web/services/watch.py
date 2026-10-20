@@ -34,6 +34,7 @@ from ..models import (
     VideoLiveStatus,
     VideoShort,
     WatchedVideo,
+    WatchProgress,
 )
 from .jellyfin import jellyfin_deep_link
 from .live import resolve_include_live
@@ -44,6 +45,13 @@ from .shorts import resolve_include_shorts
 WINDOW = timedelta(days=30)
 
 UNCATEGORIZED = "unc"
+
+# Resume points: a position under RESUME_MIN_SECONDS is barely started, and
+# one past RESUME_DONE_FRACTION of the duration is as good as finished —
+# either way there's nothing to come back to, so no row is kept. The player
+# (static/watch.js) applies the same rules locally.
+RESUME_MIN_SECONDS = 10
+RESUME_DONE_FRACTION = 0.9
 
 # Nebula's RSS carries no thumbnail element; the poster is the first image in
 # the item's HTML description.
@@ -88,6 +96,21 @@ def _nebula_videos(channel_id: str, xml: bytes, since: datetime | None) -> list[
     return out
 
 
+def _youtube_video(v: Video) -> dict:
+    published = v.published_at
+    assert published is not None  # callers filter on it; narrows for the type checker
+    return {
+        "key": v.video_id,
+        "title": v.title or v.video_id,
+        "channel_id": v.channel_id,
+        "published": _aware(published),
+        "duration": v.duration_seconds,
+        "url": f"https://www.youtube.com/watch?v={v.video_id}",
+        "thumb": f"https://i.ytimg.com/vi/{v.video_id}/mqdefault.jpg",
+        "video_id": v.video_id,
+    }
+
+
 def _load_videos(
     db: Session, channels: dict[str, Channel], since: datetime | None, limit: int | None = None
 ) -> list[dict]:
@@ -108,21 +131,7 @@ def _load_videos(
             stmt = stmt.where(Video.published_at >= since)
         if limit is not None:
             stmt = stmt.limit(limit)
-        for v in db.execute(stmt).scalars().all():
-            published = v.published_at
-            assert published is not None  # filtered above; narrows for the type checker
-            videos.append(
-                {
-                    "key": v.video_id,
-                    "title": v.title or v.video_id,
-                    "channel_id": v.channel_id,
-                    "published": _aware(published),
-                    "duration": v.duration_seconds,
-                    "url": f"https://www.youtube.com/watch?v={v.video_id}",
-                    "thumb": f"https://i.ytimg.com/vi/{v.video_id}/mqdefault.jpg",
-                    "video_id": v.video_id,
-                }
-            )
+        videos.extend(_youtube_video(v) for v in db.execute(stmt).scalars().all())
     if nebula_ids:
         for channel_id, xml in db.execute(
             select(ChannelFeedCache.channel_id, ChannelFeedCache.xml).where(ChannelFeedCache.channel_id.in_(nebula_ids))
@@ -132,10 +141,36 @@ def _load_videos(
     return videos
 
 
+def _resumable_elsewhere(
+    user: User, db: Session, channels: dict[str, Channel], have: set[str], since: datetime
+) -> list[dict]:
+    """Videos the user has a recent resume point in that aren't among
+    ``have`` — older uploads started from a channel page, say — so "Continue
+    watching" isn't limited to the feed's window. YouTube only: Nebula doesn't
+    play in the page, so it never has a resume point."""
+    keys = [
+        k
+        for k in db.execute(
+            select(WatchProgress.video_key).where(WatchProgress.user_id == user.id, WatchProgress.updated_at >= since)
+        ).scalars()
+        if k not in have
+    ]
+    if not keys:
+        return []
+    youtube_ids = [cid for cid, ch in channels.items() if ch.platform != nebula.PLATFORM]
+    rows = db.execute(
+        select(Video).where(
+            Video.video_id.in_(keys), Video.channel_id.in_(youtube_ids), Video.published_at.is_not(None)
+        )
+    ).scalars()
+    return [_youtube_video(v) for v in rows]
+
+
 def _annotate(user: User, db: Session, videos: list[dict]) -> None:
-    """Add per-user state in place: ``archived``, ``watched``, and — for
-    archived copies in the user's Jellyfin library — ``jellyfin`` with ``url``
-    pointing there instead of YouTube."""
+    """Add per-user state in place: ``archived``, ``watched``, ``progress``
+    (the resume point, or None), and — for archived copies in the user's
+    Jellyfin library — ``jellyfin`` with ``url`` pointing there instead of
+    YouTube."""
     yt_video_ids = [v["video_id"] for v in videos if v["video_id"]]
 
     archived: set[str] = set()
@@ -178,6 +213,15 @@ def _annotate(user: User, db: Session, videos: list[dict]) -> None:
             .all()
         )
 
+    progress: dict[str, WatchProgress] = {}
+    if keys:
+        progress = {
+            p.video_key: p
+            for p in db.execute(
+                select(WatchProgress).where(WatchProgress.user_id == user.id, WatchProgress.video_key.in_(keys))
+            ).scalars()
+        }
+
     for v in videos:
         item_id = items.get(v["video_id"])
         v["jellyfin"] = bool(item_id)
@@ -185,6 +229,12 @@ def _annotate(user: User, db: Session, videos: list[dict]) -> None:
             v["url"] = jellyfin_deep_link(account.base_url, item_id)
         v["archived"] = v["video_id"] in archived
         v["watched"] = v["key"] in watched
+        p = progress.get(v["key"])
+        v["progress"] = (
+            {"pos": p.position_seconds, "dur": p.duration_seconds, "at": _aware(p.updated_at).isoformat()}
+            if p
+            else None
+        )
 
 
 def _client_video(v: dict, channel: Channel) -> dict:
@@ -203,6 +253,7 @@ def _client_video(v: dict, channel: Channel) -> dict:
         "url": v["url"],
         "thumb": v["thumb"],
         "watched": v["watched"],
+        "progress": v["progress"],
     }
 
 
@@ -214,6 +265,10 @@ def build_watch_feed(user: User, db: Session, now: datetime | None = None) -> di
     each listing the category ids it appears under). A channel in two
     categories puts its videos in both; the client keys cards by category and
     video so the duplicates stay distinct.
+
+    Videos with a resume point are always included, for the client's
+    "Continue watching" row — even ones from outside the window or that the
+    Shorts/live preferences would hide, which come with no categories.
     """
     now = now or datetime.now(UTC)
 
@@ -235,7 +290,8 @@ def build_watch_feed(user: User, db: Session, now: datetime | None = None) -> di
             cats_by_channel.setdefault(channel_id, []).append(cat_by_id[category_id])
 
     videos = _load_videos(db, channels, since=now - WINDOW)
-    _annotate(user, db, videos)
+    resuming = _resumable_elsewhere(user, db, channels, {v["key"] for v in videos}, since=now - WINDOW)
+    _annotate(user, db, videos + resuming)
 
     yt_video_ids = [v["video_id"] for v in videos if v["video_id"]]
     shorts: set[str] = set()
@@ -277,11 +333,12 @@ def build_watch_feed(user: User, db: Session, now: datetime | None = None) -> di
             [(f"c{c.id}", c) for c in cats] if cats else [(UNCATEGORIZED, None)]
         )
         cat_ids = [cid for cid, cat in placements if shown_in(v, cat)]
-        if not cat_ids:
+        if not cat_ids and not v["progress"]:
             continue
         for cid in cat_ids:
             channels_in_cat.setdefault(cid, set()).add(v["channel_id"])
         out_videos.append({**_client_video(v, channels[v["channel_id"]]), "cats": cat_ids})
+    out_videos.extend({**_client_video(v, channels[v["channel_id"]]), "cats": []} for v in resuming)
 
     def channel_list(cid: str) -> list[dict]:
         chans = [channels[ch] for ch in channels_in_cat.get(cid, ())]
@@ -317,6 +374,24 @@ def channel_videos(user: User, db: Session, channel: Channel) -> list[dict]:
     videos = videos[:CHANNEL_VIDEO_LIMIT]
     _annotate(user, db, videos)
     return [_client_video(v, channel) for v in videos]
+
+
+def save_progress(user: User, db: Session, key: str, position: float, duration: float | None) -> None:
+    """Record where ``user`` is in ``key``, or forget it when there's nothing
+    to resume (see RESUME_MIN_SECONDS / RESUME_DONE_FRACTION)."""
+    pos = int(position)
+    dur = int(duration) if duration else None
+    row = db.get(WatchProgress, (user.id, key))
+    if pos < RESUME_MIN_SECONDS or (dur and pos >= dur * RESUME_DONE_FRACTION):
+        if row is not None:
+            db.delete(row)
+    elif row is None:
+        db.add(WatchProgress(user_id=user.id, video_key=key, position_seconds=pos, duration_seconds=dur))
+    else:
+        row.position_seconds = pos
+        row.duration_seconds = dur or row.duration_seconds
+        row.updated_at = datetime.now(UTC)
+    db.commit()
 
 
 def set_watched(user: User, db: Session, keys: list[str], watched: bool) -> None:

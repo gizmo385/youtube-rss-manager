@@ -1445,6 +1445,31 @@ section.focused > * > .w-sec-hint { display: inline; }
 .w-shelf .w-card { width: 248px; flex-shrink: 0; }
 
 /* Packed: categories share rows on a column grid (column count set inline). */
+/* Continue watching: a strip across the top of the feed, set apart from the
+   categories, with wide cards that have room for the whole title. */
+.w-cont { border-bottom: 2px solid var(--line); border-left: 2px solid transparent; }
+.w-cont.focused { border-left-color: var(--accent); }
+.w-cont-head { display: flex; align-items: center; gap: 12px; padding: 12px 20px 10px 12px; cursor: pointer; }
+.w-cont-head:hover .w-chev { color: var(--ink); }
+.w-cont-head .w-sec-name { font-size: 17px; letter-spacing: 0; text-transform: none; }
+.w-cont-head .w-sec-count { letter-spacing: 0.08em; text-transform: uppercase; }
+.w-cont-row { display: flex; gap: 12px; overflow-x: auto; padding: 0 20px 16px 36px; }
+.w-ccard {
+  flex: 0 0 400px; display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 12px; align-items: start;
+  padding: 8px; color: inherit; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line-2); outline: 2px solid transparent; outline-offset: -1px;
+}
+.w-ccard:hover { text-decoration: none; color: inherit; }
+.w-ccard.sel { outline-color: var(--accent); }
+.w-ccard-body { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.w-ccard-text { flex: 1; min-width: 0; }
+.w-ccard-title { font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--ink); text-wrap: pretty; overflow-wrap: anywhere; }
+.w-ccard-left { margin-top: 6px; font-size: 11px; font-weight: 700; color: var(--accent-2); font-variant-numeric: tabular-nums; }
+@media (max-width: 860px) {
+  .w-cont-row { padding: 0 16px 14px; }
+  .w-ccard { flex-basis: 300px; grid-template-columns: 120px minmax(0, 1fr); }
+}
+
 .w-pack { display: grid; padding: 14px 20px 22px; }
 .w-pack-grid { gap: 14px; align-items: stretch; }
 .w-pack-shelves { gap: 20px 12px; align-items: start; }
@@ -1502,6 +1527,8 @@ section.focused > * > .w-sec-hint { display: inline; }
   border: 1px solid var(--line); padding: 1px 4px; line-height: 1.4;
 }
 .w-thumb .w-tag { background: rgba(26, 25, 24, 0.85); }
+.w-prog { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, 0.22); }
+.w-prog span { display: block; height: 100%; background: var(--accent); }
 .w-tag-arch { font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-2); border-color: var(--accent-line); }
 .w-card-body { display: flex; gap: 8px; padding: 8px 10px 10px; align-items: flex-start; }
 .w-card-text { flex: 1; min-width: 0; }

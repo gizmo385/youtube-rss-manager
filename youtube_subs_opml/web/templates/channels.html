@@ -330,7 +330,7 @@ document.getElementById('channel-detail').addEventListener('click', function(e){
   // which has no embeddable player, and phones (see Watch.canPlayHere).
   if (!(e.ctrlKey || e.metaKey || e.shiftKey) && Watch.canPlayHere(v)) {
     e.preventDefault();
-    Watch.play(v);
+    Watch.play(v, {onClose: drawChannelVideos});   // shows where it got to
   }
   setChannelVideoWatched(v, true);
 });

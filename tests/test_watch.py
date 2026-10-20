@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -28,9 +28,10 @@ from youtube_subs_opml.web.models import (
     Video,
     VideoShort,
     WatchedVideo,
+    WatchProgress,
 )
 from youtube_subs_opml.web.routes import watch
-from youtube_subs_opml.web.services.watch import build_watch_feed, set_watched
+from youtube_subs_opml.web.services.watch import build_watch_feed, save_progress, set_watched
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
 
@@ -295,3 +296,91 @@ def test_channel_videos_for_nebula_come_from_the_feed(sessionmaker_):
     with sessionmaker_() as s:
         vids = channel_videos(s.get_one(User, 1), s, s.get_one(Channel, "nebula:tomscott"))
     assert [v["key"] for v in vids] == ["nebula:tomscott-recent", "nebula:tomscott-ancient"]
+
+
+# --- resume points ---------------------------------------------------------
+
+
+def _progress(sm, key: str, pos: int, dur: int | None = None, at: datetime = NOW) -> None:
+    with sm() as s:
+        s.add(WatchProgress(user_id=1, video_key=key, position_seconds=pos, duration_seconds=dur, updated_at=at))
+        s.commit()
+
+
+def test_save_progress_keeps_only_resumable_positions(sessionmaker_):
+    with sessionmaker_() as s:
+        user = s.get_one(User, 1)
+        save_progress(user, s, "a_new", 120.7, 600)
+        row = s.get_one(WatchProgress, (1, "a_new"))
+        assert (row.position_seconds, row.duration_seconds) == (120, 600)
+        save_progress(user, s, "a_new", 300, None)  # the player lost the duration; keep the last one
+        assert (row.position_seconds, row.duration_seconds) == (300, 600)
+        save_progress(user, s, "a_new", 545, 600)  # past 90%: finished
+        assert s.get(WatchProgress, (1, "a_new")) is None
+        save_progress(user, s, "b_arch", 4, 600)  # barely started
+        assert s.get(WatchProgress, (1, "b_arch")) is None
+
+
+def test_save_progress_moves_back_to_the_start_forgets_it(sessionmaker_):
+    _progress(sessionmaker_, "a_new", 300, 600)
+    with sessionmaker_() as s:
+        save_progress(s.get_one(User, 1), s, "a_new", 2, 600)
+        assert s.get(WatchProgress, (1, "a_new")) is None
+
+
+def test_feed_carries_resume_points(sessionmaker_):
+    _progress(sessionmaker_, "b_arch", 900, 3725)
+    by_key = {v["key"]: v for v in _feed(sessionmaker_)["videos"]}
+    assert by_key["b_arch"]["progress"] == {"pos": 900, "dur": 3725, "at": NOW.isoformat()}
+    assert by_key["a_new"]["progress"] is None
+
+
+def test_feed_includes_resumable_videos_from_outside_the_window(sessionmaker_):
+    # Started from the channel page; it's too old for the feed's categories
+    # but still belongs under Continue watching.
+    _progress(sessionmaker_, "a_old", 60, 600)
+    by_key = {v["key"]: v for v in _feed(sessionmaker_)["videos"]}
+    assert by_key["a_old"]["cats"] == []
+    assert by_key["a_old"]["progress"]["pos"] == 60
+
+
+def test_feed_keeps_resumable_videos_the_filters_would_hide(sessionmaker_):
+    # Without Making, the user's Shorts preference hides a_short everywhere —
+    # but they're partway through it, so it still comes along, uncategorized.
+    _progress(sessionmaker_, "a_short", 30, 58)
+    with sessionmaker_() as s:
+        s.execute(delete(ChannelCategory).where(ChannelCategory.category_id == 8))
+        s.commit()
+    by_key = {v["key"]: v for v in _feed(sessionmaker_)["videos"]}
+    assert by_key["a_short"]["cats"] == []
+
+
+def test_feed_skips_stale_or_unsubscribed_resume_points(sessionmaker_):
+    _progress(sessionmaker_, "a_old", 60, 600, at=NOW - timedelta(days=40))  # not recent
+    _progress(sessionmaker_, "i_vid", 60, 600)  # channel ignored
+    keys = {v["key"] for v in _feed(sessionmaker_)["videos"]}
+    assert "a_old" not in keys and "i_vid" not in keys
+
+
+def test_channel_videos_carry_resume_points(sessionmaker_):
+    from youtube_subs_opml.web.services.watch import channel_videos
+
+    _progress(sessionmaker_, "a_old", 60, 600, at=NOW - timedelta(days=40))
+    with sessionmaker_() as s:
+        vids = {v["key"]: v for v in channel_videos(s.get_one(User, 1), s, s.get_one(Channel, "UCa"))}
+    assert vids["a_old"]["progress"]["pos"] == 60
+
+
+def test_progress_endpoint_round_trips(client, sessionmaker_):
+    assert client.post("/watch/progress", json={"key": "a_new", "position": 75.5, "duration": 600}).status_code == 204
+    with sessionmaker_() as s:
+        assert s.get_one(WatchProgress, (1, "a_new")).position_seconds == 75
+    assert client.post("/watch/progress", json={"key": "a_new", "position": 590, "duration": 600}).status_code == 204
+    with sessionmaker_() as s:
+        assert s.get(WatchProgress, (1, "a_new")) is None
+
+
+def test_progress_endpoint_rejects_bad_bodies(client):
+    assert client.post("/watch/progress", json={"key": "a_new", "position": -1}).status_code == 422
+    assert client.post("/watch/progress", json={"key": "x" * 256, "position": 30}).status_code == 422
+    assert client.post("/watch/progress", json={"position": 30}).status_code == 422

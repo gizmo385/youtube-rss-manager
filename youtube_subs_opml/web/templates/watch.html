@@ -137,12 +137,29 @@
   // Where the feed's cards are on screen: the rail in theater mode, else the
   // main feed (which stays in the DOM, hidden, while the rail shows).
   function feedRoot() { return document.getElementById(theaterOn() ? 'w-rail-list' : 'watch-main'); }
-  function catName(id) { for (var i = 0; i < CATS.length; i++) if (CATS[i].id === id) return CATS[i].name; return ''; }
+  function catName(id) { var c = allCats().filter(function (x) { return x.id === id; })[0]; return c ? c.name : ''; }
 
-  function matches(v) {
+  // "Continue watching": a strip across the top of the feed of every video
+  // with a resume point (see Watch.play). Not a category: it's never packed
+  // in among them, and isn't in the sidebar. It follows the videos' own progress, so
+  // it picks up what's played here; the video playing from it stays put even
+  // once it's finished. Its order is fixed when a video first appears, rather
+  // than by most recent save, so it doesn't reshuffle while one plays.
+  var CONT = {id: 'cont', name: 'Continue watching', channels: []};
+  var CONT_AT = {};
+  function allCats() { return [CONT].concat(CATS); }
+  function continuing() {
+    return VIDEOS.filter(function (v) {
+      if (v.progress && !CONT_AT[v.key]) CONT_AT[v.key] = v.progress.at;
+      return v.progress || S.playing === cardKey(CONT.id, v);
+    }).sort(function (a, b) { return (CONT_AT[b.key] || '').localeCompare(CONT_AT[a.key] || ''); });
+  }
+
+  function matches(v, c) {
     var q = S.query.trim().toLowerCase();
-    // The video playing stays put even though playing it marked it watched.
-    if (S.unwatchedOnly && v.watched && !isPlaying(v)) return false;
+    // The video playing stays put even though playing it marked it watched;
+    // and playing anything marks it watched, so Continue watching ignores it.
+    if (S.unwatchedOnly && v.watched && !isPlaying(v) && c.id !== CONT.id) return false;
     if (S.platform === 'youtube' && v.nebula) return false;
     if (S.platform === 'nebula' && !v.nebula) return false;
     if (S.channel && v.channelId !== S.channel.id) return false;
@@ -150,11 +167,11 @@
     return true;
   }
   function model() {
-    return CATS.map(function (c) {
-      var all = VIDEOS.filter(function (v) { return v.cats.indexOf(c.id) >= 0; });
+    return allCats().map(function (c) {
+      var all = c === CONT ? continuing() : VIDEOS.filter(function (v) { return v.cats.indexOf(c.id) >= 0; });
       return {
         id: c.id, name: c.name, channels: c.channels, all: all,
-        vids: all.filter(matches),
+        vids: all.filter(function (v) { return matches(v, c); }),
         unw: all.filter(function (v) { return !v.watched; }).length,
         collapsed: !!S.collapsed[c.id]
       };
@@ -205,7 +222,10 @@
     return out;
   }
   function placed(secs) {
-    return S.cols ? pack(secs, S.cols) : secs.map(function (c) { return {c: c, span: 0}; });
+    var cont = secs.filter(function (c) { return c.id === CONT.id; });
+    var cats = secs.filter(function (c) { return c.id !== CONT.id; });
+    return cont.map(function (c) { return {c: c, span: 0}; })
+      .concat(S.cols ? pack(cats, S.cols) : cats.map(function (c) { return {c: c, span: 0}; }));
   }
   // Sections in visual order, so [ ] and J/K follow the packed layout.
   function sections() {
@@ -235,7 +255,32 @@
       watchBtn(v) + '</a>';
   }
   function countLabel(c) {
+    if (c.id === CONT.id) return c.vids.length + ' in progress';
     return c.unw + ' unwatched · ' + c.vids.length + (c.vids.length !== c.all.length ? ' of ' + c.all.length : '');
+  }
+  // The compact form, for packed and rail headings.
+  function shortCount(c) { return c.id === CONT.id ? c.vids.length + ' in progress' : c.unw + ' new · ' + c.vids.length; }
+  // Continue watching's cards are wider than a category's, with room for the
+  // whole title and how much is left.
+  function contCard(c, v) {
+    var p = v.progress, d = p && (p.dur || v.duration);
+    var left = p ? (d ? dur(Math.max(0, d - p.pos)) + ' left' : 'Stopped at ' + dur(p.pos)) : '';
+    // Not styled as watched: everything here was marked watched by opening it,
+    // and its check button means "done" (see done()).
+    return '<a class="w-ccard" data-k="' + esc(cardKey(c.id, v)) +
+      '" href="' + esc(v.url) + '" target="_blank" rel="noopener">' +
+      '<div class="w-thumb">' + Watch.thumb(v) + '<div class="w-thumb-tl">' + badges(v) + '</div>' + Watch.progressBar(v) + '</div>' +
+      '<div class="w-ccard-body"><div class="w-ccard-text"><div class="w-ccard-title">' + esc(v.title) + '</div>' +
+        '<div class="w-meta"><span class="w-meta-ch">' + esc(v.channel) + '</span><span>·</span>' +
+          '<span class="nowrap">' + ago(v) + '</span></div>' +
+        (left ? '<div class="w-ccard-left">' + left + '</div>' : '') +
+      '</div>' + watchBtn(v, 'Done — mark watched and remove from Continue watching (W)') + '</div></a>';
+  }
+  function contStrip(c) {
+    return '<section class="w-cont" data-sec="' + c.id + '">' + secHead(c, 'w-cont-head', 'X collapse') +
+      (c.collapsed ? '' : '<div class="w-cont-row sb" data-sec="' + c.id + '">' +
+        c.vids.map(function (v) { return contCard(c, v); }).join('') + '</div>') +
+      '</section>';
   }
   function secHead(c, cls, hint) {
     return '<div class="' + cls + '" data-act="toggle-sec">' +
@@ -256,7 +301,7 @@
       '<div class="w-pk-head" data-act="toggle-sec">' +
         '<span class="w-chev">' + (c.collapsed ? CHEV_SHUT : CHEV_OPEN) + '</span>' +
         '<span class="w-sec-name">' + esc(c.name) + '</span>' +
-        '<span class="w-sec-count">' + c.unw + ' new · ' + c.vids.length + '</span>' +
+        '<span class="w-sec-count">' + shortCount(c) + '</span>' +
         (shelf && !c.collapsed && c.vids.length > span ? '<span class="w-pk-more">Scroll →</span>' : '') +
       '</div>' + peek +
       (c.collapsed ? '' : shelf
@@ -269,7 +314,7 @@
     var main = document.getElementById('watch-main');
     // Shelves scroll sideways; keep each one's position across re-renders.
     var shelfScroll = {};
-    main.querySelectorAll('.w-shelf').forEach(function (el) { shelfScroll[el.dataset.sec] = el.scrollLeft; });
+    main.querySelectorAll('.w-shelf, .w-cont-row').forEach(function (el) { shelfScroll[el.dataset.sec] = el.scrollLeft; });
 
     if (!VIDEOS.length) {
       main.innerHTML = '<div class="w-empty"><div class="eyebrow">Nothing new in the last ' + FEED.windowDays +
@@ -282,8 +327,12 @@
       return;
     }
     var html = '';
+    if (secs[0].c.id === CONT.id) {
+      html = contStrip(secs[0].c);
+      secs = secs.slice(1);
+    }
     if (S.cols) {
-      html = '<div class="w-pack ' + (S.layout === 'shelves' ? 'w-pack-shelves' : 'w-pack-grid') +
+      html += '<div class="w-pack ' + (S.layout === 'shelves' ? 'w-pack-shelves' : 'w-pack-grid') +
         '" style="grid-template-columns:repeat(' + S.cols + ',minmax(0,1fr))">' +
         secs.map(function (p) { return packedSec(p.c, p.span); }).join('') + '</div>';
     } else secs.forEach(function (p) {
@@ -308,7 +357,7 @@
     });
     if (S.layout === 'list') html += '<div class="w-end">End of feed</div>';
     main.innerHTML = html;
-    main.querySelectorAll('.w-shelf').forEach(function (el) {
+    main.querySelectorAll('.w-shelf, .w-cont-row').forEach(function (el) {
       if (shelfScroll[el.dataset.sec]) el.scrollLeft = shelfScroll[el.dataset.sec];
     });
   }
@@ -321,7 +370,7 @@
       '" data-k="' + esc(cardKey(c.id, v)) + '" href="' + esc(v.url) + '" target="_blank" rel="noopener">' +
       '<div class="w-thumb">' + Watch.thumb(v) +
         (playing ? '<span class="w-rrow-playing">Playing</span>' : '') +
-        (d ? '<span class="w-dur">' + d + '</span>' : '') + '</div>' +
+        (d ? '<span class="w-dur">' + d + '</span>' : '') + Watch.progressBar(v) + '</div>' +
       '<div class="w-rrow-text"><div class="w-rrow-title">' + esc(v.title) + '</div>' +
         '<div class="w-meta">' + (v.watched ? '' : '<span class="dot"></span>') +
           '<span class="w-meta-ch">' + esc(v.channel) + '</span><span>·</span>' +
@@ -337,7 +386,7 @@
         '<div class="w-rail-head" data-act="toggle-sec">' +
           '<span class="w-chev">' + (c.collapsed ? CHEV_SHUT : CHEV_OPEN) + '</span>' +
           '<span class="w-sec-name">' + esc(c.name) + '</span>' +
-          '<span class="w-sec-count">' + c.unw + ' new · ' + c.vids.length + '</span></div>' +
+          '<span class="w-sec-count">' + shortCount(c) + '</span></div>' +
         (c.collapsed ? '' : c.vids.map(function (v) { return railRow(c, v); }).join('')) +
         '</section>';
     }).join('') || '<div class="w-empty"><div class="eyebrow">Nothing matches these filters</div></div>';
@@ -346,6 +395,7 @@
   function renderSide(mdl) {
     var html = '';
     mdl.forEach(function (c) {
+      if (c.id === CONT.id) return;
       html += '<div class="w-side-cat" data-cat="' + c.id + '">' +
         '<div class="w-side-row">' +
           '<button type="button" class="w-side-chev" data-act="toggle-cat" title="Collapse / expand">' +
@@ -366,11 +416,11 @@
       html += '</div>';
     });
     document.getElementById('w-side-list').innerHTML = html;
-    document.getElementById('w-cat-strip').innerHTML = mdl.filter(function (c) { return c.all.length; }).map(function (c) {
+    document.getElementById('w-cat-strip').innerHTML = mdl.filter(function (c) { return c.all.length && c.id !== CONT.id; }).map(function (c) {
       return '<button type="button" class="w-cat-chip" data-cat="' + c.id + '">' + esc(c.name) +
         '<span class="w-badge' + (c.unw ? ' on' : '') + '">' + c.unw + '</span></button>';
     }).join('');
-    var anyOpen = CATS.some(function (c) { return !S.collapsed[c.id]; });
+    var anyOpen = allCats().some(function (c) { return !S.collapsed[c.id]; });
     document.getElementById('w-toggle-all').innerHTML =
       document.getElementById('w-rail-all').innerHTML = (anyOpen ? 'Collapse all' : 'Expand all') + '<span class="w-key">⇧X</span>';
   }
@@ -424,7 +474,7 @@
   // (and re-decode) every thumbnail on each keypress.
   function applySel() {
     var root = feedRoot();
-    document.querySelectorAll('.w-card.sel, .w-row.sel, .w-rrow.sel').forEach(function (el) { el.classList.remove('sel'); });
+    document.querySelectorAll('.w-card.sel, .w-ccard.sel, .w-row.sel, .w-rrow.sel').forEach(function (el) { el.classList.remove('sel'); });
     document.querySelectorAll('[data-sec].focused, .w-side-cat.focused, .w-cat-chip.focused').forEach(function (el) { el.classList.remove('focused'); });
     if (S.selKey) {
       var el = root.querySelector('[data-k="' + CSS.escape(S.selKey) + '"]');
@@ -516,8 +566,8 @@
     render();
   }
   function toggleAll() {
-    var anyOpen = CATS.some(function (c) { return !S.collapsed[c.id]; });
-    CATS.forEach(function (c) { S.collapsed[c.id] = anyOpen; });
+    var anyOpen = allCats().some(function (c) { return !S.collapsed[c.id]; });
+    allCats().forEach(function (c) { S.collapsed[c.id] = anyOpen; });
     if (anyOpen) S.selKey = null;
     render();
   }
@@ -560,8 +610,34 @@
   function toggleWatched(k) {
     var v = videoOf(k);
     if (!v) return;
+    // Everything in Continue watching is already watched (opening a video
+    // marks it), so there W means done with it — unless it's the one playing,
+    // which would only come straight back.
+    if (k.indexOf(CONT.id + '|') === 0 && k !== S.playing) { done(k); return; }
     var c = {}; c[v.key] = !v.watched;
     applyWatched(c);
+  }
+  // Take a video out of Continue watching: forget its resume point and make
+  // sure it's marked watched.
+  function done(k) {
+    var v = videoOf(k), progress = v && v.progress;
+    if (!progress) return;
+    if (S.selKey === k) {
+      var f = flat(), i = f.map(function (x) { return x.k; }).indexOf(k), nx = f[i + 1] || f[i - 1];
+      S.selKey = nx ? nx.k : null;
+      if (nx) S.selCat = nx.cat;
+    }
+    Watch.setProgress(v, null).catch(function () {
+      v.progress = progress;
+      render();
+      showToast({text: "Couldn't remove it from Continue watching", sub: 'Check your connection and try again', prev: null});
+    });
+    var c = {}; c[v.key] = true;
+    var prev = applyWatched(c);   // renders
+    showToast({
+      text: 'Removed from Continue watching', sub: v.title, prev: prev,
+      onUndo: function () { Watch.setProgress(v, progress).catch(function () {}); applyWatched(prev); }
+    });
   }
   function markCat(id) {
     var vids = VIDEOS.filter(function (v) { return v.cats.indexOf(id) >= 0 && !v.watched; });
@@ -672,7 +748,7 @@
   function showToast(t) {
     S.toast = t;
     var host = document.getElementById('toast-host');
-    var undo = t.prev && Object.keys(t.prev).length;
+    var undo = t.onUndo || (t.prev && Object.keys(t.prev).length);
     host.innerHTML = '<div class="toast"><div><div class="toast-text">' + esc(t.text) + '</div>' +
       '<div class="toast-sub">' + esc(t.sub) + '</div></div>' +
       (undo ? '<button type="button" class="btn btn-sm btn-ghost" id="w-undo">Undo</button>' : '') +
@@ -687,9 +763,9 @@
   }
   function undo() {
     var t = S.toast;
-    if (!t || !t.prev) return;
+    if (!t || !(t.onUndo || t.prev)) return;
     dismissToast();
-    applyWatched(t.prev);
+    if (t.onUndo) t.onUndo(); else applyWatched(t.prev);
   }
 
   // ---- help + legend ----------------------------------------------------
@@ -865,7 +941,7 @@
         lastRefresh = Date.now();
         if (S.edits !== edits || S.saving || Watch.isOpen()) return;   // try again next tick
         FEED = feed; CATS = feed.categories; VIDEOS = feed.videos;
-        BY_KEY = {};
+        BY_KEY = {}; CONT_AT = {};
         VIDEOS.forEach(function (v) { BY_KEY[v.key] = v; });
         render();
       })
