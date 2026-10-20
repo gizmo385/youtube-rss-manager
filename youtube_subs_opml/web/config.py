@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     # outage, so sweeps keep to the 20-minute interval and a channel falls back
     # on every other one. At 60, channels went ~90 minutes between refreshes.
     youtube_api_fallback_interval_minutes: int = Field(30)
+    # Quota units a day the history backfill may spend fetching channels' older
+    # uploads (beyond the ~15 on their feed) for search: 1 unit per 50 videos,
+    # so the default covers ~100,000 videos a day and leaves most of the
+    # 10,000/day quota for the fallback above. Needs youtube_api_key; 0 disables.
+    youtube_backfill_daily_units: int = Field(2000)
     # Keep this at 1. Concurrent downloads from one IP are the fastest route to
     # "Sign in to confirm you're not a bot".
     download_concurrency: int = Field(1)

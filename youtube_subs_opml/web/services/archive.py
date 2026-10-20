@@ -294,9 +294,11 @@ def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
             continue
         include_shorts = resolve(sub.include_shorts, cat.shorts, user.include_shorts)
 
+        # Not the history backfill's older uploads: those are for search, and
+        # would otherwise queue a "keep everything" channel's whole catalogue.
         stmt = (
             select(Video.video_id)
-            .where(Video.channel_id == sub.channel_id)
+            .where(Video.channel_id == sub.channel_id, Video.backfilled.is_(False))
             .order_by(Video.published_at.desc().nullslast())
         )
         if include_shorts:

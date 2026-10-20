@@ -102,6 +102,10 @@ class Channel(Base):
     banner_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Native array on Postgres; JSON on SQLite (for local/dev use).
     youtube_topics: Mapped[list[str] | None] = mapped_column(ARRAY(String).with_variant(JSON, "sqlite"), nullable=True)
+    # History backfill (services/history): where it's got to in the channel's
+    # uploads playlist, and when it reached the end. Both NULL until it starts.
+    backfill_page_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -214,6 +218,8 @@ class Video(Base):
 
     Note that YouTube's channel feed only returns the ~15 most recent entries,
     so the poll interval bounds what can be captured for prolific channels.
+    Older uploads come from the history backfill (services.history) instead,
+    flagged ``backfilled``.
     """
 
     __tablename__ = "videos"
@@ -232,6 +238,10 @@ class Video(Base):
     # Also filled by the probe; surfaced as podcast episode notes. NULL means
     # "not probed yet"; an empty string means the video genuinely has none.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Found by the history backfill rather than on the feed: there for search
+    # and channel pages, but never archived (see services.archive). The poller
+    # clears it if the video turns up on the feed after all.
+    backfilled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

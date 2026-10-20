@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from opentelemetry.metrics import CallbackOptions, Observation
-from sqlalchemy import Integer, cast, func, literal, select
+from sqlalchemy import Integer, and_, cast, func, literal, select
 from sqlalchemy.orm import Session
 
 from youtube_subs_opml.metrics import meter
@@ -87,7 +87,9 @@ def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]
             func.avg(Video.duration_seconds),
         )
         .join(followed, followed.c.channel_id == Channel.channel_id)
-        .outerjoin(Video, Video.channel_id == Channel.channel_id)
+        # Videos seen on the feed: the history backfill's older uploads would
+        # swamp these counts the day it ran.
+        .outerjoin(Video, and_(Video.channel_id == Channel.channel_id, Video.backfilled.is_(False)))
         .group_by(Channel.channel_id, Channel.title, Channel.platform)
     ).all()
     out["yt_rss_channel_videos"] = []

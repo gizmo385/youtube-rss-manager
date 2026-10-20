@@ -46,7 +46,7 @@ from statistics import median
 from xml.etree import ElementTree as ET
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from youtube_subs_opml import metrics, nebula
@@ -272,6 +272,9 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
 
     ids = [e[0] for e in entries]
     known = set(db.execute(select(Video.video_id).where(Video.video_id.in_(ids))).scalars().all())
+    # On the feed means a regular upload, archivable like any other, even if
+    # the history backfill (services.history) got to it first.
+    db.execute(update(Video).where(Video.video_id.in_(ids), Video.backfilled.is_(True)).values(backfilled=False))
 
     new = 0
     for video_id, title, published in entries:

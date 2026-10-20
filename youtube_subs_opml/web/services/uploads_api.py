@@ -60,6 +60,25 @@ def fetch_uploads_feed(channel_id: str, client: httpx.Client, api_key: str, *, t
     return build_feed(channel_id, resp.json().get("items", []), title=title)
 
 
+def fetch_uploads_page(
+    channel_id: str, client: httpx.Client, api_key: str, page_token: str | None = None, *, page_size: int = 50
+) -> tuple[list[dict], str | None]:
+    """One page of a channel's uploads, newest first, and the token for the
+    next (None at the end). For the history backfill, which pages back through
+    a whole channel. Raises ``httpx.HTTPError`` like ``fetch_uploads_feed``."""
+    params: dict[str, str | int] = {
+        "part": "snippet,contentDetails",
+        "playlistId": "UU" + channel_id.removeprefix("UC"),
+        "maxResults": page_size,
+    }
+    if page_token:
+        params["pageToken"] = page_token
+    resp = client.get(_PLAYLIST_ITEMS_URL, params=params, headers={"X-Goog-Api-Key": api_key})
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("items", []), data.get("nextPageToken")
+
+
 def error_reason(resp: httpx.Response) -> str:
     """Google's machine-readable reason for a failed call (e.g.
     ``API_KEY_HTTP_REFERRER_BLOCKED``, ``quotaExceeded``), which the status

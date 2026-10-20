@@ -60,6 +60,24 @@ def poll_videos() -> None:
         db.close()
 
 
+@tracer.start_as_current_span("job backfill_history")
+def backfill_history() -> None:
+    """Scheduled job: fetch a few pages of channels' older uploads, for search."""
+    import httpx
+
+    from . import history
+
+    db = get_session_factory()()
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            history.backfill_history(db, get_settings(), client)
+    except Exception:
+        logger.exception("History backfill failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
 @tracer.start_as_current_span("job sync_jellyfin")
 def sync_jellyfin() -> None:
     """Scheduled job: resolve item ids and reconcile Jellyfin playlists.
@@ -159,6 +177,18 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
+    if settings.youtube_api_key and settings.youtube_backfill_daily_units > 0:
+        scheduler.add_job(
+            backfill_history,
+            "interval",
+            minutes=15,
+            id="backfill_history",
+            replace_existing=True,
+            # After the startup poll has warmed the feeds.
+            next_run_time=datetime.now(UTC) + timedelta(minutes=5),
+            max_instances=1,
+            coalesce=True,
+        )
     scheduler.start()
     logger.info(
         "Schedulers started (subscription sync every 6h, video poll every %dm, Jellyfin sync every %dm, "

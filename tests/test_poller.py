@@ -543,3 +543,27 @@ def test_nebula_failures_leave_the_breaker_alone(db, monkeypatch):
 
     assert _poll_each(db, monkeypatch, fake, cids) == [3] * 6
     assert not poller._rss_breaker.tripped
+
+
+def test_feed_clears_the_backfill_flag(db, monkeypatch):
+    # The history backfill found it first; showing up on the feed makes it a
+    # regular, archivable upload.
+    cid = "UCchannel00000000000001"
+    db.add(
+        Video(
+            video_id="vidAAAA1111",
+            channel_id=cid,
+            title="Hi",
+            published_at=datetime(2026, 8, 20, 9, tzinfo=UTC),
+            backfilled=True,
+        )
+    )
+    db.add(Video(video_id="vidOLD00001", channel_id=cid, title="Old", backfilled=True))
+    db.commit()
+    url = FEED_URL.format(channel_id=cid)
+    monkeypatch.setattr(poller, "_new_client", lambda: FakeClient({url: [_resp(200, url, FEED)]}))
+
+    assert poller.poll_channel(cid, db) == 0  # nothing new
+    db.commit()
+    assert db.get_one(Video, "vidAAAA1111").backfilled is False
+    assert db.get_one(Video, "vidOLD00001").backfilled is True  # not on the feed
