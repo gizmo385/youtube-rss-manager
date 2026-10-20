@@ -54,6 +54,15 @@ class User(Base):
     generate_podcast: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False)
     # 'youtube' | 'when_ready' | 'hold' — see services/prefs.LinkTarget.
     link_target: Mapped[str] = mapped_column(String(16), server_default="youtube", default="youtube")
+    # --- Playback preferences ------------------------------------------------
+    # SponsorBlock in the in-page player: 'off' | 'show' | 'skip' — see
+    # services/sponsorblock.
+    sponsorblock: Mapped[str] = mapped_column(String(8), server_default="off", default="off")
+    # Which segment kinds count, comma-separated (services/sponsorblock.CATEGORIES).
+    # User level only: it's a matter of taste, not of the channel.
+    sponsorblock_categories: Mapped[str] = mapped_column(
+        String(255), server_default="sponsor,selfpromo,interaction", default="sponsor,selfpromo,interaction"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     youtube_accounts: Mapped[list[YoutubeAccount]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -119,6 +128,7 @@ class Subscription(Base):
     min_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     generate_podcast: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     link_target: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    sponsorblock: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -142,6 +152,7 @@ class Category(Base):
     min_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     generate_podcast: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     link_target: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    sponsorblock: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="categories")

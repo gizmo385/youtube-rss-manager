@@ -14,9 +14,10 @@ from ...downloader.naming import CANONICAL_SUBDIR, LIBRARIES_SUBDIR
 from ..config import get_settings
 from ..db import get_db
 from ..deps import get_current_user
-from ..forms import FormValues, form_text
+from ..forms import FormValues, form_text, form_texts
 from ..models import Category, FreshRssAccount, FreshRssItem, JellyfinAccount, OpmlToken, User, YoutubeAccount
 from ..services import downloads as downloads_service
+from ..services import sponsorblock
 from ..services.crypto import decrypt_token, encrypt_token
 from ..services.freshrss_sync import client_for, sync_one
 from ..services.jellyfin import JellyfinClient
@@ -145,6 +146,9 @@ def settings_page(
         "canonical_subdir": CANONICAL_SUBDIR,
         "media_root": settings.media_root,
         "link_targets": LINK_TARGETS,
+        "sponsorblock_modes": [("off", "Off"), ("show", "Show"), ("skip", "Skip")],
+        "sponsorblock_categories": sponsorblock.CATEGORIES,
+        "user_sponsorblock_categories": sponsorblock.user_categories(user),
         "max_duration_minutes": user.max_duration_seconds // 60,
         "min_duration_minutes": user.min_duration_seconds // 60,
         "active_nav": "settings",
@@ -210,6 +214,9 @@ async def update_defaults(
     user.max_duration_seconds = parse_required_int(form_text(form, "max_duration_minutes"), 0) * 60
     user.min_duration_seconds = parse_required_int(form_text(form, "min_duration_minutes"), 0) * 60
     user.link_target = parse_link_target(form_text(form, "link_target"), allow_inherit=False)
+
+    user.sponsorblock = sponsorblock.parse_mode(form_text(form, "sponsorblock"), allow_inherit=False)
+    user.sponsorblock_categories = sponsorblock.parse_categories(form_texts(form, "sponsorblock_categories"))
     db.commit()
     return RedirectResponse("/settings", status_code=303)
 

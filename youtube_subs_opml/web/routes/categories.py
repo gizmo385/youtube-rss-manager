@@ -19,6 +19,7 @@ from ..models import (
     User,
     Video,
 )
+from ..services import sponsorblock
 from ..services.prefs import (
     LINK_TARGETS,
     minutes_to_seconds,
@@ -39,6 +40,7 @@ _ARCHIVE_FIELD_KINDS = {
     "max_duration_seconds": "minutes",
     "min_duration_seconds": "minutes",
     "link_target": "link",
+    "sponsorblock": "sponsorblock",
 }
 
 
@@ -50,6 +52,8 @@ def _parse_archive_value(field: str, value: str | None):
         return parse_inherit_int(value)
     if kind == "minutes":
         return minutes_to_seconds(value)
+    if kind == "sponsorblock":
+        return sponsorblock.parse_mode(value, allow_inherit=True)
     return parse_link_target(value, allow_inherit=True)
 
 

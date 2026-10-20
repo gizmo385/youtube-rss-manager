@@ -287,6 +287,7 @@ def process(row: Download, db: Session) -> None:
                 video_format=settings.ytdlp_format,
                 sleep_interval=settings.ytdlp_sleep_interval,
                 max_retries=settings.ytdlp_max_retries,
+                sponsorblock=intent.sponsorblock,
             )
         except ytdlp.DownloadError as exc:
             logger.warning("Download failed for %s: %s", row.video_id, exc)

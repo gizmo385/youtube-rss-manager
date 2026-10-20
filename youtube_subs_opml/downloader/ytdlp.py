@@ -146,8 +146,13 @@ def download(
     max_retries: int = 3,
     timeout: int = 7200,
     write_thumbnail: bool = True,
+    sponsorblock: bool = False,
 ) -> Path:
     """Download to ``output_path`` (extension supplied by the merge format).
+
+    ``sponsorblock`` marks the video's SponsorBlock segments as chapters,
+    for Jellyfin. Marking only — nothing is cut, since the file is shared by
+    every user archiving the channel.
 
     Returns the actual path written. Raises DownloadError on failure.
     """
@@ -181,12 +186,14 @@ def download(
             "-o",
             f"thumbnail:{output_path}-thumb.%(ext)s",
         ]
-    cmd.append(WATCH_URL.format(video_id=video_id))
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
-    except subprocess.TimeoutExpired as exc:
-        raise DownloadError(f"download timed out for {video_id}") from exc
+    url = WATCH_URL.format(video_id=video_id)
+    result = _run_download(video_id, [*cmd, *(["--sponsorblock-mark", "all"] if sponsorblock else []), url], timeout)
+    if result.returncode != 0 and sponsorblock and "SponsorBlock" in result.stderr:
+        # yt-dlp gives up on the whole download when SponsorBlock can't be
+        # reached. The chapters aren't worth failing over: run again without
+        # them, which finds the file already downloaded and just finishes it.
+        logger.warning("SponsorBlock unavailable for %s; downloading without chapters", video_id)
+        result = _run_download(video_id, [*cmd, url], timeout)
 
     if result.returncode != 0:
         raise DownloadError(result.stderr.strip()[:2000] or "download failed")
@@ -199,6 +206,13 @@ def download(
             raise DownloadError(f"no output file produced for {video_id}")
         produced = media[0]
     return produced
+
+
+def _run_download(video_id: str, cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired as exc:
+        raise DownloadError(f"download timed out for {video_id}") from exc
 
 
 def extract_audio(

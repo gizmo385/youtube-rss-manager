@@ -397,3 +397,49 @@ def test_disk_usage_and_failure_counts_render(app_db):
     assert resp.status_code == 200
     assert "5.0 MB" in resp.text  # per-category disk usage
     assert "1 download failed" in resp.text  # failure surfacing
+
+
+# --- SponsorBlock -----------------------------------------------------------
+
+
+def test_user_sponsorblock_defaults_persist(app_db):
+    client, Session_ = app_db
+    client.post(
+        "/settings/defaults",
+        data={"sponsorblock": "skip", "sponsorblock_categories": ["outro", "sponsor", "bogus"]},
+        follow_redirects=False,
+    )
+    with Session_() as db:
+        user = db.get(User, USER_ID)
+        assert user.sponsorblock == "skip"
+        assert user.sponsorblock_categories == "sponsor,outro"  # known kinds, canonical order
+
+    # A bad mode falls back to off; no kinds ticked is allowed.
+    client.post("/settings/defaults", data={"sponsorblock": "bogus"}, follow_redirects=False)
+    with Session_() as db:
+        user = db.get(User, USER_ID)
+        assert user.sponsorblock == "off"
+        assert user.sponsorblock_categories == ""
+
+
+def test_settings_page_renders_sponsorblock(app_db):
+    client, _ = app_db
+    html = client.get("/settings").text
+    assert '<select name="sponsorblock">' in html
+    assert 'name="sponsorblock_categories" value="sponsor" checked' in html
+    assert 'name="sponsorblock_categories" value="outro">' in html
+
+
+def test_sponsorblock_pref_on_channels_and_categories(app_db):
+    client, Session_ = app_db
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "sponsorblock", "value": "show"})
+    client.patch("/categories/1/archive-pref", data={"field": "sponsorblock", "value": "skip"})
+    with Session_() as db:
+        assert db.get(Subscription, (USER_ID, CID)).sponsorblock == "show"
+        assert db.get(Category, 1).sponsorblock == "skip"
+
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "sponsorblock", "value": "inherit"})
+    client.patch("/categories/1/archive-pref", data={"field": "sponsorblock", "value": "nonsense"})
+    with Session_() as db:
+        assert db.get(Subscription, (USER_ID, CID)).sponsorblock is None
+        assert db.get(Category, 1).sponsorblock is None

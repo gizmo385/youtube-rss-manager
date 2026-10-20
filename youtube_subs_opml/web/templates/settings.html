@@ -102,6 +102,36 @@
         </div>
       </div>
     </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Playback</h2>
+        <span class="card-note">Channels &amp; categories can override</span>
+      </div>
+      <div class="card-body">
+        <div class="field-grid">
+          <label class="field">
+            <span class="field-label">SponsorBlock</span>
+            <select name="sponsorblock">
+              {% for value, label in sponsorblock_modes %}
+              <option value="{{ value }}"{% if user.sponsorblock == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <span class="field-hint">For videos played on the Watch tab and channel pages. Show marks segments and offers a skip button; Skip jumps past them. Archived videos get the segments as chapters in Jellyfin either way.</span>
+          </label>
+        </div>
+        <div class="field-label" style="margin-top:14px">Segments</div>
+        {% for key, label in sponsorblock_categories.items() %}
+        <div class="toggle-row">
+          <div><div class="tr-label">{{ label }}</div></div>
+          <span class="toggle"><input type="checkbox" name="sponsorblock_categories" value="{{ key }}"{% if key in user_sponsorblock_categories %} checked{% endif %}><span class="track"></span></span>
+        </div>
+        {% endfor %}
+        <div class="form-actions">
+          <button type="submit" class="btn-primary">Save defaults</button>
+        </div>
+      </div>
+    </section>
   </form>
 
   <section class="card">

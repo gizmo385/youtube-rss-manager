@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import get_current_user
 from ..models import Download, DownloadLink, JellyfinAccount, Subscription, User, Video
+from ..services import sponsorblock
 from ..services.crypto import decrypt_token
 from ..services.jellyfin import JellyfinClient, JellyfinError
 from ..services.stats import shell_stats
@@ -97,6 +98,25 @@ def update_progress(
     """Save the in-page player's position, for resuming and "Continue watching"."""
     save_progress(user, db, body.key, body.position, body.duration)
     return Response(status_code=204)
+
+
+@router.get("/segments/{video_id}")
+def video_segments(
+    video_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The SponsorBlock mode for this video's channel and, unless it's off,
+    the segments to show or skip, in seconds."""
+    channel_id = db.execute(select(Video.channel_id).where(Video.video_id == video_id)).scalar_one_or_none()
+    mode = sponsorblock.resolve_mode(db, user, channel_id) if channel_id else "off"
+    if mode == "off":
+        return {"mode": mode, "segments": []}
+    found = sponsorblock.segments(video_id, sponsorblock.user_categories(user))
+    return {
+        "mode": mode,
+        "segments": [{"start": s.start, "end": s.end, "category": s.category} for s in found],
+    }
 
 
 @router.get("/media/{video_id}")

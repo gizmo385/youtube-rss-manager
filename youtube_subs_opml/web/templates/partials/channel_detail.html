@@ -130,6 +130,25 @@
     {% endfor %}
     {% endif %}
 
+    {% if not d.is_nebula %}
+    <h2 class="section-label spaced">Playback</h2>
+    {% for s in d.playback_settings %}
+    <div class="pref-row">
+      <div class="pref-name">
+        <div class="pref-label">{{ s.label }}</div>
+      </div>
+      <div class="seg">
+        {% for o in s.options %}
+        <button class="{{ 'on' if o.on }}"
+                hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
+                hx-vals='{"field": "sponsorblock", "value": "{{ o.value }}"}'
+                hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}{% if o.hint %} <span class="seg-hint">({{ o.hint }})</span>{% endif %}</button>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
     <h2 class="section-label spaced">Video archive</h2>
     {% if d.is_nebula %}
     <p class="unsupported-note">Unavailable for Nebula channels — their videos can't be

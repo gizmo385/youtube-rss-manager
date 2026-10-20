@@ -30,6 +30,7 @@ from ..models import (
     Video,
     YoutubeAccount,
 )
+from ..services import sponsorblock
 from ..services.crypto import decrypt_token
 from ..services.feed_cache import load_feed
 from ..services.prefs import (
@@ -55,6 +56,7 @@ _ARCHIVE_FIELD_KINDS = {
     "max_duration_seconds": "minutes",
     "min_duration_seconds": "minutes",
     "link_target": "link",
+    "sponsorblock": "sponsorblock",
 }
 
 # Filter chips on the channel list. "All" is the default (no filtering).
@@ -72,6 +74,8 @@ def _parse_archive_value(field: str, value: str | None):
         return parse_inherit_int(value)
     if kind == "minutes":
         return minutes_to_seconds(value)
+    if kind == "sponsorblock":
+        return sponsorblock.parse_mode(value, allow_inherit=True)
     return parse_link_target(value, allow_inherit=True)
 
 
@@ -258,6 +262,9 @@ def _inherited_value(cats, user, key):
     what "Inherit" means here. Shown on the control as a hint so the effective
     value doesn't need a separate line of subtext.
     """
+    if key == "sponsorblock":
+        # Categories that disagree resolve to the strongest, not the first.
+        return sponsorblock.strongest([c.sponsorblock for c in cats]) or user.sponsorblock
     for cat in cats:
         v = getattr(cat, key)
         if v is not None:
@@ -463,6 +470,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
     tri = [("Inherit", "inherit", None), ("On", "true", True), ("Off", "false", False)]
     incl = [("Inherit", "inherit", None), ("Include", "true", True), ("Exclude", "false", False)]
     link_opts = [("Inherit", "inherit", None)] + [(lt, lt, lt) for lt in LINK_TARGETS]
+    sb_opts = [("Inherit", "inherit", None), ("Off", "off", "off"), ("Show", "show", "show"), ("Skip", "skip", "skip")]
 
     if is_nebula:
         platform = {
@@ -495,6 +503,9 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         "feed_settings": [
             _pref_choice(sub, cats, user, "include_shorts", "Include Shorts", incl),
             _pref_choice(sub, cats, user, "include_live", "Include premieres & livestreams", incl),
+        ],
+        "playback_settings": [
+            _pref_choice(sub, cats, user, "sponsorblock", "SponsorBlock", sb_opts),
         ],
         "archive_settings": [
             _pref_choice(sub, cats, user, "download_enabled", "Download to Jellyfin", tri),

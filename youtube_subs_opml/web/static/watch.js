@@ -83,6 +83,7 @@ window.Watch = (function () {
   // restyled, never moved, since moving an iframe reloads it.
   var overlay = null, stage = null, info = null, cur = null, curSource = null, opts = {};
   var resumedAt = 0;   // where the video playing picked up from, if it resumed
+  var sbBar = null;
 
   function ensureOverlay() {
     if (overlay) return;
@@ -92,11 +93,13 @@ window.Watch = (function () {
     overlay.innerHTML =
       '<div class="w-player" role="dialog" aria-modal="true" aria-labelledby="w-player-title">' +
         '<div class="w-player-stage"></div>' +
+        '<div class="w-player-sb"></div>' +
         '<div class="w-player-info"></div>' +
       '</div>';
     // A page can give the player a place in its layout for theater mode.
     (document.getElementById('w-player-host') || document.body).appendChild(overlay);
     stage = overlay.querySelector('.w-player-stage');
+    sbBar = overlay.querySelector('.w-player-sb');
     info = overlay.querySelector('.w-player-info');
     overlay.addEventListener('mousedown', function (e) { if (e.target === overlay && !isTheater()) close(); });
     info.addEventListener('click', function (e) {
@@ -176,8 +179,9 @@ window.Watch = (function () {
 
   function resumable(pos, d) { return pos >= RESUME_MIN && !(d && pos >= d * RESUME_DONE); }
   function resumeAt(v) { return v.progress && resumable(v.progress.pos, v.progress.dur) ? v.progress.pos : 0; }
-  function startTracking(v, pos, d) {
-    var t = {v: v, pos: pos, dur: d, started: false, saved: null};
+  // ``pos``/``d`` read the player's position and duration; ``seek`` moves it.
+  function startTracking(v, pos, d, seek) {
+    var t = {v: v, pos: pos, dur: d, seek: seek, started: false, saved: null};
     t.timer = setInterval(function () { saveProgress(t); }, SAVE_EVERY_MS);
     track = t;
     return t;
@@ -203,6 +207,7 @@ window.Watch = (function () {
   // Save where the video playing got to, then stop following it — nothing
   // fired later (a removed <video>'s pause event, say) can save over that.
   function stopTracking() {
+    stopSponsorBlock();
     if (!track) return;
     clearInterval(track.timer);
     saveProgress(track, true);
@@ -221,6 +226,86 @@ window.Watch = (function () {
       // Position 0 is too near the start to resume from, so the server drops it.
       body: JSON.stringify({key: v.key, position: p ? p.pos : 0, duration: p ? p.dur : null})
     }).then(function (r) { if (!r.ok) throw new Error(r.status); });
+  }
+
+  // ---- SponsorBlock -------------------------------------------------------
+  // Segments for the video playing, per the channel's preference (see
+  // services/sponsorblock.py): 'show' marks them under the video and offers
+  // a skip button while one plays; 'skip' jumps past each one once, so
+  // seeking back into it plays it, and offers to undo.
+  var SB_LABEL = {
+    sponsor: 'sponsor', selfpromo: 'self-promotion', interaction: 'interaction reminder', intro: 'intro',
+    outro: 'outro', preview: 'preview', hook: 'hook', filler: 'filler', music_offtopic: 'non-music section'
+  };
+  var sb = null;   // {t, mode, segs, drawn, btn, until, onClick}
+
+  function startSponsorBlock(t) {
+    fetch('/watch/segments/' + encodeURIComponent(t.v.videoId), {headers: {'Accept': 'application/json'}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || d.mode === 'off' || !d.segments.length || track !== t) return;
+        sb = {t: t, mode: d.mode, segs: d.segments, drawn: false, btn: null, until: 0, onClick: null};
+        sb.timer = setInterval(sbTick, 400);
+      })
+      .catch(function () {});
+  }
+  function stopSponsorBlock() {
+    if (!sb) return;
+    clearInterval(sb.timer);
+    if (sb.btn) sb.btn.remove();
+    sbBar.innerHTML = '';
+    sb = null;
+  }
+  function sbTick() {
+    var s = sb, t = s.t, pos, d;
+    try { pos = t.pos(); d = t.dur() || t.v.duration; } catch (e) { return; }
+    if (!s.drawn && d) {
+      s.drawn = true;
+      sbBar.innerHTML = s.segs.map(function (g) {
+        return '<span class="w-sb-seg w-sb-' + esc(g.category) + '" title="' + esc(SB_LABEL[g.category] || g.category) +
+          '" style="left:' + (g.start / d * 100) + '%;width:' + Math.max(0.4, (g.end - g.start) / d * 100) + '%"></span>';
+      }).join('');
+    }
+    if (!t.started || pos == null) return;
+    var seg = null;
+    for (var i = 0; i < s.segs.length; i++) {
+      var g = s.segs[i];
+      if (pos >= g.start && pos < g.end - 0.5) { seg = g; break; }
+    }
+    var label = seg && (SB_LABEL[seg.category] || seg.category);
+    if (s.mode === 'skip') {
+      if (seg && !seg.skipped) {
+        seg.skipped = true;
+        t.seek(seg.end);
+        var from = seg.start;
+        sbShow(s, 'Skipped ' + label + ' · Undo', function () { t.seek(from); });
+        s.until = Date.now() + 5000;
+      } else if (s.until && Date.now() > s.until) {
+        s.until = 0;
+        sbShow(s, null);
+      }
+    } else if (seg) {
+      var to = seg.end;
+      sbShow(s, 'Skip ' + label + ' ⏭', function () { t.seek(to); });
+    } else {
+      sbShow(s, null);
+    }
+  }
+  // The button over the video: shown with ``text``, or hidden with null.
+  function sbShow(s, text, onClick) {
+    if (!s.btn) {
+      s.btn = document.createElement('button');
+      s.btn.type = 'button';
+      s.btn.className = 'w-sb-btn';
+      s.btn.addEventListener('click', function () {
+        if (s.onClick) s.onClick();
+        s.until = 0;
+        sbShow(s, null);
+      });
+      stage.appendChild(s.btn);
+    }
+    s.btn.hidden = !text;
+    if (text) { s.btn.textContent = text; s.onClick = onClick; }
   }
 
   // A thin bar along the foot of a thumbnail showing how far in the resume
@@ -268,7 +353,8 @@ window.Watch = (function () {
       var video = stage.querySelector('video');
       video.addEventListener('error', function () { playError(v); });
       if (resumedAt) video.addEventListener('loadedmetadata', function () { video.currentTime = resumedAt; }, {once: true});
-      t = startTracking(v, function () { return video.currentTime; }, function () { return video.duration; });
+      t = startTracking(v, function () { return video.currentTime; }, function () { return video.duration; },
+        function (sec) { video.currentTime = sec; });
       video.addEventListener('playing', function () { if (track === t) t.started = true; });
       video.addEventListener('pause', function () { saveProgress(t); });
       if (v.jellyfin) {
@@ -288,7 +374,8 @@ window.Watch = (function () {
         '" allow="autoplay; encrypted-media; picture-in-picture; fullscreen"' +
         ' allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>';
       var iframe = stage.querySelector('iframe');
-      t = startTracking(v, function () { return t.yt && t.yt.getCurrentTime(); }, function () { return t.yt && t.yt.getDuration(); });
+      t = startTracking(v, function () { return t.yt && t.yt.getCurrentTime(); }, function () { return t.yt && t.yt.getDuration(); },
+        function (sec) { if (t.yt && t.yt.seekTo) t.yt.seekTo(sec, true); });
       // Without the API the video still plays; it just isn't tracked.
       youTubeApi().then(function (YT) {
         if (track !== t) return;   // closed or replaced while the API loaded
@@ -304,6 +391,7 @@ window.Watch = (function () {
         }});
       }).catch(function () {});
     }
+    startSponsorBlock(t);
     overlay.hidden = false;
     renderInfo();
   }

@@ -45,6 +45,7 @@ from ..models import (
     VideoShort,
 )
 from .prefs import resolve
+from .sponsorblock import strongest
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -71,6 +72,10 @@ class ChannelIntent:
     #: True if at least one *downloading* subscriber wants Shorts. When False,
     #: the channel excludes Shorts for everyone, so the worker skips them.
     include_shorts: bool
+    #: True if at least one downloading subscriber has SponsorBlock on for it,
+    #: so its segments get marked as chapters (never cut — see
+    #: services/sponsorblock).
+    sponsorblock: bool = False
 
 
 def _known_shorts(db: Session, video_ids: list[str]) -> set[str]:
@@ -123,6 +128,7 @@ class _CategoryPrefs:
     min_duration: int | None = None
     podcast: bool | None = None
     shorts: bool | None = None
+    sponsorblock: str | None = None
 
 
 def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPrefs:
@@ -156,6 +162,7 @@ def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPref
         min_duration=_least_restrictive_floor([c.min_duration_seconds for c in categories]),
         podcast=any(podcasts) if podcasts else None,
         shorts=any(shorts) if shorts else None,
+        sponsorblock=strongest([c.sponsorblock for c in categories]),
     )
 
 
@@ -221,6 +228,7 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
         # Only a subscriber who actually downloads this channel gets a say in
         # whether its Shorts are wanted on disk.
         wants_shorts = download and resolve(sub.include_shorts, cat.shorts, user.include_shorts)
+        wants_sponsorblock = download and resolve(sub.sponsorblock, cat.sponsorblock, user.sponsorblock) != "off"
 
         existing = intents.get(sub.channel_id)
         if existing is None:
@@ -232,6 +240,7 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
                 min_duration_seconds=min_dur,
                 generate_podcast=podcast,
                 include_shorts=wants_shorts,
+                sponsorblock=wants_sponsorblock,
             )
             continue
 
@@ -244,6 +253,7 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
             min_duration_seconds=_least_restrictive_floor([existing.min_duration_seconds, min_dur]) or 0,
             generate_podcast=existing.generate_podcast or podcast,
             include_shorts=existing.include_shorts or wants_shorts,
+            sponsorblock=existing.sponsorblock or wants_sponsorblock,
         )
 
     return intents
