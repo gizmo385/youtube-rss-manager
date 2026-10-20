@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -28,7 +28,7 @@ from ..services import sponsorblock
 from ..services.crypto import decrypt_token
 from ..services.jellyfin import JellyfinClient, JellyfinError
 from ..services.stats import shell_stats
-from ..services.watch import build_watch_feed, save_progress, set_watched
+from ..services.watch import build_watch_feed, save_progress, search_videos, set_watched
 from ..templating import templates
 
 logger = logging.getLogger(__name__)
@@ -73,6 +73,18 @@ def watch_feed(
 ) -> dict:
     """The same feed the page embeds, for its periodic refresh."""
     return build_watch_feed(user, db)
+
+
+@router.get("/search")
+def search(
+    q: str = Query("", max_length=200),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Videos matching ``q`` across everything stored, beyond the feed's
+    window and including descriptions — what the page shows under its own
+    matches."""
+    return {"query": q, "videos": search_videos(user, db, q)}
 
 
 @router.post("/watched", status_code=204)

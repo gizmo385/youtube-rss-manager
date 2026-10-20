@@ -6,7 +6,7 @@
   <div class="watch-toolbar">
     <div class="w-search">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
-      <input id="watch-search" type="search" placeholder="Search videos and channels…" autocomplete="off" spellcheck="false">
+      <input id="watch-search" type="search" placeholder="Search titles, channels and descriptions…" autocomplete="off" spellcheck="false">
       <kbd>/</kbd>
     </div>
     {# One swipeable row on phones; dissolves into the toolbar (display:
@@ -110,6 +110,8 @@
     unwatchedOnly: !!prefs.unwatchedOnly,
     platform: prefs.platform || 'all',
     query: '',
+    results: [],            // the server's matches for resultsFor — see runSearch()
+    resultsFor: '',
     channel: null,          // {id, title} when filtering to one channel
     selCat: null,
     selKey: null,           // card key: category id + '|' + video key
@@ -147,7 +149,12 @@
   // than by most recent save, so it doesn't reshuffle while one plays.
   var CONT = {id: 'cont', name: 'Continue watching', channels: []};
   var CONT_AT = {};
-  function allCats() { return [CONT].concat(CATS); }
+  // "More results": what the server finds for the search beyond the feed's
+  // own matches — older uploads, and matches in descriptions. Like Continue
+  // watching, a section rather than a category: it sits after them all.
+  var SEARCH = {id: 'search', name: 'More results', channels: []};
+  function allCats() { return [CONT].concat(CATS, [SEARCH]); }
+  function pinned(c) { return c.id === CONT.id || c.id === SEARCH.id; }
   function continuing() {
     return VIDEOS.filter(function (v) {
       if (v.progress && !CONT_AT[v.key]) CONT_AT[v.key] = v.progress.at;
@@ -160,6 +167,8 @@
     // The video playing stays put even though playing it marked it watched;
     // and playing anything marks it watched, so Continue watching ignores it.
     if (S.unwatchedOnly && v.watched && !isPlaying(v) && c.id !== CONT.id) return false;
+    // The server matched these on more than the title and channel.
+    if (c.id === SEARCH.id) q = '';
     if (S.platform === 'youtube' && v.nebula) return false;
     if (S.platform === 'nebula' && !v.nebula) return false;
     if (S.channel && v.channelId !== S.channel.id) return false;
@@ -167,15 +176,23 @@
     return true;
   }
   function model() {
-    return allCats().map(function (c) {
-      var all = c === CONT ? continuing() : VIDEOS.filter(function (v) { return v.cats.indexOf(c.id) >= 0; });
+    function section(c, all) {
       return {
         id: c.id, name: c.name, channels: c.channels, all: all,
         vids: all.filter(function (v) { return matches(v, c); }),
         unw: all.filter(function (v) { return !v.watched; }).length,
         collapsed: !!S.collapsed[c.id]
       };
+    }
+    var out = [CONT].concat(CATS).map(function (c) {
+      return section(c, c === CONT ? continuing() : VIDEOS.filter(function (v) { return v.cats.indexOf(c.id) >= 0; }));
     });
+    // Only results for the search as it stands, less what's already shown.
+    var shown = {};
+    out.forEach(function (c) { c.vids.forEach(function (v) { shown[v.key] = 1; }); });
+    var results = S.resultsFor && S.resultsFor === S.query.trim() ? S.results : [];
+    out.push(section(SEARCH, results.filter(function (v) { return !shown[v.key]; })));
+    return out;
   }
   // ---- packing ----------------------------------------------------------
   // Packed Grid/Shelves lay categories out on a column grid so small ones
@@ -221,11 +238,12 @@
     }
     return out;
   }
+  // Continue watching first and More results last, full width, with the
+  // categories (packed or not) between.
   function placed(secs) {
-    var cont = secs.filter(function (c) { return c.id === CONT.id; });
-    var cats = secs.filter(function (c) { return c.id !== CONT.id; });
-    return cont.map(function (c) { return {c: c, span: 0}; })
-      .concat(S.cols ? pack(cats, S.cols) : cats.map(function (c) { return {c: c, span: 0}; }));
+    function only(id) { return secs.filter(function (c) { return c.id === id; }).map(function (c) { return {c: c, span: 0}; }); }
+    var cats = secs.filter(function (c) { return !pinned(c); });
+    return only(CONT.id).concat(S.cols ? pack(cats, S.cols) : cats.map(function (c) { return {c: c, span: 0}; }), only(SEARCH.id));
   }
   // Sections in visual order, so [ ] and J/K follow the packed layout.
   function sections() {
@@ -256,10 +274,15 @@
   }
   function countLabel(c) {
     if (c.id === CONT.id) return c.vids.length + ' in progress';
+    if (c.id === SEARCH.id) return c.vids.length + ' more · older uploads and descriptions';
     return c.unw + ' unwatched · ' + c.vids.length + (c.vids.length !== c.all.length ? ' of ' + c.all.length : '');
   }
   // The compact form, for packed and rail headings.
-  function shortCount(c) { return c.id === CONT.id ? c.vids.length + ' in progress' : c.unw + ' new · ' + c.vids.length; }
+  function shortCount(c) {
+    if (c.id === CONT.id) return c.vids.length + ' in progress';
+    if (c.id === SEARCH.id) return c.vids.length + ' more';
+    return c.unw + ' new · ' + c.vids.length;
+  }
   // Continue watching's cards are wider than a category's, with room for the
   // whole title and how much is left.
   function contCard(c, v) {
@@ -326,40 +349,47 @@
         '<button type="button" class="btn" data-act="clear-filters">Clear filters</button></div>';
       return;
     }
-    var html = '';
+    var html = '', tail = '';
     if (secs[0].c.id === CONT.id) {
       html = contStrip(secs[0].c);
       secs = secs.slice(1);
     }
-    if (S.cols) {
+    if (secs.length && secs[secs.length - 1].c.id === SEARCH.id) {
+      tail = plainSec(secs[secs.length - 1].c);
+      secs = secs.slice(0, -1);
+    }
+    if (S.cols && secs.length) {
       html += '<div class="w-pack ' + (S.layout === 'shelves' ? 'w-pack-shelves' : 'w-pack-grid') +
         '" style="grid-template-columns:repeat(' + S.cols + ',minmax(0,1fr))">' +
         secs.map(function (p) { return packedSec(p.c, p.span); }).join('') + '</div>';
-    } else secs.forEach(function (p) {
-      var c = p.c;
-      if (S.layout === 'grid') {
-        html += '<section class="w-sec" data-sec="' + c.id + '">' +
-          secHead(c, 'w-sec-head', '[ ] switch · X collapse · ⇧W mark all watched') +
-          (c.collapsed ? '' : '<div class="w-grid">' + c.vids.map(function (v) { return card(c, v); }).join('') + '</div>') +
-          '</section>';
-      } else if (S.layout === 'shelves') {
-        html += '<section class="w-sec w-sec-shelf" data-sec="' + c.id + '">' +
-          secHead(c, 'w-shelf-head', '[ ] switch · X collapse') +
-          (c.collapsed ? '' : '<div class="w-shelf sb" data-sec="' + c.id + '">' +
-            c.vids.map(function (v) { return card(c, v); }).join('') + '</div>') +
-          '</section>';
-      } else {
-        html += '<section class="w-sec" data-sec="' + c.id + '">' +
-          secHead(c, 'w-sec-head w-list-head', '') +
-          (c.collapsed ? '' : c.vids.map(function (v) { return row(c, v); }).join('')) +
-          '</section>';
-      }
-    });
+    } else secs.forEach(function (p) { html += plainSec(p.c); });
+    html += tail;
     if (S.layout === 'list') html += '<div class="w-end">End of feed</div>';
     main.innerHTML = html;
     main.querySelectorAll('.w-shelf, .w-cont-row').forEach(function (el) {
       if (shelfScroll[el.dataset.sec]) el.scrollLeft = shelfScroll[el.dataset.sec];
     });
+  }
+
+  // A category as the current layout shows it, unpacked.
+  function plainSec(c) {
+    if (S.layout === 'grid') {
+      return '<section class="w-sec" data-sec="' + c.id + '">' +
+        secHead(c, 'w-sec-head', '[ ] switch · X collapse · ⇧W mark all watched') +
+        (c.collapsed ? '' : '<div class="w-grid">' + c.vids.map(function (v) { return card(c, v); }).join('') + '</div>') +
+        '</section>';
+    }
+    if (S.layout === 'shelves') {
+      return '<section class="w-sec w-sec-shelf" data-sec="' + c.id + '">' +
+        secHead(c, 'w-shelf-head', '[ ] switch · X collapse') +
+        (c.collapsed ? '' : '<div class="w-shelf sb" data-sec="' + c.id + '">' +
+          c.vids.map(function (v) { return card(c, v); }).join('') + '</div>') +
+        '</section>';
+    }
+    return '<section class="w-sec" data-sec="' + c.id + '">' +
+      secHead(c, 'w-sec-head w-list-head', '') +
+      (c.collapsed ? '' : c.vids.map(function (v) { return row(c, v); }).join('')) +
+      '</section>';
   }
 
   // Theater mode's rail: the feed by category as compact rows, so the next
@@ -395,7 +425,7 @@
   function renderSide(mdl) {
     var html = '';
     mdl.forEach(function (c) {
-      if (c.id === CONT.id) return;
+      if (pinned(c)) return;
       html += '<div class="w-side-cat" data-cat="' + c.id + '">' +
         '<div class="w-side-row">' +
           '<button type="button" class="w-side-chev" data-act="toggle-cat" title="Collapse / expand">' +
@@ -416,7 +446,7 @@
       html += '</div>';
     });
     document.getElementById('w-side-list').innerHTML = html;
-    document.getElementById('w-cat-strip').innerHTML = mdl.filter(function (c) { return c.all.length && c.id !== CONT.id; }).map(function (c) {
+    document.getElementById('w-cat-strip').innerHTML = mdl.filter(function (c) { return c.all.length && !pinned(c); }).map(function (c) {
       return '<button type="button" class="w-cat-chip" data-cat="' + c.id + '">' + esc(c.name) +
         '<span class="w-badge' + (c.unw ? ' on' : '') + '">' + c.unw + '</span></button>';
     }).join('');
@@ -744,6 +774,30 @@
     render();
   }
 
+  // ---- search -----------------------------------------------------------
+  // The search box filters the feed as you type; a moment later the server
+  // is asked too, for everything stored (see services/watch.search_videos).
+  // Its answer is only shown while the box still says what was asked.
+  var searchT = null, searchSeq = 0;
+  function runSearch() {
+    clearTimeout(searchT);
+    var q = S.query.trim();
+    if (q.length < 2) return;
+    searchT = setTimeout(function () {
+      var seq = ++searchSeq;
+      fetch('/watch/search?q=' + encodeURIComponent(q), {headers: {'Accept': 'application/json'}})
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(function (d) {
+          if (seq !== searchSeq || S.query.trim() !== q) return;
+          // Share the feed's copy of a video, so watched state stays in step.
+          S.results = d.videos.map(function (v) { return BY_KEY[v.key] || (BY_KEY[v.key] = v); });
+          S.resultsFor = q;
+          render();
+        })
+        .catch(function () {});
+    }, 250);
+  }
+
   // ---- toast ------------------------------------------------------------
   function showToast(t) {
     S.toast = t;
@@ -781,7 +835,7 @@
 
   // ---- events -----------------------------------------------------------
   var search = document.getElementById('watch-search');
-  search.addEventListener('input', function () { S.query = search.value; S.selKey = null; render(); });
+  search.addEventListener('input', function () { S.query = search.value; S.selKey = null; render(); runSearch(); });
   document.getElementById('w-unwatched').addEventListener('click', function () { S.unwatchedOnly = !S.unwatchedOnly; render(); });
   document.getElementById('w-platforms').addEventListener('click', function (e) {
     var b = e.target.closest('[data-platform]');
@@ -943,6 +997,7 @@
         FEED = feed; CATS = feed.categories; VIDEOS = feed.videos;
         BY_KEY = {}; CONT_AT = {};
         VIDEOS.forEach(function (v) { BY_KEY[v.key] = v; });
+        S.results = S.results.map(function (v) { return BY_KEY[v.key] || (BY_KEY[v.key] = v); });
         render();
       })
       .catch(function () { lastRefresh = Date.now(); })

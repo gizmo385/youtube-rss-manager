@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from youtube_subs_opml import nebula
@@ -374,6 +374,82 @@ def channel_videos(user: User, db: Session, channel: Channel) -> list[dict]:
     videos = videos[:CHANNEL_VIDEO_LIMIT]
     _annotate(user, db, videos)
     return [_client_video(v, channel) for v in videos]
+
+
+# Search reaches every stored video, not just the feed's window, but returns
+# only the best of them: the page shows these under the feed's own matches.
+SEARCH_LIMIT = 50
+# Matches gathered before ranking; newest first, so a very common word still
+# ranks recent title matches from among plenty.
+_SEARCH_POOL = 400
+
+
+def _like(term: str) -> str:
+    """``term`` as a case-insensitive substring pattern, wildcards escaped."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def search_videos(user: User, db: Session, query: str) -> list[dict]:
+    """Stored videos from the user's subscriptions matching ``query``: every
+    word in the title, channel name or description. Title matches first,
+    then newest first, as the client JSON shape.
+
+    Plain substring matching rather than full-text search: a few thousand
+    videos is nothing to scan, and it finds partial words and names that a
+    stemmer would mangle. Nebula videos only have titles to match, and only
+    those still in the cached feed.
+    """
+    terms = [t.lower() for t in query.split()][:8]
+    if not terms:
+        return []
+    channels = {
+        ch.channel_id: ch
+        for _, ch in db.execute(
+            select(Subscription, Channel)
+            .join(Channel, Channel.channel_id == Subscription.channel_id)
+            .where(Subscription.user_id == user.id, Subscription.ignored.is_(False))
+        ).all()
+    }
+    youtube_ids = [cid for cid, ch in channels.items() if ch.platform != nebula.PLATFORM]
+    nebula_ids = [cid for cid, ch in channels.items() if ch.platform == nebula.PLATFORM]
+
+    found: list[dict] = []
+    if youtube_ids:
+        rows = db.execute(
+            select(Video, Channel.title)
+            .join(Channel, Channel.channel_id == Video.channel_id)
+            .where(
+                Video.channel_id.in_(youtube_ids),
+                Video.published_at.is_not(None),
+                and_(
+                    *(
+                        or_(
+                            Video.title.ilike(_like(t), escape="\\"),
+                            Video.description.ilike(_like(t), escape="\\"),
+                            Channel.title.ilike(_like(t), escape="\\"),
+                        )
+                        for t in terms
+                    )
+                ),
+            )
+            .order_by(Video.published_at.desc())
+            .limit(_SEARCH_POOL)
+        ).all()
+        found += [_youtube_video(v) for v, _ in rows]
+    for v in _load_videos(db, {cid: channels[cid] for cid in nebula_ids}, since=None):
+        text = f"{v['title']} {channels[v['channel_id']].title or ''}".lower()
+        if all(t in text for t in terms):
+            found.append(v)
+
+    def in_title(v: dict) -> bool:
+        title = v["title"].lower()
+        return all(t in title for t in terms)
+
+    found.sort(key=lambda v: (not in_title(v), -v["published"].timestamp()))
+    videos = found[:SEARCH_LIMIT]
+    _annotate(user, db, videos)
+    return [_client_video(v, channels[v["channel_id"]]) for v in videos]
 
 
 def save_progress(user: User, db: Session, key: str, position: float, duration: float | None) -> None:

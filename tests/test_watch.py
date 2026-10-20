@@ -384,3 +384,56 @@ def test_progress_endpoint_rejects_bad_bodies(client):
     assert client.post("/watch/progress", json={"key": "a_new", "position": -1}).status_code == 422
     assert client.post("/watch/progress", json={"key": "x" * 256, "position": 30}).status_code == 422
     assert client.post("/watch/progress", json={"position": 30}).status_code == 422
+
+
+# --- search ------------------------------------------------------------------
+
+
+def _search(sm, q: str) -> list[str]:
+    from youtube_subs_opml.web.services.watch import search_videos
+
+    with sm() as s:
+        return [v["key"] for v in search_videos(s.get_one(User, 1), s, q)]
+
+
+def test_search_reaches_beyond_the_window_and_into_descriptions(sessionmaker_):
+    with sessionmaker_() as s:
+        s.get_one(Video, "b_arch").description = "We build a FLUX capacitor"
+        s.commit()
+    assert _search(sessionmaker_, "too old") == ["a_old"]  # 45 days back, outside the feed
+    assert _search(sessionmaker_, "flux") == ["b_arch"]  # case-insensitive, in the description
+    assert _search(sessionmaker_, "bravo") == ["b_arch"]  # the channel's name
+
+
+def test_search_needs_every_word_and_ranks_titles_first(sessionmaker_):
+    with sessionmaker_() as s:
+        s.get_one(Video, "a_old").description = "the newest thing"
+        s.commit()
+    # Both match "alpha new"; a_new by title (and is newer anyway), a_old via
+    # its channel and description.
+    assert _search(sessionmaker_, "alpha new") == ["a_new", "a_old"]
+    # Title matches outrank newer description matches.
+    with sessionmaker_() as s:
+        s.get_one(Video, "a_short").description = "old"
+        s.commit()
+    assert _search(sessionmaker_, "old") == ["a_old", "a_short"]
+    assert _search(sessionmaker_, "alpha zebra") == []
+
+
+def test_search_skips_ignored_channels_and_treats_wildcards_literally(sessionmaker_):
+    assert _search(sessionmaker_, "ignored") == []
+    assert _search(sessionmaker_, "%") == []
+    assert _search(sessionmaker_, "_") == []
+    assert _search(sessionmaker_, "   ") == []
+
+
+def test_search_covers_nebula_titles(sessionmaker_):
+    assert _search(sessionmaker_, "ancient") == ["nebula:tomscott-ancient"]
+
+
+def test_search_endpoint(client):
+    data = client.get("/watch/search", params={"q": "bravo"}).json()
+    assert data["query"] == "bravo"
+    assert [v["key"] for v in data["videos"]] == ["b_arch"]
+    assert data["videos"][0]["archived"] is True  # the same shape as the feed's videos
+    assert client.get("/watch/search", params={"q": "x" * 201}).status_code == 422
