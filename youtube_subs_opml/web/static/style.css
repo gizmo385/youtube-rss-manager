@@ -1309,7 +1309,13 @@ label { display: block; }
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex-shrink: 0;
   padding: 8px 20px; border-bottom: 2px solid var(--line); background: var(--panel);
 }
-.w-search { position: relative; display: flex; align-items: center; width: 280px; max-width: 100%; color: var(--muted-2); }
+.w-search {
+  position: relative; display: flex; align-items: center; flex: 0 1 280px; min-width: 200px; max-width: 100%;
+  color: var(--muted-2); transition: flex-grow 0.18s ease;
+}
+/* In use — focused, or holding a search — it widens into the toolbar's free
+   space, up to the view controls, rather than wrapping anything. */
+.w-search:focus-within, .w-search:has(input:not(:placeholder-shown)) { flex-grow: 1; }
 .w-search svg { position: absolute; left: 9px; pointer-events: none; }
 .w-search input {
   width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--ink);
@@ -1603,7 +1609,7 @@ section.focused > * > .w-sec-hint { display: inline; }
   .watch-main { overflow: visible; }
 
   .watch-toolbar { padding: 8px 12px; gap: 8px; }
-  .w-search { width: 100%; }
+  .w-search { flex-basis: 100%; }
   .w-search input { font-size: 16px; }  /* below 16px, iOS zooms the page on focus */
   .w-search kbd { display: none; }
   .w-controls {
