@@ -11,6 +11,7 @@ nobody has classified yet is shown rather than probed.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree as ET
@@ -257,6 +258,95 @@ def _client_video(v: dict, channel: Channel) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class _Library:
+    """The channels a user follows (not ignored), with their subscriptions and
+    categories: what the Shorts/live preference cascade is resolved through."""
+
+    subs: dict[str, Subscription]
+    channels: dict[str, Channel]
+    categories: list[Category]
+    cats_by_channel: dict[str, list[Category]]
+
+
+def _library(user: User, db: Session) -> _Library:
+    rows = db.execute(
+        select(Subscription, Channel)
+        .join(Channel, Channel.channel_id == Subscription.channel_id)
+        .where(Subscription.user_id == user.id, Subscription.ignored.is_(False))
+    ).all()
+    channels = {ch.channel_id: ch for _, ch in rows}
+    categories = list(
+        db.execute(select(Category).where(Category.user_id == user.id).order_by(Category.name)).scalars().all()
+    )
+    cat_by_id = {c.id: c for c in categories}
+    cats_by_channel: dict[str, list[Category]] = {}
+    for channel_id, category_id in db.execute(
+        select(ChannelCategory.channel_id, ChannelCategory.category_id).where(ChannelCategory.user_id == user.id)
+    ).all():
+        if channel_id in channels and category_id in cat_by_id:
+            cats_by_channel.setdefault(channel_id, []).append(cat_by_id[category_id])
+    return _Library(
+        subs={sub.channel_id: sub for sub, _ in rows},
+        channels=channels,
+        categories=categories,
+        cats_by_channel=cats_by_channel,
+    )
+
+
+class _Filter:
+    """The user's Shorts and live/upcoming preferences applied to ``videos``.
+
+    Only consults what's already classified (``video_shorts``,
+    ``video_live_status``): a video nobody has classified yet is shown rather
+    than probed, so rendering never reaches out to YouTube.
+    """
+
+    def __init__(self, user: User, db: Session, lib: _Library, videos: list[dict]):
+        self.user = user
+        self.lib = lib
+        ids = [v["video_id"] for v in videos if v["video_id"]]
+        self.shorts: set[str] = set()
+        self.live: set[str] = set()
+        if ids:
+            is_short = VideoShort.is_short.is_(True)
+            self.shorts = set(
+                db.execute(select(VideoShort.video_id).where(VideoShort.video_id.in_(ids), is_short)).scalars().all()
+            )
+            self.live = set(
+                db.execute(
+                    select(VideoLiveStatus.video_id).where(
+                        VideoLiveStatus.video_id.in_(ids), VideoLiveStatus.status.in_(("upcoming", "live"))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+    def placements(self, v: dict) -> list[tuple[str, Category | None]]:
+        """Where ``v`` sits on the Watch tab: each of its channel's categories,
+        or Uncategorized."""
+        cats = self.lib.cats_by_channel.get(v["channel_id"])
+        return [(f"c{c.id}", c) for c in cats] if cats else [(UNCATEGORIZED, None)]
+
+    def shown_in(self, v: dict, cat: Category | None) -> bool:
+        """Whether the preferences, as cascaded through ``cat``, let ``v`` through."""
+        sub = self.lib.subs.get(v["channel_id"])
+        if sub is None:  # not followed (an ignored channel's own page): nothing to apply
+            return True
+        cat_shorts = cat.include_shorts if cat else None
+        cat_live = cat.include_live if cat else None
+        user = self.user
+        if v["key"] in self.shorts and not resolve_include_shorts(sub.include_shorts, cat_shorts, user.include_shorts):
+            return False
+        return v["key"] not in self.live or resolve_include_live(sub.include_live, cat_live, user.include_live)
+
+    def visible(self, v: dict) -> bool:
+        """Shown anywhere: a channel in two categories shows a video if either
+        lets it through, as the Watch tab does."""
+        return any(self.shown_in(v, cat) for _, cat in self.placements(v))
+
+
 def build_watch_feed(user: User, db: Session, now: datetime | None = None) -> dict:
     """Everything the Watch page renders, as JSON-ready data.
 
@@ -271,68 +361,18 @@ def build_watch_feed(user: User, db: Session, now: datetime | None = None) -> di
     Shorts/live preferences would hide, which come with no categories.
     """
     now = now or datetime.now(UTC)
-
-    subs = db.execute(
-        select(Subscription, Channel)
-        .join(Channel, Channel.channel_id == Subscription.channel_id)
-        .where(Subscription.user_id == user.id, Subscription.ignored.is_(False))
-    ).all()
-    sub_by_channel = {sub.channel_id: sub for sub, _ in subs}
-    channels = {ch.channel_id: ch for _, ch in subs}
-
-    categories = db.execute(select(Category).where(Category.user_id == user.id).order_by(Category.name)).scalars().all()
-    cats_by_channel: dict[str, list[Category]] = {}
-    cat_by_id = {c.id: c for c in categories}
-    for channel_id, category_id in db.execute(
-        select(ChannelCategory.channel_id, ChannelCategory.category_id).where(ChannelCategory.user_id == user.id)
-    ).all():
-        if channel_id in channels and category_id in cat_by_id:
-            cats_by_channel.setdefault(channel_id, []).append(cat_by_id[category_id])
+    lib = _library(user, db)
+    channels, categories = lib.channels, lib.categories
 
     videos = _load_videos(db, channels, since=now - WINDOW)
     resuming = _resumable_elsewhere(user, db, channels, {v["key"] for v in videos}, since=now - WINDOW)
     _annotate(user, db, videos + resuming)
-
-    yt_video_ids = [v["video_id"] for v in videos if v["video_id"]]
-    shorts: set[str] = set()
-    live: set[str] = set()
-    if yt_video_ids:
-        shorts = set(
-            db.execute(
-                select(VideoShort.video_id).where(VideoShort.video_id.in_(yt_video_ids), VideoShort.is_short.is_(True))
-            )
-            .scalars()
-            .all()
-        )
-        live = set(
-            db.execute(
-                select(VideoLiveStatus.video_id).where(
-                    VideoLiveStatus.video_id.in_(yt_video_ids),
-                    VideoLiveStatus.status.in_(("upcoming", "live")),
-                )
-            )
-            .scalars()
-            .all()
-        )
-
-    def shown_in(v: dict, cat: Category | None) -> bool:
-        """Whether the Shorts/live preferences, as cascaded through ``cat``,
-        let ``v`` through."""
-        sub = sub_by_channel[v["channel_id"]]
-        cat_shorts = cat.include_shorts if cat else None
-        cat_live = cat.include_live if cat else None
-        if v["key"] in shorts and not resolve_include_shorts(sub.include_shorts, cat_shorts, user.include_shorts):
-            return False
-        return v["key"] not in live or resolve_include_live(sub.include_live, cat_live, user.include_live)
+    shown = _Filter(user, db, lib, videos)
 
     out_videos = []
     channels_in_cat: dict[str, set[str]] = {}
     for v in videos:
-        cats = cats_by_channel.get(v["channel_id"])
-        placements: list[tuple[str, Category | None]] = (
-            [(f"c{c.id}", c) for c in cats] if cats else [(UNCATEGORIZED, None)]
-        )
-        cat_ids = [cid for cid, cat in placements if shown_in(v, cat)]
+        cat_ids = [cid for cid, cat in shown.placements(v) if shown.shown_in(v, cat)]
         if not cat_ids and not v["progress"]:
             continue
         for cid in cat_ids:
@@ -367,11 +407,13 @@ CHANNEL_VIDEO_LIMIT = 60
 def channel_videos(user: User, db: Session, channel: Channel) -> list[dict]:
     """One channel's stored videos, newest first, for its channel page.
 
-    Unlike the Watch feed there's no age window and no Shorts/live filtering —
-    it's the channel's own page, so it shows what the channel posted.
+    Unlike the Watch feed there's no age window, but the Shorts/live
+    preferences apply the same way.
     """
-    videos = _load_videos(db, {channel.channel_id: channel}, since=None, limit=CHANNEL_VIDEO_LIMIT)
-    videos = videos[:CHANNEL_VIDEO_LIMIT]
+    # Fetch past the cap, so hiding Shorts doesn't leave the page short.
+    videos = _load_videos(db, {channel.channel_id: channel}, since=None, limit=CHANNEL_VIDEO_LIMIT * 3)
+    shown = _Filter(user, db, _library(user, db), videos)
+    videos = [v for v in videos if shown.visible(v)][:CHANNEL_VIDEO_LIMIT]
     _annotate(user, db, videos)
     return [_client_video(v, channel) for v in videos]
 
@@ -393,7 +435,8 @@ def _like(term: str) -> str:
 def search_videos(user: User, db: Session, query: str) -> list[dict]:
     """Stored videos from the user's subscriptions matching ``query``: every
     word in the title, channel name or description. Title matches first,
-    then newest first, as the client JSON shape.
+    then newest first, as the client JSON shape. The Shorts/live preferences
+    apply, as on the Watch tab.
 
     Plain substring matching rather than full-text search: a few thousand
     videos is nothing to scan, and it finds partial words and names that a
@@ -403,14 +446,8 @@ def search_videos(user: User, db: Session, query: str) -> list[dict]:
     terms = [t.lower() for t in query.split()][:8]
     if not terms:
         return []
-    channels = {
-        ch.channel_id: ch
-        for _, ch in db.execute(
-            select(Subscription, Channel)
-            .join(Channel, Channel.channel_id == Subscription.channel_id)
-            .where(Subscription.user_id == user.id, Subscription.ignored.is_(False))
-        ).all()
-    }
+    lib = _library(user, db)
+    channels = lib.channels
     youtube_ids = [cid for cid, ch in channels.items() if ch.platform != nebula.PLATFORM]
     nebula_ids = [cid for cid, ch in channels.items() if ch.platform == nebula.PLATFORM]
 
@@ -446,6 +483,8 @@ def search_videos(user: User, db: Session, query: str) -> list[dict]:
         title = v["title"].lower()
         return all(t in title for t in terms)
 
+    shown = _Filter(user, db, lib, found)
+    found = [v for v in found if shown.visible(v)]
     found.sort(key=lambda v: (not in_title(v), -v["published"].timestamp()))
     videos = found[:SEARCH_LIMIT]
     _annotate(user, db, videos)

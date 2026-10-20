@@ -106,6 +106,9 @@ class Channel(Base):
     # uploads playlist, and when it reached the end. Both NULL until it starts.
     backfill_page_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
     backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Then the same through its Shorts playlist, to classify what it found.
+    shorts_page_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    shorts_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

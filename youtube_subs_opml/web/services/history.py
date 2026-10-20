@@ -9,6 +9,13 @@ subscribed YouTube channels a few pages at a time, resuming where it left off
 the end (``Channel.backfilled_at``), within a daily quota budget. New uploads
 after that come from the poller as usual.
 
+Then it does the same through the channel's Shorts playlist (``UUSH<id>``), so
+what it found can be filtered by the Shorts preferences like anything else:
+each Short is recorded as one, and once the list is done, every other
+backfilled video of the channel as not. That's exact, and costs the same
+1 unit per 50 — probing each video the way the feed proxy does would be tens
+of thousands of requests to YouTube.
+
 What it adds is flagged ``Video.backfilled``: searchable and shown on channel
 pages, but never archived — otherwise a channel set to keep everything would
 queue its whole back catalogue for download. The poller clears the flag on
@@ -27,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import Settings
-from ..models import Channel, Subscription, Video
+from ..models import Channel, Subscription, Video, VideoShort
 from .uploads_api import error_reason, fetch_uploads_page
 
 logger = logging.getLogger(__name__)
@@ -67,7 +74,7 @@ def backfill_history(db: Session, settings: Settings, client: httpx.Client) -> i
             select(Channel)
             .where(
                 Channel.platform == "youtube",
-                Channel.backfilled_at.is_(None),
+                Channel.shorts_backfilled_at.is_(None),
                 Channel.channel_id.in_(followed),
             )
             .order_by(Channel.channel_id)
@@ -78,7 +85,9 @@ def backfill_history(db: Session, settings: Settings, client: httpx.Client) -> i
 
     added = 0
     for channel in channels:
-        while budget > 0 and channel.backfilled_at is None:
+        while budget > 0 and channel.shorts_backfilled_at is None:
+            # All its uploads first, then its Shorts to classify them.
+            shorts = channel.backfilled_at is not None
             budget -= 1
             _spent[day] = _spent.get(day, 0) + 1  # failed calls cost quota too
             try:
@@ -86,30 +95,38 @@ def backfill_history(db: Session, settings: Settings, client: httpx.Client) -> i
                     channel.channel_id,
                     client,
                     settings.youtube_api_key,
-                    channel.backfill_page_token,
+                    channel.shorts_page_token if shorts else channel.backfill_page_token,
                     page_size=PAGE_SIZE,
+                    playlist="UUSH" if shorts else "UU",
                 )
             except httpx.HTTPStatusError as exc:
                 reason = error_reason(exc.response)
                 if exc.response.status_code == 404:
-                    # No uploads playlist: a channel that's never uploaded, or gone.
-                    channel.backfilled_at = datetime.now(UTC)
-                    db.commit()
-                    break
-                if reason in ("quotaExceeded", "dailyLimitExceeded", "rateLimitExceeded"):
+                    # No such playlist: a channel that's never uploaded (or
+                    # never posted a Short), or one that's gone.
+                    items, next_token = [], None
+                elif reason in ("quotaExceeded", "dailyLimitExceeded", "rateLimitExceeded"):
                     logger.warning("History backfill paused: YouTube API quota exhausted (%s)", reason)
                     _exhausted.add(day)
+                    return _done(added)
                 else:
                     logger.warning("History backfill failed for %s: %s %s", channel.channel_id, exc, reason)
-                return _done(added)
+                    return _done(added)
             except httpx.HTTPError as exc:
                 logger.warning("History backfill failed for %s: %s", channel.channel_id, exc)
                 return _done(added)
 
-            added += _store(db, channel.channel_id, items)
-            channel.backfill_page_token = next_token
-            if not next_token:
-                channel.backfilled_at = datetime.now(UTC)
+            if shorts:
+                _mark_shorts(db, items)
+                channel.shorts_page_token = next_token
+                if not next_token:
+                    _mark_the_rest_not_shorts(db, channel.channel_id)
+                    channel.shorts_backfilled_at = datetime.now(UTC)
+            else:
+                added += _store(db, channel.channel_id, items)
+                channel.backfill_page_token = next_token
+                if not next_token:
+                    channel.backfilled_at = datetime.now(UTC)
             db.commit()
         if budget <= 0:
             break
@@ -120,6 +137,48 @@ def _done(added: int) -> int:
     if added:
         logger.info("History backfill added %d older videos", added)
     return added
+
+
+def _video_ids(items: list[dict]) -> list[str]:
+    """The playlist items' video ids, less private and deleted videos, which
+    linger in a playlist without an owner."""
+    return [
+        i["snippet"]["resourceId"]["videoId"]
+        for i in items
+        if "videoOwnerChannelId" in i.get("snippet", {}) and i["snippet"].get("resourceId", {}).get("videoId")
+    ]
+
+
+def _mark_shorts(db: Session, items: list[dict]) -> None:
+    ids = _video_ids(items)
+    if not ids:
+        return
+    known = {r.video_id: r for r in db.execute(select(VideoShort).where(VideoShort.video_id.in_(ids))).scalars()}
+    for video_id in ids:
+        row = known.get(video_id)
+        if row is None:
+            db.add(VideoShort(video_id=video_id, is_short=True))
+        else:
+            row.is_short = True
+
+
+def _mark_the_rest_not_shorts(db: Session, channel_id: str) -> None:
+    """With the channel's Shorts all recorded, its other backfilled videos
+    aren't Shorts. Only backfilled ones: an upload since the Shorts list was
+    read might be a Short it missed, and the feed's own videos get classified
+    the usual way."""
+    unclassified = (
+        db.execute(
+            select(Video.video_id).where(
+                Video.channel_id == channel_id,
+                Video.backfilled.is_(True),
+                Video.video_id.not_in(select(VideoShort.video_id)),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    db.add_all(VideoShort(video_id=v, is_short=False) for v in unclassified)
 
 
 def _store(db: Session, channel_id: str, items: list[dict]) -> int:

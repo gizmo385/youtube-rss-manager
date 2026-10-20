@@ -270,12 +270,13 @@ def test_played_marks_the_item_in_jellyfin(client, sessionmaker_, monkeypatch):
     assert client.post("/watch/played/a_new").status_code == 404
 
 
-def test_channel_videos_ignore_the_window_and_shorts_filter(sessionmaker_):
+def test_channel_videos_ignore_the_window(sessionmaker_):
     from youtube_subs_opml.web.services.watch import channel_videos
 
     with sessionmaker_() as s:
         vids = channel_videos(s.get_one(User, 1), s, s.get_one(Channel, "UCa"))
-    # The 45-day-old upload and the Short both show on the channel's own page.
+    # The 45-day-old upload shows on the channel's own page; so does the Short,
+    # since one of Alpha's categories (Making) includes Shorts.
     assert [v["key"] for v in vids] == ["a_new", "a_short", "a_old"]
     assert vids[0]["watched"] is True
     assert vids[0]["channel"] == "Alpha"
@@ -437,3 +438,24 @@ def test_search_endpoint(client):
     assert [v["key"] for v in data["videos"]] == ["b_arch"]
     assert data["videos"][0]["archived"] is True  # the same shape as the feed's videos
     assert client.get("/watch/search", params={"q": "x" * 201}).status_code == 422
+
+
+def test_shorts_preferences_apply_to_search_and_channel_pages(sessionmaker_):
+    from youtube_subs_opml.web.services.watch import channel_videos
+
+    def channel_page() -> list[str]:
+        with sessionmaker_() as s:
+            return [v["key"] for v in channel_videos(s.get_one(User, 1), s, s.get_one(Channel, "UCa"))]
+
+    assert "a_short" in _search(sessionmaker_, "alpha short")  # Making lets Shorts through
+    with sessionmaker_() as s:
+        s.execute(delete(ChannelCategory).where(ChannelCategory.category_id == 8))
+        s.commit()
+    # Only Science now, inheriting the user's "no Shorts".
+    assert _search(sessionmaker_, "alpha short") == []
+    assert channel_page() == ["a_new", "a_old"]
+    with sessionmaker_() as s:
+        s.get_one(Subscription, (1, "UCa")).include_shorts = True  # the channel opts back in
+        s.commit()
+    assert _search(sessionmaker_, "alpha short") == ["a_short"]
+    assert channel_page() == ["a_new", "a_short", "a_old"]

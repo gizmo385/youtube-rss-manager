@@ -61,14 +61,25 @@ def fetch_uploads_feed(channel_id: str, client: httpx.Client, api_key: str, *, t
 
 
 def fetch_uploads_page(
-    channel_id: str, client: httpx.Client, api_key: str, page_token: str | None = None, *, page_size: int = 50
+    channel_id: str,
+    client: httpx.Client,
+    api_key: str,
+    page_token: str | None = None,
+    *,
+    page_size: int = 50,
+    playlist: str = "UU",
 ) -> tuple[list[dict], str | None]:
     """One page of a channel's uploads, newest first, and the token for the
     next (None at the end). For the history backfill, which pages back through
-    a whole channel. Raises ``httpx.HTTPError`` like ``fetch_uploads_feed``."""
+    a whole channel. Raises ``httpx.HTTPError`` like ``fetch_uploads_feed``.
+
+    ``playlist`` picks which of the channel's upload playlists: ``UU`` is
+    everything; ``UUSH`` is just its Shorts. The latter isn't documented, but
+    is served like any other playlist.
+    """
     params: dict[str, str | int] = {
         "part": "snippet,contentDetails",
-        "playlistId": "UU" + channel_id.removeprefix("UC"),
+        "playlistId": playlist + channel_id.removeprefix("UC"),
         "maxResults": page_size,
     }
     if page_token:

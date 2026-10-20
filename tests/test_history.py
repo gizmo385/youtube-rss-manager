@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from youtube_subs_opml.web.config import Settings
 from youtube_subs_opml.web.db import Base
-from youtube_subs_opml.web.models import Channel, Download, Subscription, User, Video
+from youtube_subs_opml.web.models import Channel, Download, Subscription, User, Video, VideoShort
 from youtube_subs_opml.web.services import history
 from youtube_subs_opml.web.services.archive import enqueue_pending
 
@@ -72,19 +72,28 @@ def _item(video_id: str, days_ago: int, *, description: str = "", private: bool 
 
 
 class Api:
-    """A fake playlistItems endpoint: pages per channel, keyed by page token."""
+    """A fake playlistItems endpoint: each channel's uploads (``UU``) and
+    Shorts (``UUSH``) playlists as pages, keyed by page token."""
 
-    def __init__(self, pages: dict[str, list[list[dict]]], errors: dict[str, httpx.Response] | None = None):
+    def __init__(
+        self,
+        pages: dict[str, list[list[dict]]],
+        errors: dict[str, httpx.Response] | None = None,
+        shorts: dict[str, list[list[dict]]] | None = None,
+    ):
         self.pages = pages
+        self.shorts = shorts or {}
         self.errors = errors or {}
         self.requests: list[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        channel = "UC" + request.url.params["playlistId"].removeprefix("UU")
+        playlist = request.url.params["playlistId"]
+        is_shorts = playlist.startswith("UUSH")
+        channel = "UC" + playlist.removeprefix("UUSH" if is_shorts else "UU")
         if channel in self.errors:
             return self.errors[channel]
-        pages = self.pages.get(channel, [[]])
+        pages = (self.shorts if is_shorts else self.pages).get(channel, [[]])
         i = int(request.url.params.get("pageToken") or 0)
         body: dict = {"items": pages[i]}
         if i + 1 < len(pages):
@@ -117,17 +126,50 @@ def test_backfill_adds_older_videos_flagged_and_finishes_channels(db):
     known = db.get_one(Video, "known")
     assert (known.backfilled, known.description) == (False, "Known's description")  # filled in, not flagged
 
-    assert db.get_one(Channel, CID).backfilled_at is not None
-    assert db.get_one(Channel, CID2).backfilled_at is not None  # empty, but done
-    # Only subscribed YouTube channels; the key goes in a header, never the URL.
-    playlists = {r.url.params["playlistId"] for r in api.requests}
-    assert playlists == {"UU" + CID[2:], "UU" + CID2[2:]}
+    for cid in (CID, CID2):  # CID2 is empty, but done all the same
+        channel = db.get_one(Channel, cid)
+        assert channel.backfilled_at is not None and channel.shorts_backfilled_at is not None
+    # Only subscribed YouTube channels, uploads then Shorts; the key goes in a
+    # header, never the URL.
+    playlists = [r.url.params["playlistId"] for r in api.requests]
+    assert playlists == ["UU" + CID[2:], "UU" + CID[2:], "UUSH" + CID[2:], "UU" + CID2[2:], "UUSH" + CID2[2:]]
     assert all(r.headers["X-Goog-Api-Key"] == "key" and "key=" not in str(r.url) for r in api.requests)
 
     # Done channels aren't fetched again.
     with api.client() as client:
         assert history.backfill_history(db, _settings(), client) == 0
-    assert len(api.requests) == 3
+    assert len(api.requests) == 5
+
+
+def test_shorts_playlist_classifies_what_the_backfill_found(db):
+    # "fresh" came from the feed: left for the usual classification, since a
+    # Short posted after the Shorts list was read wouldn't be on it.
+    db.add(Video(video_id="fresh", channel_id=CID, title="t", published_at=datetime(2026, 10, 1, tzinfo=UTC)))
+    db.add(VideoShort(video_id="wrong", is_short=False))  # a stale verdict the list corrects
+    db.commit()
+    api = Api(
+        {CID: [[_item("long1", 5), _item("short1", 6), _item("wrong", 7)], [_item("long2", 90)]]},
+        shorts={CID: [[_item("short1", 6)], [_item("wrong", 7), _item("hidden", 8, private=True)]]},
+    )
+    with api.client() as client:
+        history.backfill_history(db, _settings(), client)
+    verdicts = dict(db.execute(select(VideoShort.video_id, VideoShort.is_short)).all())
+    assert verdicts == {"short1": True, "wrong": True, "long1": False, "long2": False}
+
+
+def test_channels_done_before_the_shorts_pass_get_it(db):
+    # Backfilled before the Shorts pass existed: only the Shorts list is read.
+    channel = db.get_one(Channel, CID)
+    channel.backfilled_at = datetime(2026, 10, 1, tzinfo=UTC)
+    db.add(
+        Video(video_id="old", channel_id=CID, title="t", published_at=datetime(2020, 1, 1, tzinfo=UTC), backfilled=True)
+    )
+    db.commit()
+    api = Api({}, shorts={CID: [[]]})
+    with api.client() as client:
+        history.backfill_history(db, _settings(), client)
+    assert api.requests[0].url.params["playlistId"] == "UUSH" + CID[2:]  # not its uploads again
+    assert db.get_one(VideoShort, "old").is_short is False
 
 
 def test_backfill_resumes_where_it_left_off_within_the_budget(db, monkeypatch):
@@ -161,11 +203,12 @@ def test_other_failures_stop_the_run_and_retry_later(db):
     assert db.get_one(Channel, CID).backfilled_at is None
 
 
-def test_missing_uploads_playlist_counts_as_done(db):
+def test_missing_playlists_count_as_done(db):
     api = Api({}, errors={CID: httpx.Response(404, json={"error": {"errors": [{"reason": "playlistNotFound"}]}})})
     with api.client() as client:
         history.backfill_history(db, _settings(), client)
-    assert db.get_one(Channel, CID).backfilled_at is not None
+    channel = db.get_one(Channel, CID)
+    assert channel.backfilled_at is not None and channel.shorts_backfilled_at is not None
 
 
 @pytest.mark.parametrize(("key", "units"), [("", 2000), ("key", 0)])
