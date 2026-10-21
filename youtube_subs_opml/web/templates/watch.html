@@ -44,9 +44,14 @@
     <aside class="w-rail" id="w-rail" aria-label="Up next">
       <div class="w-side-head">
         <span class="eyebrow">Up next · by category</span>
-        <button type="button" class="w-side-all" id="w-rail-all"></button>
+        <button type="button" class="w-side-all" id="w-rail-hide" title="Hide the rail so the video gets the room (R)">Hide<span class="w-key">R</span></button>
       </div>
       <div class="w-rail-list sb" id="w-rail-list"></div>
+      {# Stands in for the rail while it's hidden. #}
+      <button type="button" class="w-rail-show" id="w-rail-show" title="Show Up next (R)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+        <span>Up next</span>
+      </button>
     </aside>
   </div>
 
@@ -82,9 +87,11 @@
     [['⇧X'], 'Collapse or expand all categories', 'All'],
     [['↵'], 'Play here (the archived copy when there is one)', 'Play'],
     [['T'], 'Theater mode — player center, feed docked right', 'Theater'],
+    [['R'], 'Hide / show the docked feed in theater mode', null],
     [['Esc'], 'Close the player', null],
+    [['←', '→'], 'Back / forward 5 seconds in the player', null],
     [['O'], 'Open in Jellyfin / YouTube / Nebula in a new tab', 'Open'],
-    [['W'], 'Toggle watched', 'Watched'],
+    [['W'], 'Toggle watched (in the player: done with it, out of Continue watching)', 'Watched'],
     [['⇧W'], 'Mark the whole category watched', null],
     [['/'], 'Search', 'Search'],
     [['U'], 'Unwatched only', 'Unwatched'],
@@ -105,6 +112,7 @@
     layout: prefs.layout || 'grid',
     packed: typeof prefs.packed === 'boolean' ? prefs.packed : true,
     theater: !!prefs.theater,   // play in theater mode rather than the overlay
+    railHidden: !!prefs.railHidden,   // theater mode without the rail, for a bigger video
     playing: null,          // card key of the video in the player
     cols: 0,                // packed-grid columns; 0 when not packing
     unwatchedOnly: !!prefs.unwatchedOnly,
@@ -123,7 +131,7 @@
   function savePrefs() {
     try {
       localStorage.setItem(PREF_KEY, JSON.stringify({
-        collapsed: S.collapsed, layout: S.layout, packed: S.packed, theater: S.theater,
+        collapsed: S.collapsed, layout: S.layout, packed: S.packed, theater: S.theater, railHidden: S.railHidden,
         unwatchedOnly: S.unwatchedOnly, platform: S.platform
       }));
     } catch (e) {}
@@ -453,8 +461,7 @@
         '<span class="w-badge' + (c.unw ? ' on' : '') + '">' + c.unw + '</span></button>';
     }).join('');
     var anyOpen = allCats().some(function (c) { return !S.collapsed[c.id]; });
-    document.getElementById('w-toggle-all').innerHTML =
-      document.getElementById('w-rail-all').innerHTML = (anyOpen ? 'Collapse all' : 'Expand all') + '<span class="w-key">⇧X</span>';
+    document.getElementById('w-toggle-all').innerHTML = (anyOpen ? 'Collapse all' : 'Expand all') + '<span class="w-key">⇧X</span>';
   }
 
   function renderToolbar(mdl) {
@@ -486,6 +493,7 @@
     var watch = document.querySelector('.watch');
     watch.classList.toggle('no-side', S.layout === 'shelves');
     watch.classList.toggle('theater', theaterOn());
+    watch.classList.toggle('rail-hidden', S.railHidden);
     S.cols = measure();
     var mdl = model(), secs = placed(mdl.filter(function (c) { return c.vids.length; }));
     // Keep the selection valid after filters change underneath it.
@@ -642,34 +650,53 @@
   function toggleWatched(k) {
     var v = videoOf(k);
     if (!v) return;
+    if (isPlaying(v)) { playerWatched(); return; }
     // Everything in Continue watching is already watched (opening a video
-    // marks it), so there W means done with it — unless it's the one playing,
-    // which would only come straight back.
-    if (k.indexOf(CONT.id + '|') === 0 && k !== S.playing) { done(k); return; }
+    // marks it), so there W means done with it.
+    if (k.indexOf(CONT.id + '|') === 0) { done(k); return; }
     var c = {}; c[v.key] = !v.watched;
     applyWatched(c);
   }
-  // Take a video out of Continue watching: forget its resume point and make
-  // sure it's marked watched.
+  // Done with a video: marked watched, and out of Continue watching — its
+  // resume point forgotten and, if it's playing, no longer saved as it
+  // plays (or it would only come straight back).
   function done(k) {
-    var v = videoOf(k), progress = v && v.progress;
-    if (!progress) return;
-    if (S.selKey === k) {
+    var v = videoOf(k), progress = v && v.progress, playingIt = v && isPlaying(v);
+    if (!v || !(progress || playingIt)) return;
+    if (S.selKey === k && !playingIt) {
       var f = flat(), i = f.map(function (x) { return x.k; }).indexOf(k), nx = f[i + 1] || f[i - 1];
       S.selKey = nx ? nx.k : null;
       if (nx) S.selCat = nx.cat;
     }
+    Watch.setTracking(v, false);
     Watch.setProgress(v, null).catch(function () {
       v.progress = progress;
+      Watch.setTracking(v, true);
       render();
       showToast({text: "Couldn't remove it from Continue watching", sub: 'Check your connection and try again', prev: null});
     });
     var c = {}; c[v.key] = true;
     var prev = applyWatched(c);   // renders
     showToast({
-      text: 'Removed from Continue watching', sub: v.title, prev: prev,
-      onUndo: function () { Watch.setProgress(v, progress).catch(function () {}); applyWatched(prev); }
+      text: progress ? 'Marked watched · removed from Continue watching' : 'Marked watched', sub: v.title, prev: prev,
+      onUndo: function () {
+        Watch.setTracking(v, true);
+        if (progress) Watch.setProgress(v, progress).catch(function () {});
+        applyWatched(prev);
+      }
     });
+  }
+  // The player's watched button (and W while it's open). Opening the video
+  // already marked it watched, so the button means done with it (see
+  // done()); pressed again, not done after all: unwatched, with its place
+  // saved again as it plays.
+  function playerWatched() {
+    var v = videoOf(S.playing);
+    if (!v) return;
+    if (Watch.tracking(v)) { done(S.playing); return; }
+    Watch.setTracking(v, true);
+    var c = {}; c[v.key] = false;
+    applyWatched(c);
   }
   function markCat(id) {
     var vids = VIDEOS.filter(function (v) { return v.cats.indexOf(id) >= 0 && !v.watched; });
@@ -712,7 +739,7 @@
     Watch.play(v, {
       info: playerInfo, onClose: closed,
       onPrev: function () { playRel(-1); }, onNext: function () { playRel(1); },
-      onWatch: function () { toggleWatched(S.playing); }, onTheater: toggleTheater
+      onWatch: playerWatched, onTheater: toggleTheater
     });
     var c = {}; c[v.key] = true;
     var prev = applyWatched(c);   // renders, which lays out theater mode
@@ -734,7 +761,7 @@
     var ci = inCat.indexOf(k);
     return {
       cat: catName(cat), pos: ci >= 0 ? (ci + 1) + ' of ' + inCat.length : '',
-      watched: !!(videoOf(k) || {}).watched, hasPrev: !!playable(-1), hasNext: !!playable(1),
+      watched: !Watch.tracking(videoOf(k)), hasPrev: !!playable(-1), hasNext: !!playable(1),
       theater: S.theater && !NARROW.matches
     };
   }
@@ -762,6 +789,13 @@
     if (!S.playing && S.theater && S.selKey) { play(S.selKey); return; }
     render();
     if (theaterOn()) select(S.playing);
+  }
+
+  // R: hide theater mode's rail so the video can be bigger, or bring it back.
+  function toggleRail() {
+    S.railHidden = !S.railHidden;
+    render();
+    if (theaterOn() && !S.railHidden && S.playing) select(S.playing);
   }
 
   function togglePack() { S.packed = !S.packed; render(); }
@@ -853,7 +887,8 @@
   });
   document.getElementById('w-pack').addEventListener('click', togglePack);
   document.getElementById('w-theater').addEventListener('click', function () { S.theater = !S.theater; render(); });
-  document.getElementById('w-rail-all').addEventListener('click', toggleAll);
+  document.getElementById('w-rail-hide').addEventListener('click', toggleRail);
+  document.getElementById('w-rail-show').addEventListener('click', toggleRail);
   document.getElementById('w-help-btn').addEventListener('click', function () { toggleHelp(); });
   helpEl.addEventListener('mousedown', function (e) { if (e.target === helpEl) toggleHelp(false); });
   document.getElementById('w-toggle-all').addEventListener('click', toggleAll);
@@ -930,8 +965,9 @@
     var qs = document.getElementById('qs-overlay');
     if (qs && !qs.hidden) return;   // the quick switcher owns the keyboard while open
     // With the player open, the overlay takes only J/K/W/T and leaves the rest
-    // (space, arrows, f, m…) to the video; theater mode is still the page, so
-    // its other shortcuts work too — bar the arrows. watch.js handles Esc.
+    // (space, f, m…) to the video; theater mode is still the page, so its
+    // other shortcuts work too — bar the arrows. watch.js handles Esc and
+    // ← / → (seeking).
     var playing = Watch.isOpen();
     if (playing && !theaterOn() && 'jkwtJKWT'.indexOf(e.key) < 0) return;
     if (playing && e.key.indexOf('Arrow') === 0) return;
@@ -948,11 +984,12 @@
       case 'j': case 'ArrowDown': case 'ArrowRight': if (playing) playRel(1); else moveVid(1); break;
       case 'k': case 'ArrowUp': case 'ArrowLeft': if (playing) playRel(-1); else moveVid(-1); break;
       case 't': toggleTheater(); break;
+      case 'r': if (theaterOn()) toggleRail(); else return; break;
       case ']': moveCat(1); break;
       case '[': moveCat(-1); break;
       case 'x': toggleCollapse(S.selCat); break;
       case 'X': toggleAll(); break;
-      case 'w': toggleWatched(S.playing || S.selKey); break;
+      case 'w': if (S.playing) playerWatched(); else toggleWatched(S.selKey); break;
       case 'W': markCat(S.selCat); break;
       case 'Enter': if (S.selKey && S.selKey !== S.playing) play(S.selKey); break;
       case 'o': openSelected(); break;

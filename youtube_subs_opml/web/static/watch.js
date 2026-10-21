@@ -83,6 +83,7 @@ window.Watch = (function () {
   // restyled, never moved, since moving an iframe reloads it.
   var overlay = null, stage = null, info = null, cur = null, curSource = null, opts = {};
   var resumedAt = 0;   // where the video playing picked up from, if it resumed
+  var fellBack = false;   // the archived copy wouldn't play, so this is YouTube's
   var sbBar = null;
 
   function ensureOverlay() {
@@ -113,10 +114,21 @@ window.Watch = (function () {
       else if (act === 'theater' && opts.onTheater) opts.onTheater();
       else if (act === 'restart') play(cur, withOpts({fromStart: true}));
     });
-    // Capture phase, so Esc closes the player before the page's own shortcuts
-    // see it. Everything else is left to the video element (space, f, m…).
+    // Capture phase, so Esc and the arrows reach the player before the
+    // page's own shortcuts see them. Everything else is left to the video
+    // element (space, f, m…).
     document.addEventListener('keydown', function (e) {
-      if (isOpen() && e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close(); }
+      if (!isOpen()) return;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close(); return; }
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !(e.metaKey || e.ctrlKey || e.altKey || e.shiftKey)) {
+        var t = e.target, qs = document.getElementById('qs-overlay');
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        if (qs && !qs.hidden) return;
+        // Also when the <video> has focus, so its own controls don't seek
+        // by a different step on top.
+        e.preventDefault(); e.stopImmediatePropagation();
+        seekBy(e.key === 'ArrowLeft' ? -SEEK_STEP : SEEK_STEP);
+      }
     }, true);
   }
 
@@ -142,6 +154,8 @@ window.Watch = (function () {
     overlay.classList.toggle('theater', !!i.theater);
     overlay.querySelector('.w-player').setAttribute('aria-modal', i.theater ? 'false' : 'true');
     var source = curSource === 'file' ? (v.jellyfin ? 'Jellyfin' : 'Archived copy') : 'YouTube';
+    var notice = fellBack ? '<div class="w-player-notice">The archived copy wouldn\'t play here, so this is ' +
+      'YouTube\'s instead.</div>' : '';
     var eyebrow = (i.cat ? '<span class="w-player-cat">' + esc(i.cat) + '</span>' : '') +
       (i.pos ? '<span>' + esc(i.pos) + '</span>' : '') +
       '<span class="w-tag">' + esc(source) + '</span>';
@@ -165,6 +179,7 @@ window.Watch = (function () {
       '<div class="w-player-eyebrow">' + eyebrow + '</div>' +
       '<h2 class="w-player-title" id="w-player-title">' + esc(v.title) + '</h2>' +
       '<div class="w-player-sub">' + esc(v.channel) + ' · ' + ago(v) + (d ? ' · ' + d : '') + '</div>' +
+      notice +
       '<div class="w-player-actions">' + actions + '</div>';
   }
   // Re-draw the panel and mode after the page's state changes underneath it.
@@ -176,13 +191,13 @@ window.Watch = (function () {
   // rules as the server (services/watch.py): too near the start or the end
   // and there's nothing to resume.
   var RESUME_MIN = 10, RESUME_DONE = 0.9, SAVE_EVERY_MS = 10000;
-  var track = null;   // the video playing: {v, pos(), dur(), started, saved}
+  var track = null;   // the video playing: {v, pos(), dur(), started, saved, off}
 
   function resumable(pos, d) { return pos >= RESUME_MIN && !(d && pos >= d * RESUME_DONE); }
   function resumeAt(v) { return v.progress && resumable(v.progress.pos, v.progress.dur) ? v.progress.pos : 0; }
   // ``pos``/``d`` read the player's position and duration; ``seek`` moves it.
   function startTracking(v, pos, d, seek) {
-    var t = {v: v, pos: pos, dur: d, seek: seek, started: false, saved: null};
+    var t = {v: v, pos: pos, dur: d, seek: seek, started: false, saved: null, off: false};
     t.timer = setInterval(function () { saveProgress(t); }, SAVE_EVERY_MS);
     track = t;
     return t;
@@ -190,7 +205,7 @@ window.Watch = (function () {
   // Nothing is saved until playback has actually started: before that the
   // position reads 0, which would wipe out the point being resumed from.
   function saveProgress(t, keepalive) {
-    if (!t || !t.started) return;
+    if (!t || !t.started || t.off) return;
     var pos, d;
     try { pos = Math.floor(t.pos() || 0); d = Math.round(t.dur() || t.v.duration || 0) || null; } catch (e) { return; }
     if (pos === t.saved) return;
@@ -216,6 +231,17 @@ window.Watch = (function () {
     track = null;
   }
   window.addEventListener('pagehide', function () { if (track) saveProgress(track, true); });
+
+  // Whether ``v`` is playing and saving its resume point as it goes.
+  function tracking(v) { return !!track && track.v === v && !track.off; }
+  // Stop (or restart) saving ``v``'s resume point while it plays: once it's
+  // been marked done, the next save would only put it back in Continue
+  // watching. Does nothing unless ``v`` is the video playing.
+  function setTracking(v, on) {
+    if (!track || track.v !== v) return;
+    track.off = !on;
+    track.saved = null;
+  }
 
   // Set or (with null) forget ``v``'s resume point by hand, outside of
   // playback. Resolves on success, rejects on failure.
@@ -309,6 +335,31 @@ window.Watch = (function () {
     if (text) { s.btn.textContent = text; s.onClick = onClick; }
   }
 
+  // ← / →: back or forward SEEK_STEP seconds, as on YouTube. While the
+  // YouTube embed has focus its own player takes the keys instead, which
+  // does the same.
+  var SEEK_STEP = 5;
+  var seekFlash = null, seekFlashT = null;
+  function seekBy(d) {
+    var t = track, pos, len;
+    if (!t) return;
+    try { pos = t.pos(); len = t.dur() || t.v.duration; } catch (e) { return; }
+    if (pos == null) return;   // the YouTube API hasn't attached yet
+    var to = Math.max(0, pos + d);
+    if (len) to = Math.min(to, Math.max(0, len - 0.5));
+    t.seek(to);
+    if (!seekFlash) {
+      seekFlash = document.createElement('div');
+      seekFlash.className = 'w-seek-flash';
+    }
+    if (seekFlash.parentNode !== stage) stage.appendChild(seekFlash);
+    seekFlash.textContent = d < 0 ? '« ' + SEEK_STEP + 's' : SEEK_STEP + 's »';
+    seekFlash.classList.toggle('back', d < 0);
+    seekFlash.hidden = false;
+    clearTimeout(seekFlashT);
+    seekFlashT = setTimeout(function () { seekFlash.hidden = true; }, 700);
+  }
+
   // A thin bar along the foot of a thumbnail showing how far in the resume
   // point is.
   function progressBar(v) {
@@ -333,7 +384,8 @@ window.Watch = (function () {
   }
 
   // Play ``v``, from its resume point unless ``o.fromStart``. ``o.source``
-  // forces 'file' or 'youtube'; ``o.onClose`` runs when the player is
+  // forces 'file' or 'youtube' (``o.fellBack`` saying why it's YouTube's);
+  // ``o.onClose`` runs when the player is
   // dismissed; the rest is described at renderInfo. Playing another video
   // while open replaces the one playing.
   function play(v, o) {
@@ -346,14 +398,20 @@ window.Watch = (function () {
     var source = o.source || (v.archived ? 'file' : 'youtube');
     cur = v;
     curSource = source;
+    fellBack = source === 'youtube' && !!o.fellBack;
     resumedAt = o.fromStart ? 0 : resumeAt(v);
     var t;
 
     if (source === 'file') {
       stage.innerHTML = '<video controls autoplay preload="metadata" src="/watch/media/' + encodeURIComponent(v.videoId) + '"></video>';
       var video = stage.querySelector('video');
-      video.addEventListener('error', function () { playError(v); });
-      if (resumedAt) video.addEventListener('loadedmetadata', function () { video.currentTime = resumedAt; }, {once: true});
+      video.addEventListener('error', function () { if (track === t) fallBack(v); });
+      video.addEventListener('loadedmetadata', function () {
+        // A container the browser opens but a video codec it can't decode
+        // plays as sound over black, which is no better than an error.
+        if (!video.videoWidth) { if (track === t) fallBack(v); return; }
+        if (resumedAt) video.currentTime = resumedAt;
+      }, {once: true});
       t = startTracking(v, function () { return video.currentTime; }, function () { return video.duration; },
         function (sec) { video.currentTime = sec; });
       video.addEventListener('playing', function () { if (track === t) t.started = true; });
@@ -403,17 +461,9 @@ window.Watch = (function () {
     Object.keys(extra).forEach(function (k) { o[k] = extra[k]; });
     return o;
   }
-  function playError(v) {
-    stopTracking();
-    stage.innerHTML = '<div class="w-player-error"><div class="eyebrow">Can\'t play the archived copy in this browser</div>' +
-      '<p>The file is Matroska (.mkv), which this browser may not support.</p><div class="w-player-error-actions">' +
-      '<button type="button" class="btn btn-primary" data-act="play-youtube">Play the YouTube version</button>' +
-      (v.jellyfin ? '<a class="btn" href="' + esc(v.url) + '" target="_blank" rel="noopener">Open in Jellyfin ↗</a>' : '') +
-      '</div></div>';
-    stage.querySelector('[data-act="play-youtube"]').addEventListener('click', function () {
-      play(v, withOpts({source: 'youtube'}));
-    });
-  }
+  // The archived copy won't play here (a format the browser can't handle,
+  // or the file's gone): switch to YouTube's, picking up where it got to.
+  function fallBack(v) { play(v, withOpts({source: 'youtube', fellBack: true})); }
   function close() {
     if (!overlay) return;
     stopTracking();
@@ -429,6 +479,7 @@ window.Watch = (function () {
   return {
     esc: esc, hue: hue, ago: ago, agoShort: agoShort, dur: dur,
     badges: badges, watchBtn: watchBtn, thumb: thumb, card: card, progressBar: progressBar, setProgress: setProgress, saveWatched: saveWatched,
-    canPlayHere: canPlayHere, play: play, close: close, isOpen: isOpen, refresh: refresh
+    canPlayHere: canPlayHere, play: play, close: close, isOpen: isOpen, refresh: refresh,
+    tracking: tracking, setTracking: setTracking
   };
 })();

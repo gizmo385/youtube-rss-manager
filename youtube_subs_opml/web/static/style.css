@@ -1696,6 +1696,13 @@ section.focused > * > .w-sec-hint { display: inline; }
 }
 .w-sb-btn:hover { border-color: var(--accent); }
 .w-sb-btn[hidden] { display: none; }
+/* ← / → seeking: how far, briefly, on the side it went. */
+.w-seek-flash {
+  position: absolute; top: 50%; right: 12%; z-index: 2; transform: translateY(-50%); pointer-events: none;
+  padding: 8px 14px; font-size: 15px; font-weight: 800; color: #fff; background: rgba(0, 0, 0, 0.6);
+}
+.w-seek-flash.back { right: auto; left: 12%; }
+.w-seek-flash[hidden] { display: none; }
 .w-player-eyebrow {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
@@ -1721,12 +1728,10 @@ section.focused > * > .w-sec-hint { display: inline; }
 .w-pbtn-pair .w-pbtn + .w-pbtn { margin-left: -1px; }
 .w-plink { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 4px; white-space: nowrap; }
 .w-pspacer { flex: 1; }
-.w-player-error {
-  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 10px; padding: 20px; text-align: center; background: var(--bg);
+.w-player-notice {
+  font-size: 12px; color: var(--ink-2); padding: 6px 10px;
+  background: var(--accent-tint); border-left: 2px solid var(--accent);
 }
-.w-player-error p { margin: 0; font-size: 13px; color: var(--muted); }
-.w-player-error-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 
 /* Theater mode: the player takes the feed's place, the feed docks on the
    right as the rail, and the sidebar steps aside. */
@@ -1748,6 +1753,21 @@ section.focused > * > .w-sec-hint { display: inline; }
   border-left: 2px solid var(--line); background: var(--panel-2);
 }
 .w-rail-list { overflow-y: auto; flex: 1; }
+.w-rail-show { display: none; }
+/* Rail hidden: it folds to a strip that brings it back, and the video sizes
+   to the height of the page, leaving its details to scroll under it. */
+.watch.theater.rail-hidden .w-rail { width: 36px; }
+.watch.theater.rail-hidden .w-rail > :not(.w-rail-show) { display: none; }
+.watch.theater.rail-hidden .w-rail-show {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; flex: 1;
+  padding: 12px 0; background: transparent; border: 0; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.w-rail-show span { writing-mode: vertical-rl; }
+.w-rail-show:hover { color: var(--ink); background: var(--panel-3); }
+.watch.theater.rail-hidden .w-player {
+  width: min(100%, calc((100vh - var(--header-h) - var(--subbar-h) - 130px) * 16 / 9));
+}
 .w-rail-head {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 6px; cursor: pointer;
   background: var(--panel-3); border-bottom: 1px solid var(--line-2); border-left: 2px solid transparent;
