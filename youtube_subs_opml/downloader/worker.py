@@ -48,7 +48,7 @@ from ..web.services.archive import (
 )
 from ..web.services.prefs import is_within_duration_limit, meets_duration_floor
 from ..web.services.shorts import classify_videos
-from . import naming, sponsor_cuts, ytdlp
+from . import naming, sponsor_cuts, webm, ytdlp
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +299,8 @@ def process(row: Download, db: Session) -> None:
                 row.next_attempt_at = _backoff(row.attempts)
             db.commit()
             return
+        # Best-effort: a file left as Matroska still plays everywhere but Firefox.
+        webm.convert(produced)
 
         nfo = naming.build_nfo(
             title=video.title or meta.title,
