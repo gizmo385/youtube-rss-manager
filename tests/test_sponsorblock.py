@@ -91,6 +91,36 @@ def test_mode_cascades_subscription_category_user(sm):
     assert _mode(sm, user_id=2) == "off"  # and none of it leaks to another user
 
 
+def _podcast_cut(sm, user_id=1) -> str | None:
+    with sm() as s:
+        return sponsorblock.podcast_cut(s, s.get_one(User, user_id), "UCa")
+
+
+def test_podcast_mode_cascades_independently_of_the_players(sm):
+    _set(sm, User, 1, sponsorblock="skip", sponsorblock_categories="intro")
+    assert _podcast_cut(sm) is None  # the player's setting doesn't reach podcasts
+    _set(sm, User, 1, podcast_sponsorblock="remove", podcast_sponsorblock_categories="sponsor,outro")
+    assert _podcast_cut(sm) == "sponsor,outro"
+    _set(sm, Category, 7, podcast_sponsorblock="off")
+    assert _podcast_cut(sm) is None  # a category overrides the user
+    _set(sm, Category, 8, podcast_sponsorblock="remove")
+    assert _podcast_cut(sm) == "sponsor,outro"  # categories that disagree: remove wins
+    _set(sm, Subscription, (1, "UCa"), podcast_sponsorblock="off")
+    assert _podcast_cut(sm) is None  # the channel overrides its categories
+    _set(sm, Subscription, (1, "UCa"), podcast_sponsorblock="remove")
+    _set(sm, User, 1, podcast_sponsorblock_categories="")
+    assert _podcast_cut(sm) is None  # no kinds chosen, nothing to cut
+    with sm() as s:
+        assert sponsorblock.resolve_mode(s, s.get_one(User, 1), "UCa") == "skip"
+
+
+def test_podcast_mode_parsing():
+    modes = sponsorblock.PODCAST_MODES
+    assert sponsorblock.parse_mode("remove", allow_inherit=True, modes=modes) == "remove"
+    assert sponsorblock.parse_mode("skip", allow_inherit=True, modes=modes) is None
+    assert sponsorblock.parse_mode("show", allow_inherit=False, modes=modes) == "off"
+
+
 # --- segment lookups ---------------------------------------------------------
 
 
@@ -151,6 +181,14 @@ def test_segments_are_cached_across_category_choices():
 def test_segments_fail_soft(response):
     with _client(lambda request: response) as client:
         assert sponsorblock.segments(VID, list(sponsorblock.CATEGORIES), client=client) == []
+
+
+def test_lookup_tells_nothing_submitted_from_unreachable():
+    with _client(lambda request: httpx.Response(404)) as client:
+        assert sponsorblock.lookup(VID, client=client) == []
+    sponsorblock._cache.clear()
+    with _client(lambda request: httpx.Response(503)) as client:
+        assert sponsorblock.lookup(VID, client=client) is None
 
 
 # --- the player's endpoint -----------------------------------------------------

@@ -1057,6 +1057,11 @@ label { display: block; }
 .toggle-row:last-child { border-bottom: 0; }
 .toggle-row .tr-label { font-size: 13px; font-weight: 600; }
 .toggle-row .tr-hint { font-size: 11px; color: var(--muted-2); }
+/* SponsorBlock's segment kinds, with a column of toggles each for videos and
+   podcasts. */
+.sb-kinds { margin-top: 14px; }
+.sb-kinds-head, .sb-kinds-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px 72px; align-items: center; gap: 8px; }
+.sb-kinds-head .field-label + .field-label, .sb-kinds-row .toggle { justify-self: center; }
 
 .field-grid {
   display: grid;

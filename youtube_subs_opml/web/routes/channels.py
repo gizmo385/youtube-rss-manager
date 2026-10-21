@@ -57,6 +57,7 @@ _ARCHIVE_FIELD_KINDS = {
     "min_duration_seconds": "minutes",
     "link_target": "link",
     "sponsorblock": "sponsorblock",
+    "podcast_sponsorblock": "podcast_sponsorblock",
 }
 
 # Filter chips on the channel list. "All" is the default (no filtering).
@@ -76,6 +77,8 @@ def _parse_archive_value(field: str, value: str | None):
         return minutes_to_seconds(value)
     if kind == "sponsorblock":
         return sponsorblock.parse_mode(value, allow_inherit=True)
+    if kind == "podcast_sponsorblock":
+        return sponsorblock.parse_mode(value, allow_inherit=True, modes=sponsorblock.PODCAST_MODES)
     return parse_link_target(value, allow_inherit=True)
 
 
@@ -265,6 +268,9 @@ def _inherited_value(cats, user, key):
     if key == "sponsorblock":
         # Categories that disagree resolve to the strongest, not the first.
         return sponsorblock.strongest([c.sponsorblock for c in cats]) or user.sponsorblock
+    if key == "podcast_sponsorblock":
+        modes = [c.podcast_sponsorblock for c in cats]
+        return sponsorblock.strongest(modes, sponsorblock.PODCAST_MODES) or user.podcast_sponsorblock
     for cat in cats:
         v = getattr(cat, key)
         if v is not None:
@@ -291,6 +297,7 @@ def _pref_choice(sub, cats, user, key, label, opts):
         )
 
     return {
+        "field": key,
         "label": label,
         "options": [
             {
@@ -471,6 +478,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
     incl = [("Inherit", "inherit", None), ("Include", "true", True), ("Exclude", "false", False)]
     link_opts = [("Inherit", "inherit", None)] + [(lt, lt, lt) for lt in LINK_TARGETS]
     sb_opts = [("Inherit", "inherit", None), ("Off", "off", "off"), ("Show", "show", "show"), ("Skip", "skip", "skip")]
+    podcast_sb_opts = [("Inherit", "inherit", None), ("Off", "off", "off"), ("Remove", "remove", "remove")]
 
     if is_nebula:
         platform = {
@@ -545,6 +553,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         ],
         "archive_choices": [
             _pref_choice(sub, cats, user, "generate_podcast", "Podcast audio", tri),
+            _pref_choice(sub, cats, user, "podcast_sponsorblock", "Podcast SponsorBlock", podcast_sb_opts),
             _pref_choice(sub, cats, user, "link_target", "Feed link target", link_opts),
         ],
         "activity": _archive_activity(channel_id, db),

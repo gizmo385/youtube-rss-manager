@@ -45,7 +45,7 @@ from ..models import (
     VideoShort,
 )
 from .prefs import resolve
-from .sponsorblock import strongest
+from .sponsorblock import PODCAST_MODES, strongest, user_categories
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -129,6 +129,7 @@ class _CategoryPrefs:
     podcast: bool | None = None
     shorts: bool | None = None
     sponsorblock: str | None = None
+    podcast_sponsorblock: str | None = None
 
 
 def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPrefs:
@@ -163,6 +164,7 @@ def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPref
         podcast=any(podcasts) if podcasts else None,
         shorts=any(shorts) if shorts else None,
         sponsorblock=strongest([c.sponsorblock for c in categories]),
+        podcast_sponsorblock=strongest([c.podcast_sponsorblock for c in categories], PODCAST_MODES),
     )
 
 
@@ -371,6 +373,46 @@ def retained_podcast_ids(db: Session) -> set[str]:
     for ids in user_retained_podcast_ids(db).values():
         keep.update(ids)
     return keep
+
+
+def wanted_audio_cuts(db: Session) -> dict[str, set[str]]:
+    """Per video whose podcast audio is kept, the SponsorBlock cuts its
+    subscribers want made: one set of segment kinds (as stored in
+    ``AudioCut.categories``) per distinct choice among those who have
+    ``podcast_sponsorblock`` resolve to ``remove`` for its channel.
+
+    The per-user resolution matches ``sponsorblock.podcast_cut``, which is
+    what each user's feed looks the cut up by.
+    """
+    retained = user_retained_podcast_ids(db)
+    if not retained:
+        return {}
+    users = {u.id: u for u in db.execute(select(User)).scalars().all()}
+
+    cuts: dict[tuple[int, str], str] = {}  # (user, channel) -> kinds
+    for sub in _archivable_subscriptions(db):
+        user = users.get(sub.user_id)
+        if user is None or sub.user_id not in retained:
+            continue
+        cat = _category_prefs(db, sub.user_id, sub.channel_id)
+        mode = resolve(sub.podcast_sponsorblock, cat.podcast_sponsorblock, user.podcast_sponsorblock)
+        kinds = ",".join(user_categories(user, podcast=True))
+        if mode == "remove" and kinds:
+            cuts[(sub.user_id, sub.channel_id)] = kinds
+    if not cuts:
+        return {}
+
+    ids = set().union(*retained.values())
+    channel_of = dict(
+        db.execute(select(Video.video_id, Video.channel_id).where(Video.video_id.in_(ids))).tuples().all()
+    )
+    wanted: dict[str, set[str]] = {}
+    for user_id, vids in retained.items():
+        for vid in vids:
+            kinds = cuts.get((user_id, channel_of.get(vid, "")))
+            if kinds:
+                wanted.setdefault(vid, set()).add(kinds)
+    return wanted
 
 
 def enqueue_pending(db: Session) -> int:

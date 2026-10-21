@@ -48,7 +48,7 @@ from ..web.services.archive import (
 )
 from ..web.services.prefs import is_within_duration_limit, meets_duration_floor
 from ..web.services.shorts import classify_videos
-from . import naming, ytdlp
+from . import naming, sponsor_cuts, ytdlp
 
 logger = logging.getLogger(__name__)
 
@@ -1021,11 +1021,13 @@ def run_forever() -> None:
                     # Idle: classify any archived Shorts on channels that now
                     # exclude them, reconcile per-user libraries against current
                     # subscriptions, backfill podcast audio for channels newly
-                    # opted in, and prune anything no user retains (including
-                    # those freshly-identified Shorts).
+                    # opted in and cut SponsorBlock segments from it, and prune
+                    # anything no user retains (including those
+                    # freshly-identified Shorts).
                     backfill_shorts(db)
                     reconcile_links(db, media_root)
                     backfill_audio(db, settings)
+                    sponsor_cuts.refresh_audio_cuts(db, media_root)
                     # Give channels their avatars/banners, then materialise
                     # series/season posters into each user's library so Jellyfin
                     # views don't blend together.

@@ -18,6 +18,7 @@ from sqlalchemy.pool import StaticPool
 
 from youtube_subs_opml.web.db import Base, get_db
 from youtube_subs_opml.web.models import (
+    AudioCut,
     Category,
     Channel,
     ChannelCategory,
@@ -53,6 +54,9 @@ def audio_file(tmp_path):
     return p
 
 
+client_sessions: list = []
+
+
 @pytest.fixture
 def client(audio_file):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -61,6 +65,7 @@ def client(audio_file):
         tables=[
             Base.metadata.tables[t.__tablename__]
             for t in (
+                AudioCut,
                 User,
                 Channel,
                 Subscription,
@@ -73,6 +78,7 @@ def client(audio_file):
         ],
     )
     TestingSession = sessionmaker(bind=engine)
+    client_sessions.append(TestingSession)
 
     with TestingSession() as seed:
         seed.add(User(id=1, oidc_sub="s", email="e", display_name="Tester"))
@@ -248,3 +254,53 @@ def test_media_404_when_not_subscribed(client):
 def test_media_404_when_file_missing(client, audio_file):
     audio_file.unlink()
     assert client.get(f"/media/{TOKEN}/withaudio001.m4a").status_code == 404
+
+
+# --- SponsorBlock cuts ------------------------------------------------------
+
+
+@pytest.fixture
+def cut_file(client, tmp_path):
+    """A cut copy of withaudio001 for the default podcast kinds."""
+    p = tmp_path / "cut.m4a"
+    p.write_bytes(b"CUTAUDIO")
+    with client_sessions[-1]() as db:
+        db.add(
+            AudioCut(
+                video_id="withaudio001",
+                categories="sponsor,selfpromo,interaction",
+                segments="10.0-70.0",
+                path=str(p),
+                size_bytes=8,
+                duration_seconds=3601,
+                checked_at=datetime(2026, 8, 21, tzinfo=UTC),
+            )
+        )
+        db.commit()
+    return p
+
+
+def _set_podcast_mode(mode: str) -> None:
+    with client_sessions[-1]() as db:
+        db.get_one(User, 1).podcast_sponsorblock = mode
+        db.commit()
+
+
+def test_cut_copy_served_when_the_user_removes_segments(client, cut_file):
+    _set_podcast_mode("remove")
+    item = _items_by_guid(client.get(f"/podcast/{TOKEN}/all.xml").content)["withaudio001"]
+    assert _child(item, "enclosure").get("length") == "8"
+    assert _text(item, f"{{{ITUNES}}}duration") == "1:00:01"
+    assert client.get(f"/media/{TOKEN}/withaudio001.m4a").content == b"CUTAUDIO"
+
+
+def test_original_served_when_segments_are_left_in(client, cut_file):
+    item = _items_by_guid(client.get(f"/podcast/{TOKEN}/all.xml").content)["withaudio001"]
+    assert _child(item, "enclosure").get("length") == "20"
+    assert client.get(f"/media/{TOKEN}/withaudio001.m4a").content == b"AUDIODATA-0123456789"
+
+
+def test_original_served_when_the_cut_copy_is_missing(client, cut_file):
+    _set_podcast_mode("remove")
+    cut_file.unlink()
+    assert client.get(f"/media/{TOKEN}/withaudio001.m4a").content == b"AUDIODATA-0123456789"

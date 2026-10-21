@@ -422,12 +422,36 @@ def test_user_sponsorblock_defaults_persist(app_db):
         assert user.sponsorblock_categories == ""
 
 
+def test_user_podcast_sponsorblock_persists_separately(app_db):
+    client, Session_ = app_db
+    client.post(
+        "/settings/defaults",
+        data={
+            "sponsorblock": "show",
+            "sponsorblock_categories": ["sponsor"],
+            "podcast_sponsorblock": "remove",
+            "podcast_sponsorblock_categories": ["intro", "sponsor"],
+        },
+        follow_redirects=False,
+    )
+    with Session_() as db:
+        user = db.get_one(User, USER_ID)
+        assert (user.sponsorblock, user.sponsorblock_categories) == ("show", "sponsor")
+        assert (user.podcast_sponsorblock, user.podcast_sponsorblock_categories) == ("remove", "sponsor,intro")
+
+    client.post("/settings/defaults", data={"podcast_sponsorblock": "skip"}, follow_redirects=False)
+    with Session_() as db:
+        assert db.get_one(User, USER_ID).podcast_sponsorblock == "off"  # not a podcast mode
+
+
 def test_settings_page_renders_sponsorblock(app_db):
     client, _ = app_db
     html = client.get("/settings").text
     assert '<select name="sponsorblock">' in html
     assert 'name="sponsorblock_categories" value="sponsor" checked' in html
     assert 'name="sponsorblock_categories" value="outro">' in html
+    assert '<select name="podcast_sponsorblock">' in html
+    assert 'name="podcast_sponsorblock_categories" value="sponsor" checked' in html
 
 
 def test_sponsorblock_pref_on_channels_and_categories(app_db):
@@ -437,6 +461,12 @@ def test_sponsorblock_pref_on_channels_and_categories(app_db):
     with Session_() as db:
         assert db.get(Subscription, (USER_ID, CID)).sponsorblock == "show"
         assert db.get(Category, 1).sponsorblock == "skip"
+
+    client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "podcast_sponsorblock", "value": "remove"})
+    client.patch("/categories/1/archive-pref", data={"field": "podcast_sponsorblock", "value": "off"})
+    with Session_() as db:
+        assert db.get(Subscription, (USER_ID, CID)).podcast_sponsorblock == "remove"
+        assert db.get(Category, 1).podcast_sponsorblock == "off"
 
     client.post("/channels/archive-pref", data={"channel_ids": CID, "field": "sponsorblock", "value": "inherit"})
     client.patch("/categories/1/archive-pref", data={"field": "sponsorblock", "value": "nonsense"})

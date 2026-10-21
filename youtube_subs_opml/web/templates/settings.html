@@ -105,13 +105,13 @@
 
     <section class="card">
       <div class="card-head">
-        <h2 class="card-title">Playback</h2>
+        <h2 class="card-title">SponsorBlock</h2>
         <span class="card-note">Channels &amp; categories can override</span>
       </div>
       <div class="card-body">
         <div class="field-grid">
           <label class="field">
-            <span class="field-label">SponsorBlock</span>
+            <span class="field-label">Videos</span>
             <select name="sponsorblock">
               {% for value, label in sponsorblock_modes %}
               <option value="{{ value }}"{% if user.sponsorblock == value %} selected{% endif %}>{{ label }}</option>
@@ -119,14 +119,26 @@
             </select>
             <span class="field-hint">For videos played on the Watch tab and channel pages. Show marks segments and offers a skip button; Skip jumps past them. Archived videos get the segments as chapters in Jellyfin either way.</span>
           </label>
+          <label class="field">
+            <span class="field-label">Podcasts</span>
+            <select name="podcast_sponsorblock">
+              {% for value, label in podcast_sponsorblock_modes %}
+              <option value="{{ value }}"{% if user.podcast_sponsorblock == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <span class="field-hint">Remove cuts segments out of your podcast feeds' episodes. New uploads often have none yet, so episodes are re-checked for a week and re-cut as segments come in.</span>
+          </label>
         </div>
-        <div class="field-label" style="margin-top:14px">Segments</div>
-        {% for key, label in sponsorblock_categories.items() %}
-        <div class="toggle-row">
-          <div><div class="tr-label">{{ label }}</div></div>
-          <span class="toggle"><input type="checkbox" name="sponsorblock_categories" value="{{ key }}"{% if key in user_sponsorblock_categories %} checked{% endif %}><span class="track"></span></span>
+        <div class="sb-kinds">
+          <div class="sb-kinds-head"><span class="field-label">Segments</span><span class="field-label">Videos</span><span class="field-label">Podcasts</span></div>
+          {% for key, label in sponsorblock_categories.items() %}
+          <div class="toggle-row sb-kinds-row">
+            <div class="tr-label">{{ label }}</div>
+            <span class="toggle" title="Videos"><input type="checkbox" aria-label="{{ label }} in videos" name="sponsorblock_categories" value="{{ key }}"{% if key in user_sponsorblock_categories %} checked{% endif %}><span class="track"></span></span>
+            <span class="toggle" title="Podcasts"><input type="checkbox" aria-label="{{ label }} in podcasts" name="podcast_sponsorblock_categories" value="{{ key }}"{% if key in user_podcast_sponsorblock_categories %} checked{% endif %}><span class="track"></span></span>
+          </div>
+          {% endfor %}
         </div>
-        {% endfor %}
         <div class="form-actions">
           <button type="submit" class="btn-primary">Save defaults</button>
         </div>

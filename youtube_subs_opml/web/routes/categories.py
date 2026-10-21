@@ -41,6 +41,7 @@ _ARCHIVE_FIELD_KINDS = {
     "min_duration_seconds": "minutes",
     "link_target": "link",
     "sponsorblock": "sponsorblock",
+    "podcast_sponsorblock": "podcast_sponsorblock",
 }
 
 
@@ -54,6 +55,8 @@ def _parse_archive_value(field: str, value: str | None):
         return minutes_to_seconds(value)
     if kind == "sponsorblock":
         return sponsorblock.parse_mode(value, allow_inherit=True)
+    if kind == "podcast_sponsorblock":
+        return sponsorblock.parse_mode(value, allow_inherit=True, modes=sponsorblock.PODCAST_MODES)
     return parse_link_target(value, allow_inherit=True)
 
 

@@ -191,11 +191,10 @@
         <div class="pref-label">{{ s.label }}</div>
       </div>
       <div class="seg">
-        {% set field = 'generate_podcast' if 'Podcast' in s.label else 'link_target' %}
         {% for o in s.options %}
         <button class="{{ 'on' if o.on }}"
                 hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
-                hx-vals='{"field": "{{ field }}", "value": "{{ o.value }}"}'
+                hx-vals='{"field": "{{ s.field }}", "value": "{{ o.value }}"}'
                 hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}{% if o.hint %} <span class="seg-hint">({{ o.hint }})</span>{% endif %}</button>
         {% endfor %}
       </div>

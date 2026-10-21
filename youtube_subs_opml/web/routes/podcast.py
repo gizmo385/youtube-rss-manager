@@ -9,6 +9,10 @@ identifies the user, and we only ever expose channels that user is subscribed
 to. The audio itself is served by ``/media/{token}/{video_id}.m4a`` with HTTP
 range support (Starlette's ``FileResponse`` handles ``Range`` natively), which
 podcast clients require for seeking.
+
+A subscriber who has SponsorBlock remove segments from their podcasts is
+served the downloader's cut copy of an episode once there is one, at the same
+URL, with the feed giving its size and duration (see services/sponsorblock).
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import get_db
 from ..models import (
+    AudioCut,
     Category,
     Channel,
     ChannelCategory,
@@ -34,6 +39,7 @@ from ..models import (
     User,
     Video,
 )
+from ..services import sponsorblock
 
 router = APIRouter(tags=["podcast"])
 
@@ -174,12 +180,25 @@ def build_podcast_feed(
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
 
 
-def _podcast_items(db: Session, user_id: int, base_url: str, token: str, category_id: int | None) -> list[dict]:
+def _cuts(db: Session, user: User, episodes: list[tuple[str, str]]) -> dict[str, AudioCut]:
+    """The SponsorBlock-cut copy to serve ``user`` for each of ``episodes``
+    (video id, channel id) that has one, by video id."""
+    kinds_by_channel = {ch: sponsorblock.podcast_cut(db, user, ch) for ch in {ch for _, ch in episodes}}
+    wanted = {vid: kinds_by_channel[ch] for vid, ch in episodes if kinds_by_channel[ch]}
+    if not wanted:
+        return {}
+    rows = db.execute(select(AudioCut).where(AudioCut.video_id.in_(wanted), AudioCut.path.is_not(None))).scalars()
+    return {c.video_id: c for c in rows if wanted[c.video_id] == c.categories}
+
+
+def _podcast_items(db: Session, user: User, base_url: str, token: str, category_id: int | None) -> list[dict]:
     """Completed downloads with extracted audio, in the user's scope.
 
     Only videos with ``audio_path`` set and a ``complete`` download are eligible;
-    the ``length`` is the real on-disk byte count (wrong counts break scrubbing).
+    the ``length`` is the real on-disk byte count (wrong counts break scrubbing)
+    — of the SponsorBlock-cut copy, where that's what will be served.
     """
+    user_id = user.id
     stmt = (
         select(Video, Download, Channel)
         .join(Download, Download.video_id == Video.video_id)
@@ -208,8 +227,11 @@ def _podcast_items(db: Session, user_id: int, base_url: str, token: str, categor
             ),
         )
 
+    rows = db.execute(stmt).all()
+    cuts = _cuts(db, user, [(video.video_id, video.channel_id) for video, _, _ in rows])
     items = []
-    for video, download, channel in db.execute(stmt).all():
+    for video, download, channel in rows:
+        cut = cuts.get(video.video_id)
         items.append(
             {
                 "video_id": video.video_id,
@@ -217,8 +239,8 @@ def _podcast_items(db: Session, user_id: int, base_url: str, token: str, categor
                 "author": channel.title,
                 "description": video.description,
                 "pub_date": video.published_at,
-                "duration_seconds": video.duration_seconds,
-                "length": download.audio_size_bytes or 0,
+                "duration_seconds": (cut.duration_seconds if cut else None) or video.duration_seconds,
+                "length": (cut.size_bytes if cut else download.audio_size_bytes) or 0,
                 "enclosure_url": f"{base_url.rstrip('/')}/media/{token}/{video.video_id}.m4a",
                 "image_url": episode_image_url(video.video_id),
             }
@@ -246,7 +268,7 @@ def podcast_all(token: str, db: Session = Depends(get_db)) -> Response:
     settings = get_settings()
     user = db.get_one(User, opml_token.user_id)
 
-    items = _podcast_items(db, user.id, settings.base_url, token, None)
+    items = _podcast_items(db, user, settings.base_url, token, None)
     xml = build_podcast_feed(
         title="Archived videos",
         description="Audio from your archived YouTube subscriptions.",
@@ -275,7 +297,7 @@ def podcast_by_category(token: str, slug: str, db: Session = Depends(get_db)) ->
     if category is None:
         raise HTTPException(status_code=404)
 
-    items = _podcast_items(db, user.id, settings.base_url, token, category.id)
+    items = _podcast_items(db, user, settings.base_url, token, category.id)
     xml = build_podcast_feed(
         title=category.name,
         description=f"Audio from your archived '{category.name}' subscriptions.",
@@ -316,14 +338,16 @@ def media_audio(token: str, video_id: str, db: Session = Depends(get_db)) -> Fil
     if row is None:
         raise HTTPException(status_code=404)
 
-    download, _video = row
-    if not os.path.isfile(download.audio_path):
+    download, video = row
+    cut = _cuts(db, db.get_one(User, opml_token.user_id), [(video.video_id, video.channel_id)]).get(video_id)
+    path = cut.path if cut and cut.path and os.path.isfile(cut.path) else download.audio_path
+    if not os.path.isfile(path):
         # The row says complete but the file isn't reachable from this process
         # (e.g. the media volume isn't mounted into the web container).
         raise HTTPException(status_code=404)
 
     return FileResponse(
-        download.audio_path,
+        path,
         media_type=_AUDIO_MIME,
         filename=f"{video_id}.m4a",
     )

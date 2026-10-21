@@ -11,6 +11,14 @@ them. The downloader only *marks* them, as chapters Jellyfin shows, when any
 subscriber who archives the channel has SponsorBlock on — that adds chapters
 and leaves the video alone, so it takes nothing away from anyone else.
 
+Podcast feeds have their own preference, cascading the same way: ``off``, or
+``remove``, which cuts the segments out of the episode's audio. Which kinds
+of segment it cuts is again a user-level choice, separate from the player's —
+so a sponsor read can be marked in the video and cut from the podcast. The
+extracted audio is shared like the video, so cutting never touches it: the
+downloader makes a cut copy per distinct choice of kinds (see
+``downloader/sponsor_cuts``) and each subscriber's feed serves theirs.
+
 The player's segments are fetched when a video is played rather than stored
 at download time: they're crowd-sourced, and keep being added and voted on
 long after upload. Lookups go by a prefix of the video id's hash, as
@@ -38,6 +46,8 @@ logger = logging.getLogger(__name__)
 API_URL = "https://sponsor.ajay.app"
 
 MODES: tuple[str, ...] = ("off", "show", "skip")
+#: For podcast audio, weakest first like ``MODES``.
+PODCAST_MODES: tuple[str, ...] = ("off", "remove")
 
 #: The skippable segment kinds, in the order Settings lists them.
 CATEGORIES: dict[str, str] = {
@@ -61,17 +71,17 @@ _CACHE_MAX = 500
 
 
 @overload
-def parse_mode(value: str | None, *, allow_inherit: Literal[False]) -> str: ...
+def parse_mode(value: str | None, *, allow_inherit: Literal[False], modes: tuple[str, ...] = MODES) -> str: ...
 
 
 @overload
-def parse_mode(value: str | None, *, allow_inherit: bool) -> str | None: ...
+def parse_mode(value: str | None, *, allow_inherit: bool, modes: tuple[str, ...] = MODES) -> str | None: ...
 
 
-def parse_mode(value: str | None, *, allow_inherit: bool) -> str | None:
-    """A known mode; otherwise None (inherit) below the user level, or ``off``
-    at it."""
-    if value in MODES:
+def parse_mode(value: str | None, *, allow_inherit: bool, modes: tuple[str, ...] = MODES) -> str | None:
+    """One of ``modes`` (the player's, unless given ``PODCAST_MODES``);
+    otherwise None (inherit) below the user level, or ``off`` at it."""
+    if value in modes:
         return value
     return None if allow_inherit else "off"
 
@@ -82,33 +92,52 @@ def parse_categories(values: list[str]) -> str:
     return ",".join(c for c in CATEGORIES if c in values)
 
 
-def user_categories(user: User) -> list[str]:
-    return [c for c in user.sponsorblock_categories.split(",") if c in CATEGORIES]
+def user_categories(user: User, *, podcast: bool = False) -> list[str]:
+    """The kinds ``user`` has chosen for the player, or for podcasts."""
+    chosen = user.podcast_sponsorblock_categories if podcast else user.sponsorblock_categories
+    return [c for c in chosen.split(",") if c in CATEGORIES]
 
 
-def strongest(modes: list[str | None]) -> str | None:
-    """The strongest mode among those set (skip > show > off), for a channel
-    in several categories: one that asks for SponsorBlock isn't overruled by
-    another that doesn't."""
-    present = [m for m in modes if m in MODES]
-    return max(present, key=MODES.index) if present else None
+def strongest(modes: list[str | None], order: tuple[str, ...] = MODES) -> str | None:
+    """The strongest mode among those set (skip > show > off, or remove >
+    off), for a channel in several categories: one that asks for SponsorBlock
+    isn't overruled by another that doesn't."""
+    present = [m for m in modes if m in order]
+    return max(present, key=order.index) if present else None
 
 
-def resolve_mode(db: Session, user: User, channel_id: str) -> str:
-    """The mode for ``channel_id`` in ``user``'s player."""
+def _resolve(db: Session, user: User, channel_id: str, field: str, order: tuple[str, ...]) -> str:
     sub = db.execute(
         select(Subscription).where(Subscription.user_id == user.id, Subscription.channel_id == channel_id)
     ).scalar_one_or_none()
     cat_modes = (
         db.execute(
-            select(Category.sponsorblock)
+            select(getattr(Category, field))
             .join(ChannelCategory, ChannelCategory.category_id == Category.id)
             .where(ChannelCategory.user_id == user.id, ChannelCategory.channel_id == channel_id)
         )
         .scalars()
         .all()
     )
-    return resolve(sub.sponsorblock if sub else None, strongest(list(cat_modes)), user.sponsorblock)
+    return resolve(getattr(sub, field) if sub else None, strongest(list(cat_modes), order), getattr(user, field))
+
+
+def resolve_mode(db: Session, user: User, channel_id: str) -> str:
+    """The mode for ``channel_id`` in ``user``'s player."""
+    return _resolve(db, user, channel_id, "sponsorblock", MODES)
+
+
+def resolve_podcast_mode(db: Session, user: User, channel_id: str) -> str:
+    """The mode for ``channel_id``'s episodes in ``user``'s podcast feeds."""
+    return _resolve(db, user, channel_id, "podcast_sponsorblock", PODCAST_MODES)
+
+
+def podcast_cut(db: Session, user: User, channel_id: str) -> str | None:
+    """The kinds cut from ``channel_id``'s episodes for ``user``, as stored
+    in ``AudioCut.categories``; None when nothing is."""
+    if resolve_podcast_mode(db, user, channel_id) != "remove":
+        return None
+    return ",".join(user_categories(user, podcast=True)) or None
 
 
 @dataclass(frozen=True)
@@ -118,25 +147,33 @@ class Segment:
     category: str
 
 
-_cache: dict[str, tuple[float, list[Segment]]] = {}
+_cache: dict[str, tuple[float, list[Segment] | None]] = {}
 
 
 def segments(video_id: str, categories: list[str], *, client: httpx.Client | None = None) -> list[Segment]:
     """``video_id``'s skippable segments of the given kinds, in order.
 
-    Every kind is looked up and cached together, then filtered, so users with
-    different choices share one lookup. Best-effort: SponsorBlock being down
-    just means no segments.
+    Best-effort: SponsorBlock being down just means no segments.
+    """
+    return [s for s in lookup(video_id, client=client) or [] if s.category in categories]
+
+
+def lookup(video_id: str, *, client: httpx.Client | None = None) -> list[Segment] | None:
+    """All of ``video_id``'s skippable segments, in order, or None if
+    SponsorBlock couldn't be reached.
+
+    Every kind is looked up and cached together, so users with different
+    choices share one lookup.
     """
     now = time.monotonic()
     hit = _cache.get(video_id)
     if hit is None or hit[0] <= now:
         found = _fetch(video_id, client)
-        _cache[video_id] = (now + (_TTL if found is not None else _ERROR_TTL), found or [])
+        _cache[video_id] = (now + (_TTL if found is not None else _ERROR_TTL), found)
         while len(_cache) > _CACHE_MAX:
             del _cache[next(iter(_cache))]  # oldest first: dicts keep insertion order
         hit = _cache[video_id]
-    return [s for s in hit[1] if s.category in categories]
+    return hit[1]
 
 
 def _fetch(video_id: str, client: httpx.Client | None) -> list[Segment] | None:

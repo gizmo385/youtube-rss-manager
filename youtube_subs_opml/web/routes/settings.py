@@ -147,8 +147,10 @@ def settings_page(
         "media_root": settings.media_root,
         "link_targets": LINK_TARGETS,
         "sponsorblock_modes": [("off", "Off"), ("show", "Show"), ("skip", "Skip")],
+        "podcast_sponsorblock_modes": [("off", "Off"), ("remove", "Remove")],
         "sponsorblock_categories": sponsorblock.CATEGORIES,
         "user_sponsorblock_categories": sponsorblock.user_categories(user),
+        "user_podcast_sponsorblock_categories": sponsorblock.user_categories(user, podcast=True),
         "max_duration_minutes": user.max_duration_seconds // 60,
         "min_duration_minutes": user.min_duration_seconds // 60,
         "active_nav": "settings",
@@ -217,6 +219,12 @@ async def update_defaults(
 
     user.sponsorblock = sponsorblock.parse_mode(form_text(form, "sponsorblock"), allow_inherit=False)
     user.sponsorblock_categories = sponsorblock.parse_categories(form_texts(form, "sponsorblock_categories"))
+    user.podcast_sponsorblock = sponsorblock.parse_mode(
+        form_text(form, "podcast_sponsorblock"), allow_inherit=False, modes=sponsorblock.PODCAST_MODES
+    )
+    user.podcast_sponsorblock_categories = sponsorblock.parse_categories(
+        form_texts(form, "podcast_sponsorblock_categories")
+    )
     db.commit()
     return RedirectResponse("/settings", status_code=303)
 

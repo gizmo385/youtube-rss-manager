@@ -63,6 +63,13 @@ class User(Base):
     sponsorblock_categories: Mapped[str] = mapped_column(
         String(255), server_default="sponsor,selfpromo,interaction", default="sponsor,selfpromo,interaction"
     )
+    # SponsorBlock in podcast feeds: 'off' | 'remove', and which kinds it
+    # cuts — separate from the player's, so a segment can be marked in the
+    # video and cut from the episode.
+    podcast_sponsorblock: Mapped[str] = mapped_column(String(8), server_default="off", default="off")
+    podcast_sponsorblock_categories: Mapped[str] = mapped_column(
+        String(255), server_default="sponsor,selfpromo,interaction", default="sponsor,selfpromo,interaction"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     youtube_accounts: Mapped[list[YoutubeAccount]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -136,6 +143,7 @@ class Subscription(Base):
     generate_podcast: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     link_target: Mapped[str | None] = mapped_column(String(16), nullable=True)
     sponsorblock: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    podcast_sponsorblock: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -160,6 +168,7 @@ class Category(Base):
     generate_podcast: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     link_target: Mapped[str | None] = mapped_column(String(16), nullable=True)
     sponsorblock: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    podcast_sponsorblock: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="categories")
@@ -292,6 +301,36 @@ class Download(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AudioCut(Base):
+    """A copy of a video's podcast audio with SponsorBlock segments cut out.
+
+    The extracted audio is shared by everyone with the channel as a podcast,
+    so it's never cut itself. Instead there's a copy per distinct choice of
+    segment kinds among the subscribers who want them removed — in practice
+    one or two per episode — and each subscriber's feed serves the one
+    matching their choice (see services/sponsorblock.podcast_cut).
+
+    Segments keep being submitted after a video goes up, so the downloader
+    re-checks recent episodes for a while and re-cuts when they've changed
+    (see downloader/sponsor_cuts). No foreign key: a row outliving its
+    download is how that pass finds a file to delete.
+    """
+
+    __tablename__ = "audio_cuts"
+
+    video_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    # The kinds cut, comma-separated in services/sponsorblock.CATEGORIES order.
+    categories: Mapped[str] = mapped_column(String(255), primary_key=True)
+    # What was cut, as "start-end" ranges; '' when there was nothing to cut
+    # (so the original is served), NULL when cutting failed.
+    segments: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The cut copy; NULL when there's nothing to serve but the original.
+    path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class DownloadLink(Base):

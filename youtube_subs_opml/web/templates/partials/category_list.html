@@ -107,6 +107,15 @@
           <option value="skip"{% if cat.sponsorblock == 'skip' %} selected{% endif %}>Skip</option>
         </select>
       </div>
+      <div class="cat-setting">
+        <span class="k">Podcast SponsorBlock</span>
+        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "podcast_sponsorblock"}'
+                hx-target="#category-list" hx-swap="innerHTML">
+          <option value="inherit"{% if cat.podcast_sponsorblock is none %} selected{% endif %}>Inherit</option>
+          <option value="off"{% if cat.podcast_sponsorblock == 'off' %} selected{% endif %}>Off</option>
+          <option value="remove"{% if cat.podcast_sponsorblock == 'remove' %} selected{% endif %}>Remove</option>
+        </select>
+      </div>
     </div>
 
     <div class="cat-card-foot">
