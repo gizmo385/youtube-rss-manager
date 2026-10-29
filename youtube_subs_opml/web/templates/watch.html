@@ -219,27 +219,32 @@
     main.style.setProperty('--w-pack-card', Math.floor((inner - (cols - 1) * PACK_GAP) / cols) + 'px');
     return packing() ? cols : 0;
   }
-  // Fill each row in order, pulling a later small category (looking 3 ahead)
-  // into leftover space, or letting it narrow into the leftover if that wraps
-  // it to at most 2 rows. Returns [{c, span}] in visual order.
+  // Fill each row in order. A row is as many card rows deep as its first
+  // category needs, and a later category (looking 3 ahead) joins it only if
+  // it fits the leftover columns in no more rows than that — so a small
+  // category squeezed into the end of a row can't stretch the row, and every
+  // box beside it, taller than they need. Returns [{c, span}] in visual order.
   function pack(secs, cols) {
     var colW = Math.min(cols, cols >= 4 ? 2 : 1);   // span of a collapsed category
-    // The span that fits c in r columns using at most 2 card rows (0 = doesn't fit).
-    function fit(c, r) {
+    // The narrowest span that fits c in r columns and h card rows (0 = doesn't fit).
+    function fit(c, r, h) {
       if (c.collapsed) return colW <= r ? colW : 0;
-      var n = c.vids.length;
-      return n <= r ? n : n <= 2 * r ? r : 0;
+      var s = Math.ceil(c.vids.length / h);
+      return s <= r ? s : 0;
     }
     var q = secs.slice(), out = [];
     while (q.length) {
       var c0 = q.shift(), n0 = c0.vids.length;
       var s0 = c0.collapsed ? colW : n0 <= cols ? n0 : (n0 <= 2 * cols && cols >= 2) ? Math.ceil(n0 / 2) : cols;
+      // A collapsed category is only its heading, so one card row beside it
+      // is the least a row can hold.
+      var h = c0.collapsed ? 1 : Math.ceil(n0 / s0);
       var row = [{c: c0, span: s0}], r = cols - s0;
       while (r > 0 && q.length) {
         var i = -1;
-        for (var j = 0; j < Math.min(4, q.length); j++) if (fit(q[j], r) > 0) { i = j; break; }
+        for (var j = 0; j < Math.min(4, q.length); j++) if (fit(q[j], r, h) > 0) { i = j; break; }
         if (i < 0) break;
-        var c = q.splice(i, 1)[0], s = fit(c, r);
+        var c = q.splice(i, 1)[0], s = fit(c, r, h);
         row.push({c: c, span: s});
         r -= s;
       }
@@ -248,12 +253,19 @@
     }
     return out;
   }
+  // Packed, biggest categories first (by their videos; ties keep their
+  // order), so the big ones start rows and the small ones fill in around
+  // them, leaving any gaps in the last row rather than in every row. Sized
+  // the same collapsed or not, so collapsing one doesn't send it elsewhere.
+  function bySize(cats) {
+    return cats.slice().sort(function (a, b) { return b.vids.length - a.vids.length; });   // sort is stable
+  }
   // Continue watching first and More results last, full width, with the
   // categories (packed or not) between.
   function placed(secs) {
     function only(id) { return secs.filter(function (c) { return c.id === id; }).map(function (c) { return {c: c, span: 0}; }); }
     var cats = secs.filter(function (c) { return !pinned(c); });
-    return only(CONT.id).concat(S.cols ? pack(cats, S.cols) : cats.map(function (c) { return {c: c, span: 0}; }), only(SEARCH.id));
+    return only(CONT.id).concat(S.cols ? pack(bySize(cats), S.cols) : cats.map(function (c) { return {c: c, span: 0}; }), only(SEARCH.id));
   }
   // Sections in visual order, so [ ] and J/K follow the packed layout.
   function sections() {
