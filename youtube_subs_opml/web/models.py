@@ -95,9 +95,11 @@ class Channel(Base):
     __tablename__ = "channels"
 
     channel_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    # 'youtube' | 'nebula'. Nebula channels (ids ``nebula:{slug}``) are
-    # feed-only: no account sync, no Shorts/live filtering and no archive — see
-    # youtube_subs_opml.nebula.
+    # 'youtube' | 'nebula' | 'youtube_playlist'. Nebula channels (ids
+    # ``nebula:{slug}``) are feed-only: no account sync, no Shorts/live
+    # filtering and no archive — see youtube_subs_opml.nebula. YouTube
+    # playlists (ids ``PL…``) are followed like channels but, for now, not
+    # archived either — see youtube_subs_opml.playlists.
     platform: Mapped[str] = mapped_column(String(16), server_default="youtube", default="youtube")
     title: Mapped[str] = mapped_column(String(255), server_default="")
     description: Mapped[str] = mapped_column(Text, server_default="")
@@ -250,10 +252,37 @@ class Video(Base):
     # Also filled by the probe; surfaced as podcast episode notes. NULL means
     # "not probed yet"; an empty string means the video genuinely has none.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Found by the history backfill rather than on the feed: there for search
-    # and channel pages, but never archived (see services.archive). The poller
-    # clears it if the video turns up on the feed after all.
+    # Found other than on its channel's feed — by the history backfill, or on a
+    # followed playlist's feed, which can turn up a channel's old uploads: there
+    # for search and channel pages, but never archived (see services.archive).
+    # The poller clears it if the video turns up on the channel's feed after all.
     backfilled: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlaylistVideo(Base):
+    """A video seen on a followed playlist's feed.
+
+    A playlist's videos belong to the channels that uploaded them
+    (``Video.channel_id``), so membership is recorded here instead: a video can
+    be in several playlists, and in a followed channel too. Rows are only ever
+    added: the feed shows only part of the playlist, so a video dropping off it
+    doesn't mean it left the playlist.
+    """
+
+    __tablename__ = "playlist_videos"
+
+    playlist_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("channels.channel_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    video_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("videos.video_id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

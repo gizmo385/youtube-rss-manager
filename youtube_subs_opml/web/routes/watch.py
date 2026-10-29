@@ -115,12 +115,15 @@ def update_progress(
 @router.get("/segments/{video_id}")
 def video_segments(
     video_id: str,
+    channel: str = "",
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """The SponsorBlock mode for this video's channel and, unless it's off,
-    the segments to show or skip, in seconds."""
-    channel_id = db.execute(select(Video.channel_id).where(Video.video_id == video_id)).scalar_one_or_none()
+    """The SponsorBlock mode for this video and, unless it's off, the segments
+    to show or skip, in seconds. The mode is the one for ``channel``, the
+    channel or playlist the video is being played from, falling back to the
+    video's own channel."""
+    channel_id = channel or db.execute(select(Video.channel_id).where(Video.video_id == video_id)).scalar_one_or_none()
     mode = sponsorblock.resolve_mode(db, user, channel_id) if channel_id else "off"
     if mode == "off":
         return {"mode": mode, "segments": []}

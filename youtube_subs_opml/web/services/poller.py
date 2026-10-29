@@ -32,6 +32,11 @@ or with how long it has now been quiet, whichever is longer (see
 
 Nebula channels are polled on the same sweep, but only to warm the feed cache:
 nothing on Nebula is downloadable, so their entries aren't recorded as videos.
+
+Followed YouTube playlists are polled like channels, from the playlist's own
+feed (see ``youtube_subs_opml.playlists``). Their entries are recorded as videos
+of the channels that uploaded them, plus a ``playlist_videos`` row each. Having
+no videos of their own, they never count as dormant and are polled every sweep.
 """
 
 from __future__ import annotations
@@ -43,17 +48,18 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from statistics import median
+from typing import NamedTuple
 from xml.etree import ElementTree as ET
 
 import httpx
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from youtube_subs_opml import metrics, nebula
+from youtube_subs_opml import metrics, nebula, playlists
 from youtube_subs_opml.opml import FEED_URL
 
 from ..config import get_settings
-from ..models import Channel, ChannelFeedCache, Subscription, Video
+from ..models import Channel, ChannelFeedCache, PlaylistVideo, Subscription, Video
 from . import uploads_api
 from .archive import enqueue_pending
 from .feed_cache import store_feed
@@ -193,10 +199,20 @@ def _fetch_feed(
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
-def _parse_entries(xml_bytes: bytes) -> list[tuple[str, str, datetime | None]]:
-    """Extract (video_id, title, published) from a channel feed."""
+class _Entry(NamedTuple):
+    video_id: str
+    title: str
+    published: datetime | None
+    # The channel that uploaded it: on a playlist's feed, not necessarily the
+    # playlist's owner. Empty if the entry doesn't say.
+    channel_id: str = ""
+    author: str = ""
+
+
+def _parse_entries(xml_bytes: bytes) -> list[_Entry]:
+    """Extract the entries of a channel or playlist feed."""
     root = ET.fromstring(xml_bytes)
-    out: list[tuple[str, str, datetime | None]] = []
+    out: list[_Entry] = []
     for entry in root.findall(f"{{{_ATOM}}}entry"):
         vid_el = entry.find(f"{{{_YT}}}videoId")
         if vid_el is None or not vid_el.text:
@@ -209,7 +225,15 @@ def _parse_entries(xml_bytes: bytes) -> list[tuple[str, str, datetime | None]]:
                 published = datetime.fromisoformat(pub_el.text)
             except ValueError:
                 logger.warning("Unparseable published date: %s", pub_el.text)
-        out.append((vid_el.text, (title_el.text or "") if title_el is not None else "", published))
+        out.append(
+            _Entry(
+                vid_el.text,
+                (title_el.text or "") if title_el is not None else "",
+                published,
+                entry.findtext(f"{{{_YT}}}channelId") or "",
+                entry.findtext(f"{{{_ATOM}}}author/{{{_ATOM}}}name") or "",
+            )
+        )
     return out
 
 
@@ -221,9 +245,15 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
     """
     settings = get_settings()
     channel = db.get(Channel, channel_id)
-    is_nebula = channel is not None and channel.platform == nebula.PLATFORM
-    url = nebula.feed_url(channel_id) if is_nebula else FEED_URL.format(channel_id=channel_id)
-    platform = nebula.PLATFORM if is_nebula else "youtube"
+    platform = channel.platform if channel is not None else "youtube"
+    is_nebula = platform == nebula.PLATFORM
+    is_playlist = platform == playlists.PLATFORM
+    if is_nebula:
+        url = nebula.feed_url(channel_id)
+    elif is_playlist:
+        url = playlists.feed_url(channel_id)
+    else:
+        url = FEED_URL.format(channel_id=channel_id)
     channel_attrs = {
         "platform": platform,
         "channel_id": channel_id,
@@ -249,7 +279,7 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
         else:
             outcome, status = "network_error", "network_error"
         _record_poll(channel_attrs, outcome, status, started)
-        content = None if is_nebula else _api_fallback(channel_id, channel_attrs, client)
+        content = None if is_nebula else _api_fallback(channel_id, channel_attrs, client, playlist=is_playlist)
         if content is None:
             return 0
     else:
@@ -265,6 +295,8 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
     store_feed(db, channel_id, content)
     if is_nebula:
         return 0
+    if is_playlist:
+        return _record_playlist(db, channel_id, content, channel_attrs)
 
     entries = _parse_entries(content)
     if not entries:
@@ -277,18 +309,76 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
     db.execute(update(Video).where(Video.video_id.in_(ids), Video.backfilled.is_(True)).values(backfilled=False))
 
     new = 0
-    for video_id, title, published in entries:
-        if video_id in known:
+    for e in entries:
+        if e.video_id in known:
             continue
         db.add(
             Video(
-                video_id=video_id,
+                video_id=e.video_id,
                 channel_id=channel_id,
-                title=title,
-                published_at=published,
+                title=e.title,
+                published_at=e.published,
             )
         )
         new += 1
+    if new:
+        metrics.feed_new_videos.add(new, channel_attrs)
+    return new
+
+
+def _record_playlist(db: Session, playlist_id: str, content: bytes, channel_attrs: dict[str, str]) -> int:
+    """Record a playlist feed's videos. Returns how many are new to the playlist.
+
+    Each video is recorded under the channel that uploaded it, with a stub
+    ``channels`` row for an uploader nobody follows yet (filled in properly if
+    someone does). Ones new to ``videos`` are marked ``backfilled``: a playlist
+    can turn up a channel's old uploads, which mustn't be queued for anyone
+    archiving that channel. The channel's own poll clears the flag on ones
+    that are recent uploads after all.
+    """
+    entries = [e for e in _parse_entries(content) if e.channel_id]
+    if not entries:
+        return 0
+
+    ids = [e.video_id for e in entries]
+    known = set(db.execute(select(Video.video_id).where(Video.video_id.in_(ids))).scalars().all())
+    in_playlist = set(
+        db.execute(
+            select(PlaylistVideo.video_id).where(
+                PlaylistVideo.playlist_id == playlist_id, PlaylistVideo.video_id.in_(ids)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    uploaders = {e.channel_id: e.author for e in entries}
+    have = set(db.execute(select(Channel.channel_id).where(Channel.channel_id.in_(uploaders))).scalars().all())
+    db.add_all(Channel(channel_id=cid, title=name or cid) for cid, name in uploaders.items() if cid not in have)
+    # No relationship() tells the flush which of these rows the others point
+    # at, so it would insert them in mapper-name order (memberships before
+    # videos), breaking the foreign keys. Hence a flush after each kind.
+    db.flush()
+
+    for e in entries:
+        if e.video_id not in known:
+            db.add(
+                Video(
+                    video_id=e.video_id,
+                    channel_id=e.channel_id,
+                    title=e.title,
+                    published_at=e.published,
+                    backfilled=True,
+                )
+            )
+            known.add(e.video_id)
+    db.flush()
+
+    new = 0
+    for e in entries:
+        if e.video_id not in in_playlist:
+            db.add(PlaylistVideo(playlist_id=playlist_id, video_id=e.video_id))
+            in_playlist.add(e.video_id)
+            new += 1
     if new:
         metrics.feed_new_videos.add(new, channel_attrs)
     return new
@@ -302,8 +392,11 @@ def _record_poll(channel_attrs: dict[str, str], outcome: str, status: str, start
     )
 
 
-def _api_fallback(channel_id: str, channel_attrs: dict[str, str], client: httpx.Client) -> bytes | None:
-    """The channel's uploads from the Data API, after its RSS feed failed.
+def _api_fallback(
+    channel_id: str, channel_attrs: dict[str, str], client: httpx.Client, *, playlist: bool = False
+) -> bytes | None:
+    """The channel's uploads (or the playlist's items) from the Data API, after
+    its RSS feed failed.
 
     None when no API key is configured, when this channel already fell back
     within ``youtube_api_fallback_interval_minutes``, or when the API fails too.
@@ -320,9 +413,8 @@ def _api_fallback(channel_id: str, channel_attrs: dict[str, str], client: httpx.
         return None
     _api_fallback_at[channel_id] = now
     try:
-        content = uploads_api.fetch_uploads_feed(
-            channel_id, client, settings.youtube_api_key, title=channel_attrs["channel"]
-        )
+        fetch = uploads_api.fetch_playlist_feed if playlist else uploads_api.fetch_uploads_feed
+        content = fetch(channel_id, client, settings.youtube_api_key, title=channel_attrs["channel"])
     except httpx.HTTPError as exc:
         reason = uploads_api.error_reason(exc.response) if isinstance(exc, httpx.HTTPStatusError) else ""
         logger.warning(

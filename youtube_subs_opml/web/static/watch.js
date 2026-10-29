@@ -267,7 +267,9 @@ window.Watch = (function () {
   var sb = null;   // {t, mode, segs, drawn, btn, until, onClick}
 
   function startSponsorBlock(t) {
-    fetch('/watch/segments/' + encodeURIComponent(t.v.videoId), {headers: {'Accept': 'application/json'}})
+    // The channel (or playlist) it's shown under picks the mode.
+    var url = '/watch/segments/' + encodeURIComponent(t.v.videoId) + '?channel=' + encodeURIComponent(t.v.channelId || '');
+    fetch(url, {headers: {'Accept': 'application/json'}})
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (!d || d.mode === 'off' || !d.segments.length || track !== t) return;

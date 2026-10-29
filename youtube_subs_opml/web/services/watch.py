@@ -2,8 +2,8 @@
 grouped by category, with per-user watched state.
 
 Built entirely from what the poller has already stored — ``videos`` for YouTube
-and the cached RSS for Nebula (whose videos never land in ``videos``) — so
-rendering the page never reaches out to either service. Shorts and
+channels and playlists, and the cached RSS for Nebula (whose videos never land
+in ``videos``) — so rendering the page never reaches out to either service. Shorts and
 live/upcoming filtering likewise only consult the existing caches: a video
 nobody has classified yet is shown rather than probed.
 """
@@ -19,7 +19,7 @@ from xml.etree import ElementTree as ET
 from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
-from youtube_subs_opml import nebula
+from youtube_subs_opml import nebula, playlists
 
 from ..models import (
     Category,
@@ -29,6 +29,7 @@ from ..models import (
     Download,
     DownloadLink,
     JellyfinAccount,
+    PlaylistVideo,
     Subscription,
     User,
     Video,
@@ -97,13 +98,15 @@ def _nebula_videos(channel_id: str, xml: bytes, since: datetime | None) -> list[
     return out
 
 
-def _youtube_video(v: Video) -> dict:
+def _youtube_video(v: Video, source_id: str) -> dict:
+    """``v`` as a feed item from ``source_id``: its channel, or a followed
+    playlist it's in."""
     published = v.published_at
     assert published is not None  # callers filter on it; narrows for the type checker
     return {
         "key": v.video_id,
         "title": v.title or v.video_id,
-        "channel_id": v.channel_id,
+        "channel_id": source_id,
         "published": _aware(published),
         "duration": v.duration_seconds,
         "url": f"https://www.youtube.com/watch?v={v.video_id}",
@@ -112,27 +115,60 @@ def _youtube_video(v: Video) -> dict:
     }
 
 
+def _by_platform(channels: dict[str, Channel], platform: str) -> list[str]:
+    return [cid for cid, ch in channels.items() if ch.platform == platform]
+
+
+def _stored_videos(db: Session, channels: dict[str, Channel], *conds, limit: int | None = None) -> list[dict]:
+    """Stored videos of the YouTube channels and playlists among ``channels``
+    that match ``conds``, newest first, each attributed to the one it came
+    from. ``conds`` can use ``Channel`` for that channel or playlist.
+
+    A video can be in a followed channel and in followed playlists at once;
+    it's listed once, under its channel if that's among them, otherwise under
+    one of the playlists.
+    """
+    channel_ids = _by_platform(channels, "youtube")
+    playlist_ids = _by_platform(channels, playlists.PLATFORM)
+    stmts = []
+    if channel_ids:
+        stmts.append(
+            select(Video, Video.channel_id)
+            .join(Channel, Channel.channel_id == Video.channel_id)
+            .where(Video.channel_id.in_(channel_ids), Video.published_at.is_not(None), *conds)
+            .order_by(Video.published_at.desc())
+        )
+    if playlist_ids:
+        stmts.append(
+            select(Video, PlaylistVideo.playlist_id)
+            .join(PlaylistVideo, PlaylistVideo.video_id == Video.video_id)
+            .join(Channel, Channel.channel_id == PlaylistVideo.playlist_id)
+            .where(PlaylistVideo.playlist_id.in_(playlist_ids), Video.published_at.is_not(None), *conds)
+            .order_by(Video.published_at.desc(), PlaylistVideo.playlist_id)
+        )
+
+    found: dict[str, tuple[Video, str]] = {}
+    for stmt in stmts:
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        for v, source_id in db.execute(stmt).tuples():
+            found.setdefault(v.video_id, (v, source_id))
+    videos = [_youtube_video(v, source_id) for v, source_id in found.values()]
+    videos.sort(key=lambda v: v["published"], reverse=True)
+    return videos[:limit]
+
+
 def _load_videos(
     db: Session, channels: dict[str, Channel], since: datetime | None, limit: int | None = None
 ) -> list[dict]:
-    """Stored videos for ``channels``, newest first: YouTube from ``videos``,
-    Nebula from the cached feed. ``since`` bounds by age; ``limit`` caps the
-    YouTube query (a Nebula feed is already only its recent items)."""
-    youtube_ids = [cid for cid, ch in channels.items() if ch.platform != nebula.PLATFORM]
-    nebula_ids = [cid for cid, ch in channels.items() if ch.platform == nebula.PLATFORM]
+    """Stored videos for ``channels``, newest first: YouTube channels and
+    playlists from ``videos``, Nebula from the cached feed. ``since`` bounds by
+    age; ``limit`` caps the YouTube queries (a Nebula feed is already only its
+    recent items)."""
+    nebula_ids = _by_platform(channels, nebula.PLATFORM)
 
-    videos: list[dict] = []
-    if youtube_ids:
-        stmt = (
-            select(Video)
-            .where(Video.channel_id.in_(youtube_ids), Video.published_at.is_not(None))
-            .order_by(Video.published_at.desc())
-        )
-        if since is not None:
-            stmt = stmt.where(Video.published_at >= since)
-        if limit is not None:
-            stmt = stmt.limit(limit)
-        videos.extend(_youtube_video(v) for v in db.execute(stmt).scalars().all())
+    conds = [Video.published_at >= since] if since is not None else []
+    videos = _stored_videos(db, channels, *conds, limit=limit)
     if nebula_ids:
         for channel_id, xml in db.execute(
             select(ChannelFeedCache.channel_id, ChannelFeedCache.xml).where(ChannelFeedCache.channel_id.in_(nebula_ids))
@@ -158,13 +194,7 @@ def _resumable_elsewhere(
     ]
     if not keys:
         return []
-    youtube_ids = [cid for cid, ch in channels.items() if ch.platform != nebula.PLATFORM]
-    rows = db.execute(
-        select(Video).where(
-            Video.video_id.in_(keys), Video.channel_id.in_(youtube_ids), Video.published_at.is_not(None)
-        )
-    ).scalars()
-    return [_youtube_video(v) for v in rows]
+    return _stored_videos(db, channels, Video.video_id.in_(keys))
 
 
 def _annotate(user: User, db: Session, videos: list[dict]) -> None:
@@ -440,40 +470,32 @@ def search_videos(user: User, db: Session, query: str) -> list[dict]:
 
     Plain substring matching rather than full-text search: a few thousand
     videos is nothing to scan, and it finds partial words and names that a
-    stemmer would mangle. Nebula videos only have titles to match, and only
-    those still in the cached feed.
+    stemmer would mangle. The channel name matched is the playlist's for a
+    video found through a followed playlist. Nebula videos only have titles to
+    match, and only those still in the cached feed.
     """
     terms = [t.lower() for t in query.split()][:8]
     if not terms:
         return []
     lib = _library(user, db)
     channels = lib.channels
-    youtube_ids = [cid for cid, ch in channels.items() if ch.platform != nebula.PLATFORM]
-    nebula_ids = [cid for cid, ch in channels.items() if ch.platform == nebula.PLATFORM]
+    nebula_ids = _by_platform(channels, nebula.PLATFORM)
 
-    found: list[dict] = []
-    if youtube_ids:
-        rows = db.execute(
-            select(Video, Channel.title)
-            .join(Channel, Channel.channel_id == Video.channel_id)
-            .where(
-                Video.channel_id.in_(youtube_ids),
-                Video.published_at.is_not(None),
-                and_(
-                    *(
-                        or_(
-                            Video.title.ilike(_like(t), escape="\\"),
-                            Video.description.ilike(_like(t), escape="\\"),
-                            Channel.title.ilike(_like(t), escape="\\"),
-                        )
-                        for t in terms
-                    )
-                ),
+    found = _stored_videos(
+        db,
+        channels,
+        and_(
+            *(
+                or_(
+                    Video.title.ilike(_like(t), escape="\\"),
+                    Video.description.ilike(_like(t), escape="\\"),
+                    Channel.title.ilike(_like(t), escape="\\"),
+                )
+                for t in terms
             )
-            .order_by(Video.published_at.desc())
-            .limit(_SEARCH_POOL)
-        ).all()
-        found += [_youtube_video(v) for v, _ in rows]
+        ),
+        limit=_SEARCH_POOL,
+    )
     for v in _load_videos(db, {cid: channels[cid] for cid in nebula_ids}, since=None):
         text = f"{v['title']} {channels[v['channel_id']].title or ''}".lower()
         if all(t in text for t in terms):

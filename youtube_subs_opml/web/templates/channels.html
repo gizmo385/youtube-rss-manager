@@ -61,10 +61,11 @@
     <h2 class="modal-title" id="add-modal-title">Add a channel</h2>
     <p class="modal-help">
       Paste a YouTube channel URL, an <span class="mono">@handle</span>, or a
-      <span class="mono">UC…</span> channel ID — or a Nebula channel URL like
+      <span class="mono">UC…</span> channel ID; a YouTube playlist URL, to follow
+      just that playlist; or a Nebula channel URL like
       <span class="mono">nebula.tv/tomscott</span>. It's added as a manual
-      subscription — one you can remove again from its detail pane. Nebula
-      channels get feeds and categories, but can't be archived.
+      subscription — one you can remove again from its detail pane. Playlists and
+      Nebula channels get feeds and categories, but can't be archived.
     </p>
     <input type="text" id="add-channel-input" class="modal-input"
            placeholder="https://www.youtube.com/@veritasium" autocomplete="off" spellcheck="false"
@@ -261,8 +262,8 @@ function addManualChannel() {
     });
 }
 
-function removeManualChannel(channelId) {
-  if (!confirm('Remove this manually-added channel?')) return;
+function removeManualChannel(channelId, noun) {
+  if (!confirm('Remove this manually-added ' + (noun || 'channel') + '?')) return;
   postForm('/channels/remove', {channel_id: channelId, filter: currentFilter}, function(){
     loadDetail('');
   });

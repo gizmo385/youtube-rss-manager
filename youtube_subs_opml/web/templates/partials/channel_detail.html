@@ -11,7 +11,7 @@
 <div class="detail-head">
   <div class="detail-head-top">
     <div>
-      <div class="eyebrow">Channel</div>
+      <div class="eyebrow">{{ d.noun|capitalize }}</div>
       <h1 class="detail-title">{{ d.title }}</h1>
       <div class="detail-sub">
         <a href="{{ d.page_url }}" target="_blank" rel="noopener">Open on {{ d.platform_name }}</a>
@@ -21,10 +21,10 @@
       </div>
     </div>
     <div class="detail-stats">
-      {% if d.is_nebula %}
+      {% if not d.archivable %}
       <div>
         <div class="stat-k">Platform</div>
-        <div class="stat-v">Nebula</div>
+        <div class="stat-v">{{ d.platform_label }}</div>
       </div>
       {% else %}
       <div>
@@ -49,18 +49,18 @@
             hx-post="/channels/ignore" hx-include="#channel-detail [type=hidden]"
             hx-vals='{"ignored": "{{ 'false' if d.ignored else 'true' }}"}'
             hx-target="#channel-detail" hx-swap="innerHTML">
-      {{ 'Stop ignoring' if d.ignored else 'Ignore channel' }}
+      {{ 'Stop ignoring' if d.ignored else 'Ignore ' ~ d.noun }}
     </button>
     {% if d.is_manual %}
     <button type="button" class="btn btn-sm btn-danger"
-            onclick="removeManualChannel('{{ d.channel_id }}')">Remove channel</button>
+            onclick="removeManualChannel('{{ d.channel_id }}', '{{ d.noun }}')">Remove {{ d.noun }}</button>
     {% endif %}
   </div>
 </div>
 
 {% if d.ignored %}
 <div class="detail-banner">
-  <strong>Ignored.</strong> This channel is left out of every feed, the archive
+  <strong>Ignored.</strong> This {{ d.noun }} is left out of every feed, the archive
   and the board. Its settings below are kept for when you stop ignoring it.
 </div>
 {% endif %}
@@ -154,6 +154,10 @@
     <p class="unsupported-note">Unavailable for Nebula channels — their videos can't be
       downloaded, so there's no Jellyfin archive, podcast audio or Jellyfin feed links.
       Archive defaults inherited from categories or your account are ignored here.</p>
+    {% elif not d.archivable %}
+    <p class="unsupported-note">Not available for playlists yet — there's no Jellyfin
+      archive or podcast audio for them, and archive defaults inherited from categories
+      or your account are ignored here.</p>
     {% else %}
     {% for s in d.archive_settings %}
     <div class="pref-row">
@@ -202,6 +206,7 @@
     {% endfor %}
     {% endif %}
 
+    {% if d.topics_label %}
     <h2 class="section-label spaced">{{ d.topics_label }}</h2>
     <div class="topic-row">
       {% for t in d.topics %}
@@ -210,10 +215,11 @@
       <span class="empty">No topics reported</span>
       {% endfor %}
     </div>
+    {% endif %}
   </div>
 
   <div class="detail-col-r">
-    {% if not d.is_nebula %}
+    {% if d.archivable %}
     <div class="activity-head">
       <h2 class="section-label" style="margin:0">Archive activity</h2>
     </div>

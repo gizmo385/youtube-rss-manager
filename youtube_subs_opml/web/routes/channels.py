@@ -12,7 +12,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
 
-from youtube_subs_opml import nebula
+from youtube_subs_opml import nebula, playlists
 from youtube_subs_opml.youtube import ChannelLookupError, resolve_channel
 
 from ..config import get_settings
@@ -25,6 +25,7 @@ from ..models import (
     ChannelCategory,
     Download,
     OpmlToken,
+    PlaylistVideo,
     Subscription,
     User,
     Video,
@@ -177,7 +178,6 @@ def _channel_records(user: User, db: Session) -> tuple[list[dict], list[Category
     records = []
     for sub, ch in rows:
         cats = channel_cats.get(ch.channel_id, [])
-        is_nebula = ch.platform == nebula.PLATFORM
         archive_on, _ = _effective(sub, cats, user, "download_enabled")
         records.append(
             {
@@ -186,9 +186,11 @@ def _channel_records(user: User, db: Session) -> tuple[list[dict], list[Category
                 "ignored": sub.ignored,
                 "cats": cats,
                 "cat_count": len(cats),
-                # Nebula can't be downloaded, whatever the inherited pref says.
-                "archive_on": bool(archive_on) and not is_nebula,
-                "is_nebula": is_nebula,
+                # Nebula channels and playlists aren't archived, whatever the
+                # inherited pref says.
+                "archive_on": bool(archive_on) and ch.platform == "youtube",
+                "is_nebula": ch.platform == nebula.PLATFORM,
+                "is_playlist": ch.platform == playlists.PLATFORM,
                 "has_failure": ch.channel_id in failures,
                 "is_manual": sub.account_id is None,
             }
@@ -454,10 +456,17 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
     ).one()
 
     is_nebula = ch.platform == nebula.PLATFORM
+    is_playlist = ch.platform == playlists.PLATFORM
     if is_nebula:
         # Nebula entries aren't recorded as videos; read the cached feed.
         cached = load_feed(db, channel_id)
         last_video = nebula.latest_published(cached) if cached else None
+    elif is_playlist:
+        last_video = db.execute(
+            select(func.max(Video.published_at))
+            .join(PlaylistVideo, PlaylistVideo.video_id == Video.video_id)
+            .where(PlaylistVideo.playlist_id == channel_id)
+        ).scalar_one_or_none()
     else:
         last_video = db.execute(
             select(func.max(Video.published_at)).where(Video.channel_id == channel_id)
@@ -480,17 +489,35 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
     sb_opts = [("Inherit", "inherit", None), ("Off", "off", "off"), ("Show", "show", "show"), ("Skip", "skip", "skip")]
     podcast_sb_opts = [("Inherit", "inherit", None), ("Off", "off", "off"), ("Remove", "remove", "remove")]
 
+    # ``platform_label`` stands in for the archive stats where there's no
+    # archive; ``topics_label`` is None where there are no topics to show.
     if is_nebula:
         platform = {
             "is_nebula": True,
+            "noun": "channel",
+            "archivable": False,
             "platform_name": "Nebula",
+            "platform_label": "Nebula",
             "page_url": nebula.channel_url(ch.channel_id),
             "topics_label": "Nebula categories",
+        }
+    elif is_playlist:
+        platform = {
+            "is_nebula": False,
+            "noun": "playlist",
+            "archivable": False,
+            "platform_name": "YouTube",
+            "platform_label": "YouTube playlist",
+            "page_url": playlists.page_url(ch.channel_id),
+            "topics_label": None,
         }
     else:
         platform = {
             "is_nebula": False,
+            "noun": "channel",
+            "archivable": True,
             "platform_name": "YouTube",
+            "platform_label": "YouTube",
             "page_url": f"https://www.youtube.com/channel/{ch.channel_id}",
             "topics_label": "YouTube topics",
         }
@@ -1102,6 +1129,8 @@ async def add_manual_channel(
             detail="Could not reach Nebula to look up that channel.",
         ) from e
     if resolved is None:
+        resolved = _resolve_playlist(raw)
+    if resolved is None:
         resolved = _resolve_youtube(raw, user, db)
 
     channel = db.get(Channel, resolved.channel_id)
@@ -1176,6 +1205,21 @@ def _resolve_nebula(raw: str):
     if nebula.parse_input(raw) is None:
         return None
     return nebula.resolve_channel(raw)
+
+
+def _resolve_playlist(raw: str):
+    """Resolve ``raw`` as a YouTube playlist, or None if it doesn't name one."""
+    try:
+        if playlists.parse_input(raw) is None:
+            return None
+        return playlists.resolve_playlist(raw)
+    except ChannelLookupError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not reach YouTube to look up that playlist.",
+        ) from e
 
 
 def _resolve_youtube(raw: str, user: User, db: Session):

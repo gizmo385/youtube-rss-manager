@@ -23,6 +23,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 
+from youtube_subs_opml import playlists
 from youtube_subs_opml.opml import FEED_URL
 
 _PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
@@ -58,6 +59,20 @@ def fetch_uploads_feed(channel_id: str, client: httpx.Client, api_key: str, *, t
     resp = client.get(uploads_url(channel_id), headers={"X-Goog-Api-Key": api_key})
     resp.raise_for_status()
     return build_feed(channel_id, resp.json().get("items", []), title=title)
+
+
+def playlist_url(playlist_id: str) -> str:
+    """The playlistItems request for a followed playlist's first items."""
+    params = {"part": "snippet,contentDetails", "playlistId": playlist_id, "maxResults": _MAX_RESULTS}
+    return f"{_PLAYLIST_ITEMS_URL}?{urlencode(params)}"
+
+
+def fetch_playlist_feed(playlist_id: str, client: httpx.Client, api_key: str, *, title: str = "") -> bytes:
+    """``fetch_uploads_feed`` for a followed playlist, rendered as the
+    playlist's own RSS feed would be."""
+    resp = client.get(playlist_url(playlist_id), headers={"X-Goog-Api-Key": api_key})
+    resp.raise_for_status()
+    return build_playlist_feed(playlist_id, resp.json().get("items", []), title=title)
 
 
 def fetch_uploads_page(
@@ -139,44 +154,67 @@ def build_feed(channel_id: str, items: list[dict], *, title: str = "") -> bytes:
     _sub(author, _ATOM, "uri", channel_url)
 
     for item in items:
-        snippet = item.get("snippet", {})
-        video_id = snippet.get("resourceId", {}).get("videoId")
-        # Private and deleted videos can linger in the playlist without an owner.
-        if not video_id or "videoOwnerChannelId" not in snippet:
-            continue
-        published = _iso(item.get("contentDetails", {}).get("videoPublishedAt") or snippet["publishedAt"])
-        video_title = snippet.get("title", "")
-
-        entry = _sub(feed, _ATOM, "entry")
-        _sub(entry, _ATOM, "id", f"yt:video:{video_id}")
-        _sub(entry, _YT, "videoId", video_id)
-        _sub(entry, _YT, "channelId", channel_id)
-        _sub(entry, _ATOM, "title", video_title)
-        _sub(entry, _ATOM, "link", rel="alternate", href=f"https://www.youtube.com/watch?v={video_id}")
-        author = _sub(entry, _ATOM, "author")
-        _sub(author, _ATOM, "name", title)
-        _sub(author, _ATOM, "uri", channel_url)
-        _sub(entry, _ATOM, "published", published)
-        _sub(entry, _ATOM, "updated", published)
-        group = _sub(entry, _MEDIA, "group")
-        _sub(group, _MEDIA, "title", video_title)
-        _sub(
-            group,
-            _MEDIA,
-            "content",
-            url=f"https://www.youtube.com/v/{video_id}?version=3",
-            type="application/x-shockwave-flash",
-            width="640",
-            height="390",
-        )
-        _sub(
-            group,
-            _MEDIA,
-            "thumbnail",
-            url=f"https://i1.ytimg.com/vi/{video_id}/hqdefault.jpg",
-            width="480",
-            height="360",
-        )
-        _sub(group, _MEDIA, "description", snippet.get("description", ""))
+        _add_entry(feed, item, channel_id, title)
 
     return ET.tostring(feed, encoding="utf-8", xml_declaration=True)
+
+
+def build_playlist_feed(playlist_id: str, items: list[dict], *, title: str = "") -> bytes:
+    """``build_feed`` for a playlist. As in its real feed, each entry names
+    the channel that uploaded the video, which needn't own the playlist."""
+    feed = ET.Element(f"{{{_ATOM}}}feed")
+    _sub(feed, _ATOM, "link", rel="self", href=playlists.feed_url(playlist_id))
+    _sub(feed, _ATOM, "id", f"yt:playlist:{playlist_id}")
+    _sub(feed, _YT, "playlistId", playlist_id)
+    _sub(feed, _ATOM, "title", title)
+    _sub(feed, _ATOM, "link", rel="alternate", href=playlists.page_url(playlist_id))
+
+    for item in items:
+        snippet = item.get("snippet", {})
+        _add_entry(feed, item, snippet.get("videoOwnerChannelId", ""), snippet.get("videoOwnerChannelTitle", ""))
+
+    return ET.tostring(feed, encoding="utf-8", xml_declaration=True)
+
+
+def _add_entry(feed: ET.Element, item: dict, channel_id: str, author_name: str) -> None:
+    """One playlistItems result as a feed ``<entry>``, uploaded by ``channel_id``."""
+    snippet = item.get("snippet", {})
+    video_id = snippet.get("resourceId", {}).get("videoId")
+    # Private and deleted videos can linger in the playlist without an owner.
+    if not video_id or "videoOwnerChannelId" not in snippet:
+        return
+    published = _iso(item.get("contentDetails", {}).get("videoPublishedAt") or snippet["publishedAt"])
+    video_title = snippet.get("title", "")
+    channel_url = f"https://www.youtube.com/channel/{channel_id}"
+
+    entry = _sub(feed, _ATOM, "entry")
+    _sub(entry, _ATOM, "id", f"yt:video:{video_id}")
+    _sub(entry, _YT, "videoId", video_id)
+    _sub(entry, _YT, "channelId", channel_id)
+    _sub(entry, _ATOM, "title", video_title)
+    _sub(entry, _ATOM, "link", rel="alternate", href=f"https://www.youtube.com/watch?v={video_id}")
+    author = _sub(entry, _ATOM, "author")
+    _sub(author, _ATOM, "name", author_name)
+    _sub(author, _ATOM, "uri", channel_url)
+    _sub(entry, _ATOM, "published", published)
+    _sub(entry, _ATOM, "updated", published)
+    group = _sub(entry, _MEDIA, "group")
+    _sub(group, _MEDIA, "title", video_title)
+    _sub(
+        group,
+        _MEDIA,
+        "content",
+        url=f"https://www.youtube.com/v/{video_id}?version=3",
+        type="application/x-shockwave-flash",
+        width="640",
+        height="390",
+    )
+    _sub(
+        group,
+        _MEDIA,
+        "thumbnail",
+        url=f"https://i1.ytimg.com/vi/{video_id}/hqdefault.jpg",
+        width="480",
+        height="360",
+    )
+    _sub(group, _MEDIA, "description", snippet.get("description", ""))

@@ -5,7 +5,7 @@ from fastapi.responses import Response
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from youtube_subs_opml import nebula
+from youtube_subs_opml import nebula, playlists
 from youtube_subs_opml.opml import build_opml
 from youtube_subs_opml.youtube import Subscription as SubData
 
@@ -17,7 +17,11 @@ router = APIRouter(prefix="/opml", tags=["opml"])
 
 
 def _sub_data(ch: Channel) -> SubData:
-    html_url = nebula.channel_url(ch.channel_id) if ch.platform == nebula.PLATFORM else None
+    html_url = None
+    if ch.platform == nebula.PLATFORM:
+        html_url = nebula.channel_url(ch.channel_id)
+    elif ch.platform == playlists.PLATFORM:
+        html_url = playlists.page_url(ch.channel_id)
     return SubData(
         channel_id=ch.channel_id,
         title=ch.title,

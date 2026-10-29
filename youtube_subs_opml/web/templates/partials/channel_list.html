@@ -33,6 +33,8 @@
       {% endif %}
       {% if ch.is_nebula %}
       <span class="badge-nebula" title="Nebula channel">NEB</span>
+      {% elif ch.is_playlist %}
+      <span class="badge-nebula" title="YouTube playlist">PL</span>
       {% elif ch.is_manual %}
       <span class="badge-manual" title="Added manually">M</span>
       {% endif %}
