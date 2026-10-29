@@ -31,6 +31,7 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal, overload
 
@@ -138,6 +139,20 @@ def podcast_cut(db: Session, user: User, channel_id: str) -> str | None:
     if resolve_podcast_mode(db, user, channel_id) != "remove":
         return None
     return ",".join(user_categories(user, podcast=True)) or None
+
+
+def podcast_cut_for(db: Session, user: User, source_ids: Iterable[str]) -> str | None:
+    """``podcast_cut`` for a video in several channels and playlists (its
+    ``source_ids``): the cut if any of them that ``user`` follows, and isn't
+    ignoring, asks for one."""
+    followed = db.execute(
+        select(Subscription.channel_id).where(
+            Subscription.user_id == user.id,
+            Subscription.channel_id.in_(list(source_ids)),
+            Subscription.ignored.is_(False),
+        )
+    ).scalars()
+    return next((kinds for channel_id in followed if (kinds := podcast_cut(db, user, channel_id))), None)
 
 
 @dataclass(frozen=True)

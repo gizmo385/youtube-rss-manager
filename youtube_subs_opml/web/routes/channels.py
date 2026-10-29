@@ -25,7 +25,6 @@ from ..models import (
     ChannelCategory,
     Download,
     OpmlToken,
-    PlaylistVideo,
     Subscription,
     User,
     Video,
@@ -42,6 +41,12 @@ from ..services.prefs import (
     parse_tristate_bool,
 )
 from ..services.resolve import resolve_channel_public
+from ..services.sources import (
+    ARCHIVABLE_PLATFORMS,
+    followed_video_ids,
+    source_video_ids,
+    video_sources,
+)
 from ..services.stats import format_bytes, shell_stats
 from ..services.sync import build_google_credentials
 from ..services.watch import channel_videos
@@ -127,13 +132,14 @@ def _effective(sub, cats: list[Category], user: User, key: str):
 
 
 def _channel_ids_with_failures(user: User, db: Session) -> set[str]:
-    """Channel ids that have at least one failed download (for the list badge)."""
+    """Channel and playlist ids that have at least one failed download (for
+    the list badge)."""
+    vs = video_sources()
     rows = (
         db.execute(
-            select(Video.channel_id)
-            .select_from(Download)
-            .join(Video, Video.video_id == Download.video_id)
-            .join(Subscription, Subscription.channel_id == Video.channel_id)
+            select(vs.c.source_id)
+            .join(Download, Download.video_id == vs.c.video_id)
+            .join(Subscription, Subscription.channel_id == vs.c.source_id)
             .where(Subscription.user_id == user.id, Download.status == "failed")
             .distinct()
         )
@@ -186,9 +192,8 @@ def _channel_records(user: User, db: Session) -> tuple[list[dict], list[Category
                 "ignored": sub.ignored,
                 "cats": cats,
                 "cat_count": len(cats),
-                # Nebula channels and playlists aren't archived, whatever the
-                # inherited pref says.
-                "archive_on": bool(archive_on) and ch.platform == "youtube",
+                # Nebula can't be downloaded, whatever the inherited pref says.
+                "archive_on": bool(archive_on) and ch.platform in ARCHIVABLE_PLATFORMS,
                 "is_nebula": ch.platform == nebula.PLATFORM,
                 "is_playlist": ch.platform == playlists.PLATFORM,
                 "has_failure": ch.channel_id in failures,
@@ -390,11 +395,12 @@ def _activity_item(dl: Download, vid: Video, channel_title: str | None = None) -
 
 
 def _archive_activity(channel_id: str, db: Session) -> list[dict]:
-    """Recent download rows for a channel, newest first, as activity items."""
+    """Recent download rows for a channel or playlist, newest first, as
+    activity items."""
     rows = db.execute(
         select(Download, Video)
         .join(Video, Video.video_id == Download.video_id)
-        .where(Video.channel_id == channel_id)
+        .where(Video.video_id.in_(source_video_ids(channel_id)))
         .order_by(Download.created_at.desc())
         .limit(15)
     ).all()
@@ -402,13 +408,13 @@ def _archive_activity(channel_id: str, db: Session) -> list[dict]:
 
 
 def _recent_activity(user: User, db: Session, limit: int = 12) -> list[dict]:
-    """Recent downloads across every channel this user subscribes to."""
+    """Recent downloads across every channel and playlist this user
+    subscribes to, with the channel each video is from."""
     rows = db.execute(
         select(Download, Video, Channel.title)
         .join(Video, Video.video_id == Download.video_id)
         .join(Channel, Channel.channel_id == Video.channel_id)
-        .join(Subscription, Subscription.channel_id == Video.channel_id)
-        .where(Subscription.user_id == user.id)
+        .where(Video.video_id.in_(followed_video_ids(user.id, include_ignored=True)))
         .order_by(Download.created_at.desc())
         .limit(limit)
     ).all()
@@ -444,15 +450,14 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
     )
     cats = list(cats)
 
-    # Disk + count over completed downloads for this channel.
+    # Disk + count over completed downloads for this channel or playlist.
     disk, count = db.execute(
         select(
             func.coalesce(func.sum(Download.file_size_bytes), 0),
             func.count(),
         )
         .select_from(Download)
-        .join(Video, Video.video_id == Download.video_id)
-        .where(Video.channel_id == channel_id, Download.status == "complete")
+        .where(Download.video_id.in_(source_video_ids(channel_id)), Download.status == "complete")
     ).one()
 
     is_nebula = ch.platform == nebula.PLATFORM
@@ -461,15 +466,9 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         # Nebula entries aren't recorded as videos; read the cached feed.
         cached = load_feed(db, channel_id)
         last_video = nebula.latest_published(cached) if cached else None
-    elif is_playlist:
-        last_video = db.execute(
-            select(func.max(Video.published_at))
-            .join(PlaylistVideo, PlaylistVideo.video_id == Video.video_id)
-            .where(PlaylistVideo.playlist_id == channel_id)
-        ).scalar_one_or_none()
     else:
         last_video = db.execute(
-            select(func.max(Video.published_at)).where(Video.channel_id == channel_id)
+            select(func.max(Video.published_at)).where(Video.video_id.in_(source_video_ids(channel_id)))
         ).scalar_one_or_none()
 
     # Assignable categories (not already assigned).
@@ -505,7 +504,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         platform = {
             "is_nebula": False,
             "noun": "playlist",
-            "archivable": False,
+            "archivable": True,
             "platform_name": "YouTube",
             "platform_label": "YouTube playlist",
             "page_url": playlists.page_url(ch.channel_id),
@@ -606,17 +605,14 @@ def _overview_context(user: User, db: Session) -> dict:
     archiving = [r for r in live if r["archive_on"]]
     failing = [r for r in records if r["has_failure"]]
 
-    # Download totals across this user's channels, one grouped query.
+    # Download totals across this user's channels and playlists, one grouped query.
     status_rows = db.execute(
         select(
             Download.status,
             func.count(),
             func.coalesce(func.sum(Download.file_size_bytes), 0),
         )
-        .select_from(Download)
-        .join(Video, Video.video_id == Download.video_id)
-        .join(Subscription, Subscription.channel_id == Video.channel_id)
-        .where(Subscription.user_id == user.id)
+        .where(Download.video_id.in_(followed_video_ids(user.id, include_ignored=True)))
         .group_by(Download.status)
     ).all()
     counts = {status: count for status, count, _ in status_rows}
@@ -662,10 +658,9 @@ def _overview_context(user: User, db: Session) -> dict:
         )
 
     last_video = db.execute(
-        select(func.max(Video.published_at))
-        .select_from(Video)
-        .join(Subscription, Subscription.channel_id == Video.channel_id)
-        .where(Subscription.user_id == user.id)
+        select(func.max(Video.published_at)).where(
+            Video.video_id.in_(followed_video_ids(user.id, include_ignored=True))
+        )
     ).scalar_one_or_none()
 
     last_synced = db.execute(

@@ -23,15 +23,21 @@ channel you explicitly set to "keep 10" keeps 10 of both, rather than having a
 global audio default quietly override the number you typed on that channel.
 Nothing set anywhere means the two windows are identical, which is exactly the
 behaviour before the column existed.
+
+"Channel" above includes followed playlists: a subscription is to either, and
+a playlist's videos are the ones seen on its feed (see services/sources). A
+video can be in several followed sources, so a video's intent merges theirs.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
+from functools import reduce
 from typing import TypeVar
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from ..models import (
@@ -45,6 +51,7 @@ from ..models import (
     VideoShort,
 )
 from .prefs import resolve
+from .sources import ARCHIVABLE_PLATFORMS, in_source, preferred, sources_of, video_sources
 from .sponsorblock import PODCAST_MODES, strongest, user_categories
 
 T = TypeVar("T")
@@ -168,23 +175,24 @@ def _category_prefs(db: Session, user_id: int, channel_id: str) -> _CategoryPref
     )
 
 
-def _archivable_subscriptions(db: Session) -> list[Subscription]:
-    """Non-ignored subscriptions to channels that can be downloaded at all.
+def _archivable_subscriptions(db: Session) -> list[tuple[Subscription, str]]:
+    """Non-ignored subscriptions to channels or playlists that can be
+    downloaded at all, each with its platform.
 
-    Only YouTube channels qualify. A Nebula channel sitting in a category (or
-    under an account default) with downloads on must not produce an intent —
-    there's nothing the downloader could fetch for it.
+    A Nebula channel sitting in a category (or under an account default) with
+    downloads on must not produce an intent — there's nothing the downloader
+    could fetch for it.
     """
     return list(
         db.execute(
-            select(Subscription)
+            select(Subscription, Channel.platform)
             .join(Channel, Channel.channel_id == Subscription.channel_id)
             .where(
                 Subscription.ignored == False,  # noqa: E712
-                Channel.platform == "youtube",
+                Channel.platform.in_(ARCHIVABLE_PLATFORMS),
             )
         )
-        .scalars()
+        .tuples()
         .all()
     )
 
@@ -209,13 +217,14 @@ def _audio_keep(sub, cat_prefs: _CategoryPrefs, user) -> int:
 
 
 def channel_intents(db: Session) -> dict[str, ChannelIntent]:
-    """Resolve every subscribed channel into a single global intent."""
+    """Resolve every subscribed channel and playlist into a single global
+    intent, keyed by its id."""
     subs = _archivable_subscriptions(db)
 
     users = {u.id: u for u in db.execute(select(User)).scalars().all()}
     intents: dict[str, ChannelIntent] = {}
 
-    for sub in subs:
+    for sub, _ in subs:
         user = users.get(sub.user_id)
         if user is None:
             continue
@@ -232,37 +241,63 @@ def channel_intents(db: Session) -> dict[str, ChannelIntent]:
         wants_shorts = download and resolve(sub.include_shorts, cat.shorts, user.include_shorts)
         wants_sponsorblock = download and resolve(sub.sponsorblock, cat.sponsorblock, user.sponsorblock) != "off"
 
-        existing = intents.get(sub.channel_id)
-        if existing is None:
-            intents[sub.channel_id] = ChannelIntent(
-                channel_id=sub.channel_id,
-                download=download,
-                keep_last_n=keep,
-                max_duration_seconds=max_dur,
-                min_duration_seconds=min_dur,
-                generate_podcast=podcast,
-                include_shorts=wants_shorts,
-                sponsorblock=wants_sponsorblock,
-            )
-            continue
-
-        # Merge: most permissive across subscribers.
-        intents[sub.channel_id] = ChannelIntent(
+        intent = ChannelIntent(
             channel_id=sub.channel_id,
-            download=existing.download or download,
-            keep_last_n=_most_permissive_int([existing.keep_last_n, keep]) or 0,
-            max_duration_seconds=_most_permissive_int([existing.max_duration_seconds, max_dur]) or 0,
-            min_duration_seconds=_least_restrictive_floor([existing.min_duration_seconds, min_dur]) or 0,
-            generate_podcast=existing.generate_podcast or podcast,
-            include_shorts=existing.include_shorts or wants_shorts,
-            sponsorblock=existing.sponsorblock or wants_sponsorblock,
+            download=download,
+            keep_last_n=keep,
+            max_duration_seconds=max_dur,
+            min_duration_seconds=min_dur,
+            generate_podcast=podcast,
+            include_shorts=wants_shorts,
+            sponsorblock=wants_sponsorblock,
         )
+        existing = intents.get(sub.channel_id)
+        intents[sub.channel_id] = intent if existing is None else _merge(existing, intent)
 
     return intents
 
 
-def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
-    """Shared core of the per-user video/podcast retention sets.
+def _merge(a: ChannelIntent, b: ChannelIntent) -> ChannelIntent:
+    """Two intents as one, most permissive in every field. Keeps ``a``'s id."""
+    return ChannelIntent(
+        channel_id=a.channel_id,
+        download=a.download or b.download,
+        keep_last_n=_most_permissive_int([a.keep_last_n, b.keep_last_n]) or 0,
+        max_duration_seconds=_most_permissive_int([a.max_duration_seconds, b.max_duration_seconds]) or 0,
+        min_duration_seconds=_least_restrictive_floor([a.min_duration_seconds, b.min_duration_seconds]) or 0,
+        generate_podcast=a.generate_podcast or b.generate_podcast,
+        include_shorts=a.include_shorts or b.include_shorts,
+        sponsorblock=a.sponsorblock or b.sponsorblock,
+    )
+
+
+def video_intent(db: Session, video_id: str) -> ChannelIntent | None:
+    """What subscribers want for one video: the intents of its channel and of
+    every playlist it's in, merged, or None if nobody follows any of them."""
+    intents = channel_intents(db)
+    vs = video_sources()
+    found = [
+        intents[source_id]
+        for source_id in db.execute(select(vs.c.source_id).where(vs.c.video_id == video_id)).scalars()
+        if source_id in intents
+    ]
+    return reduce(_merge, found) if found else None
+
+
+def _archivable_videos(source_id: str, platform: str):
+    """A condition on ``Video``: the ones a subscription to this source can
+    archive. For a channel, not the older uploads found other than on its
+    feed (``backfilled``): those are for search, and would otherwise queue a
+    "keep everything" channel's whole catalogue. A playlist's are all from
+    its feed already."""
+    if platform == "youtube":
+        return and_(in_source(source_id, platform), Video.backfilled.is_(False))
+    return in_source(source_id, platform)
+
+
+def _retained_sources(db: Session, *, podcast: bool) -> dict[int, dict[str, str]]:
+    """Shared core of the per-user video/podcast retention sets: per user, the
+    videos they retain, each with the source it's filed under.
 
     ``podcast=False`` gates on ``download_enabled`` — the videos whose file is
     kept on disk and shown in the user's Jellyfin library. ``podcast=True`` gates
@@ -275,12 +310,14 @@ def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
     All three preferences resolve via the cascade (subscription >
     most-permissive category > user). A user who wants neither contributes
     nothing — their ``keep_last_n`` never inflates anyone else's retention.
+    A video one user retains through more than one source (a channel and a
+    playlist of it, say) is filed under ``sources.preferred``.
     """
     subs = _archivable_subscriptions(db)
     users = {u.id: u for u in db.execute(select(User)).scalars().all()}
 
-    retained: dict[int, set[str]] = {}
-    for sub in subs:
+    found: dict[int, dict[str, list[tuple[str, str]]]] = defaultdict(lambda: defaultdict(list))
+    for sub, platform in subs:
         user = users.get(sub.user_id)
         if user is None:
             continue
@@ -296,11 +333,9 @@ def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
             continue
         include_shorts = resolve(sub.include_shorts, cat.shorts, user.include_shorts)
 
-        # Not the history backfill's older uploads: those are for search, and
-        # would otherwise queue a "keep everything" channel's whole catalogue.
         stmt = (
             select(Video.video_id)
-            .where(Video.channel_id == sub.channel_id, Video.backfilled.is_(False))
+            .where(_archivable_videos(sub.channel_id, platform))
             .order_by(Video.published_at.desc().nullslast())
         )
         if include_shorts:
@@ -317,8 +352,18 @@ def _retained_ids(db: Session, *, podcast: bool) -> dict[int, set[str]]:
             if keep > 0:
                 vids = vids[:keep]
 
-        retained.setdefault(sub.user_id, set()).update(vids)
-    return retained
+        for vid in vids:
+            found[sub.user_id][vid].append((sub.channel_id, platform))
+
+    return {
+        user_id: {vid: preferred(sources) for vid, sources in by_video.items()} for user_id, by_video in found.items()
+    }
+
+
+def user_retained_video_sources(db: Session) -> dict[int, dict[str, str]]:
+    """``user_retained_video_ids`` with the source each video is filed under
+    — the series it appears as in that user's library."""
+    return _retained_sources(db, podcast=False)
 
 
 def user_retained_video_ids(db: Session) -> dict[int, set[str]]:
@@ -329,7 +374,7 @@ def user_retained_video_ids(db: Session) -> dict[int, set[str]]:
     Gated on ``download_enabled``: a channel a user wants only as a podcast
     contributes nothing here, so its video is never linked into their library.
     """
-    return _retained_ids(db, podcast=False)
+    return {user_id: set(vids) for user_id, vids in _retained_sources(db, podcast=False).items()}
 
 
 def user_retained_podcast_ids(db: Session) -> dict[int, set[str]]:
@@ -344,7 +389,7 @@ def user_retained_podcast_ids(db: Session) -> dict[int, set[str]]:
     only — the same mechanism, so old episodes keep their audio while the video
     is pruned on the shorter schedule.
     """
-    return _retained_ids(db, podcast=True)
+    return {user_id: set(vids) for user_id, vids in _retained_sources(db, podcast=True).items()}
 
 
 def retained_video_ids(db: Session) -> set[str]:
@@ -379,18 +424,20 @@ def wanted_audio_cuts(db: Session) -> dict[str, set[str]]:
     """Per video whose podcast audio is kept, the SponsorBlock cuts its
     subscribers want made: one set of segment kinds (as stored in
     ``AudioCut.categories``) per distinct choice among those who have
-    ``podcast_sponsorblock`` resolve to ``remove`` for its channel.
+    ``podcast_sponsorblock`` resolve to ``remove`` for any channel or
+    playlist of theirs the video is in.
 
-    The per-user resolution matches ``sponsorblock.podcast_cut``, which is
-    what each user's feed looks the cut up by.
+    The per-user resolution matches ``sponsorblock.podcast_cut_for``, which
+    is what each user's feed looks the cut up by.
     """
     retained = user_retained_podcast_ids(db)
     if not retained:
         return {}
     users = {u.id: u for u in db.execute(select(User)).scalars().all()}
 
-    cuts: dict[tuple[int, str], str] = {}  # (user, channel) -> kinds
-    for sub in _archivable_subscriptions(db):
+    kinds_by_user: dict[int, str] = {}
+    cut_sources: set[tuple[int, str]] = set()  # (user, channel or playlist)
+    for sub, _ in _archivable_subscriptions(db):
         user = users.get(sub.user_id)
         if user is None or sub.user_id not in retained:
             continue
@@ -398,20 +445,17 @@ def wanted_audio_cuts(db: Session) -> dict[str, set[str]]:
         mode = resolve(sub.podcast_sponsorblock, cat.podcast_sponsorblock, user.podcast_sponsorblock)
         kinds = ",".join(user_categories(user, podcast=True))
         if mode == "remove" and kinds:
-            cuts[(sub.user_id, sub.channel_id)] = kinds
-    if not cuts:
+            cut_sources.add((sub.user_id, sub.channel_id))
+            kinds_by_user[sub.user_id] = kinds
+    if not cut_sources:
         return {}
 
-    ids = set().union(*retained.values())
-    channel_of = dict(
-        db.execute(select(Video.video_id, Video.channel_id).where(Video.video_id.in_(ids))).tuples().all()
-    )
+    sources = sources_of(db, set().union(*retained.values()))
     wanted: dict[str, set[str]] = {}
     for user_id, vids in retained.items():
         for vid in vids:
-            kinds = cuts.get((user_id, channel_of.get(vid, "")))
-            if kinds:
-                wanted.setdefault(vid, set()).add(kinds)
+            if any((user_id, source_id) in cut_sources for source_id in sources[vid]):
+                wanted.setdefault(vid, set()).add(kinds_by_user[user_id])
     return wanted
 
 

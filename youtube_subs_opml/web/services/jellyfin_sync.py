@@ -46,6 +46,7 @@ from ..models import (
 )
 from .crypto import decrypt_token
 from .jellyfin import JellyfinClient, JellyfinError, normalise_path
+from .sources import sources_of
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,9 @@ def reconcile_playlists(db: Session, user_id: int, jf_user_id: str, client) -> N
     """Make each category's Jellyfin playlist match the items the user retains.
 
     Desired contents per category = the resolved item ids of the user's
-    hardlinks whose channel is assigned to that category, newest upload first.
+    hardlinks whose channel, or a playlist they're in, is assigned to that
+    category, newest upload first. Each item appears once, however many ways
+    it's in the category.
     Playlists are created lazily on first need and their ids cached in
     ``category_playlists``.
     """
@@ -158,7 +161,7 @@ def reconcile_playlists(db: Session, user_id: int, jf_user_id: str, client) -> N
     for assignment in db.execute(select(ChannelCategory).where(ChannelCategory.user_id == user_id)).scalars().all():
         chan_to_cats[assignment.channel_id].add(assignment.category_id)
 
-    # resolved links + the channel and upload date of each video
+    # resolved links + the channel and playlists, and upload date, of each video
     links = (
         db.execute(
             select(DownloadLink).where(
@@ -170,31 +173,32 @@ def reconcile_playlists(db: Session, user_id: int, jf_user_id: str, client) -> N
         .all()
     )
     if links:
-        videos = {
-            video_id: (channel_id, published_at)
-            for video_id, channel_id, published_at in db.execute(
-                select(Video.video_id, Video.channel_id, Video.published_at).where(
-                    Video.video_id.in_([link.video_id for link in links])
-                )
-            ).all()
-        }
+        videos = dict(
+            db.execute(
+                select(Video.video_id, Video.published_at).where(Video.video_id.in_([link.video_id for link in links]))
+            )
+            .tuples()
+            .all()
+        )
+        sources = sources_of(db, videos)
     else:
-        videos = {}
+        videos, sources = {}, {}
 
     # Newest upload first, undated last, video id breaking ties so the order is
     # stable across passes (an unstable order would rewrite the playlist on
     # every sync).
     ordered_links = sorted(
         (link for link in links if link.video_id in videos),
-        key=lambda link: _order_key(videos[link.video_id][1], link.video_id),
+        key=lambda link: _order_key(videos[link.video_id], link.video_id),
     )
 
     desired: dict[int, list[str]] = defaultdict(list)
     for link in ordered_links:
         if link.jellyfin_item_id is None:  # excluded by the query; narrows the type
             continue
-        channel_id = videos[link.video_id][0]
-        for cat_id in chan_to_cats.get(channel_id, ()):
+        # In a category through its channel or any playlist it's in, once.
+        cat_ids = set().union(*(chan_to_cats.get(source_id, set()) for source_id in sources[link.video_id]))
+        for cat_id in cat_ids:
             desired[cat_id].append(link.jellyfin_item_id)
 
     playlists = {

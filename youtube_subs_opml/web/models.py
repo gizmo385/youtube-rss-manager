@@ -98,15 +98,16 @@ class Channel(Base):
     # 'youtube' | 'nebula' | 'youtube_playlist'. Nebula channels (ids
     # ``nebula:{slug}``) are feed-only: no account sync, no Shorts/live
     # filtering and no archive — see youtube_subs_opml.nebula. YouTube
-    # playlists (ids ``PL…``) are followed like channels but, for now, not
-    # archived either — see youtube_subs_opml.playlists.
+    # playlists (ids ``PL…``) are followed and archived like channels — see
+    # youtube_subs_opml.playlists.
     platform: Mapped[str] = mapped_column(String(16), server_default="youtube", default="youtube")
     title: Mapped[str] = mapped_column(String(255), server_default="")
     description: Mapped[str] = mapped_column(Text, server_default="")
-    # Channel avatar and banner URLs, used as Jellyfin series/season posters and
-    # backdrops. NULL until the downloader probes the channel (see
-    # downloader.worker.backfill_channel_art); YouTube's RSS feed doesn't carry
-    # them, so they're fetched separately and cached here.
+    # Channel avatar and banner URLs (for a playlist, its cover and no banner),
+    # used as Jellyfin series/season posters and backdrops. NULL until the
+    # downloader probes the channel (see downloader.worker.backfill_channel_art);
+    # YouTube's RSS feed doesn't carry them, so they're fetched separately and
+    # cached here.
     thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     banner_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Native array on Postgres; JSON on SQLite (for local/dev use).

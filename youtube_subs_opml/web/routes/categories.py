@@ -17,7 +17,6 @@ from ..models import (
     Download,
     Subscription,
     User,
-    Video,
 )
 from ..services import sponsorblock
 from ..services.prefs import (
@@ -27,6 +26,7 @@ from ..services.prefs import (
     parse_link_target,
     parse_tristate_bool,
 )
+from ..services.sources import video_sources
 from ..templating import templates
 
 router = APIRouter(prefix="/categories", tags=["categories"])
@@ -111,20 +111,25 @@ def _categories_with_counts(user: User, db: Session) -> list[dict]:
         .all()
     )
 
-    # Disk used by completed downloads for the channels in each category.
+    # Disk used by completed downloads for the channels and playlists in each
+    # category, counting a video in two of them once.
+    vs = video_sources()
+    in_category = (
+        select(ChannelCategory.category_id, vs.c.video_id)
+        .join(vs, vs.c.source_id == ChannelCategory.channel_id)
+        .where(ChannelCategory.user_id == user.id)
+        .distinct()
+        .subquery()
+    )
     disk = dict(
         db.execute(
             select(
-                ChannelCategory.category_id,
+                in_category.c.category_id,
                 func.coalesce(func.sum(Download.file_size_bytes), 0),
             )
-            .join(Video, Video.channel_id == ChannelCategory.channel_id)
-            .join(Download, Download.video_id == Video.video_id)
-            .where(
-                ChannelCategory.user_id == user.id,
-                Download.status == "complete",
-            )
-            .group_by(ChannelCategory.category_id)
+            .join(Download, Download.video_id == in_category.c.video_id)
+            .where(Download.status == "complete")
+            .group_by(in_category.c.category_id)
         )
         .tuples()
         .all()

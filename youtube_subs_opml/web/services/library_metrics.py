@@ -19,13 +19,15 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from opentelemetry.metrics import CallbackOptions, Observation
-from sqlalchemy import Integer, and_, cast, func, literal, select
+from sqlalchemy import Integer, and_, cast, func, literal, or_, select
 from sqlalchemy.orm import Session
 
+from youtube_subs_opml import playlists
 from youtube_subs_opml.metrics import meter
 
 from ..db import get_session_factory
 from ..models import Category, Channel, ChannelCategory, Download, Subscription, Video
+from .sources import video_sources
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,9 @@ def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]
         )
     ]
 
-    # Per subscribed channel: videos, recent uploads, last upload, lengths.
+    # Per subscribed channel or playlist: videos, recent uploads, last upload,
+    # lengths.
+    vs = video_sources()
     per_channel = db.execute(
         select(
             Channel.channel_id,
@@ -87,9 +91,16 @@ def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]
             func.avg(Video.duration_seconds),
         )
         .join(followed, followed.c.channel_id == Channel.channel_id)
+        .outerjoin(vs, vs.c.source_id == Channel.channel_id)
         # Videos seen on the feed: the history backfill's older uploads would
-        # swamp these counts the day it ran.
-        .outerjoin(Video, and_(Video.channel_id == Channel.channel_id, Video.backfilled.is_(False)))
+        # swamp these counts the day it ran. A playlist's are all from its feed.
+        .outerjoin(
+            Video,
+            and_(
+                Video.video_id == vs.c.video_id,
+                or_(Video.backfilled.is_(False), Channel.platform == playlists.PLATFORM),
+            ),
+        )
         .group_by(Channel.channel_id, Channel.title, Channel.platform)
     ).all()
     out["yt_rss_channel_videos"] = []
@@ -119,17 +130,37 @@ def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]
         )
         .subquery()
     )
-    per_category = db.execute(
-        select(
-            category_of.c.category,
-            func.count(func.distinct(category_of.c.channel_id)),
-            func.count(func.distinct(Video.video_id)),
-            func.avg(Video.duration_seconds),
-            func.sum(Video.duration_seconds),
+    channels_in = dict(
+        db.execute(
+            select(category_of.c.category, func.count(func.distinct(category_of.c.channel_id))).group_by(
+                category_of.c.category
+            )
         )
-        .outerjoin(Video, Video.channel_id == category_of.c.channel_id)
-        .group_by(category_of.c.category)
-    ).all()
+        .tuples()
+        .all()
+    )
+    # Each video once per category, however many of its channels and
+    # playlists are in it, so durations aren't summed twice.
+    category_videos = (
+        select(category_of.c.category, vs.c.video_id)
+        .join(vs, vs.c.source_id == category_of.c.channel_id)
+        .distinct()
+        .subquery()
+    )
+    video_stats = {
+        cat: (videos, avg, total)
+        for cat, videos, avg, total in db.execute(
+            select(
+                category_videos.c.category,
+                func.count(Video.video_id),
+                func.avg(Video.duration_seconds),
+                func.sum(Video.duration_seconds),
+            )
+            .join(Video, Video.video_id == category_videos.c.video_id)
+            .group_by(category_videos.c.category)
+        ).tuples()
+    }
+    per_category = [(cat, ch, *video_stats.get(cat, (0, None, None))) for cat, ch in channels_in.items()]
     out["yt_rss_category_channels"] = [(ch, {"category": cat}) for cat, ch, _, _, _ in per_category]
     out["yt_rss_category_videos"] = [(v, {"category": cat}) for cat, _, v, _, _ in per_category]
     out["yt_rss_category_avg_video_duration"] = [

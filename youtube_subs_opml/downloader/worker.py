@@ -35,7 +35,7 @@ from opentelemetry.trace import StatusCode
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import metrics
+from .. import metrics, playlists
 from ..tracing import tracer
 from ..web.config import get_settings
 from ..web.db import get_session_factory
@@ -44,10 +44,12 @@ from ..web.services.archive import (
     channel_intents,
     retained_podcast_ids,
     retained_video_ids,
-    user_retained_video_ids,
+    user_retained_video_sources,
+    video_intent,
 )
 from ..web.services.prefs import is_within_duration_limit, meets_duration_floor
 from ..web.services.shorts import classify_videos
+from ..web.services.sources import sources_of, video_sources
 from . import naming, sponsor_cuts, webm, ytdlp
 
 logger = logging.getLogger(__name__)
@@ -213,7 +215,8 @@ def process(row: Download, db: Session) -> None:
     # sees it (RSS omits it) and it would otherwise only live in the NFO.
     video.description = meta.description
 
-    intent = channel_intents(db).get(video.channel_id)
+    # Merged across its channel and any playlists it's in.
+    intent = video_intent(db, row.video_id)
     if intent is None or not (intent.download or intent.generate_podcast):
         row.status = "skipped"
         row.skip_reason = "no_subscribers"
@@ -377,14 +380,20 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
     """Make per-user hardlinks match each user's retained set. Idempotent.
 
     Each subscriber's library is a subtree of hardlinks into the canonical
-    files. This reconciles that subtree against ``user_retained_video_ids``:
+    files. This reconciles that subtree against ``user_retained_video_sources``:
     videos a user gained (new subscription, or a fresh download) get linked in;
     videos they no longer retain get unlinked. Runs after every download and on
     each idle pass, so subscription changes take effect without a re-download.
 
+    A link goes in the series of the channel or playlist the video is filed
+    under for that user, so a followed playlist is a show of its own. That's
+    decided when the link is made: if it changes later (the user starts
+    following the video's channel as well, say) the link stays where it is,
+    since moving it would lose the user's Jellyfin watched state.
+
     Returns ``(created, removed)`` link counts.
     """
-    desired = user_retained_video_ids(db)
+    desired = user_retained_video_sources(db)
 
     # Only completed downloads with a real canonical file can be linked.
     completed = {
@@ -396,23 +405,27 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
     channels = {c.channel_id: c for c in db.execute(select(Channel)).scalars().all()}
     existing = {(link.user_id, link.video_id): link for link in db.execute(select(DownloadLink)).scalars().all()}
 
-    wanted: set[tuple[int, str]] = {
-        (user_id, vid) for user_id, vids in desired.items() for vid in vids if vid in completed
+    # (user, video) -> the channel or playlist it's filed under.
+    wanted: dict[tuple[int, str], str] = {
+        (user_id, vid): source_id
+        for user_id, by_video in desired.items()
+        for vid, source_id in by_video.items()
+        if vid in completed
     }
 
     created = removed = 0
 
     # Add missing links.
-    for user_id, vid in wanted - set(existing):
+    for user_id, vid in set(wanted) - set(existing):
         download = completed[vid]
         video = videos.get(vid)
-        channel = channels.get(video.channel_id) if video else None
-        channel_title = channel.title if channel else (video.channel_id if video else vid)
+        series = channels.get(wanted[(user_id, vid)])
+        series_title = series.title if series else wanted[(user_id, vid)]
         src_mkv = _required_path(download.file_path)
         if not src_mkv.exists():
             logger.warning("Canonical file missing, skipping link: %s", src_mkv)
             continue
-        user_dir = naming.user_episode_dir(media_root, user_id, channel_title, video.published_at if video else None)
+        user_dir = naming.user_episode_dir(media_root, user_id, series_title, video.published_at if video else None)
         try:
             for src in naming.episode_files(src_mkv):
                 naming.hardlink(src, user_dir / src.name)
@@ -430,7 +443,7 @@ def reconcile_links(db: Session, media_root: str) -> tuple[int, int]:
         created += 1
 
     # Remove links no user wants any more.
-    for key in set(existing) - wanted:
+    for key in set(existing) - set(wanted):
         link = existing[key]
         if link.link_path:
             _unlink_all(Path(link.link_path))
@@ -757,11 +770,13 @@ def backfill_shorts(db: Session, *, limit: int = 15) -> int:
         return 0
 
     classified = set(db.execute(select(VideoShort.video_id)).scalars().all())
+    vs = video_sources()
     candidates = (
         db.execute(
             select(Download.video_id)
-            .join(Video, Video.video_id == Download.video_id)
-            .where(Download.status == "complete", Video.channel_id.in_(excluded))
+            .join(vs, vs.c.video_id == Download.video_id)
+            .where(Download.status == "complete", vs.c.source_id.in_(excluded))
+            .distinct()
         )
         .scalars()
         .all()
@@ -806,19 +821,21 @@ def _fetch_image(url: str, dest: Path) -> bool:
 
 
 def backfill_channel_art(db: Session, *, limit: int = 5) -> int:
-    """Fetch avatar/banner URLs for archived channels that lack them.
+    """Fetch avatar/banner URLs for archived channels that lack them, and
+    cover art for archived playlists.
 
-    Only channels with at least one completed download are probed, so we never
-    hit YouTube for a channel we don't archive. Bounded per pass to keep these
-    extra requests gentle. A successful probe with no images still records an
-    empty ``thumbnail_url`` sentinel so the channel isn't re-probed forever;
-    genuine failures leave it NULL to retry later.
+    Only channels and playlists with at least one completed download are
+    probed, so we never hit YouTube for one we don't archive. Bounded per
+    pass to keep these extra requests gentle. A successful probe with no
+    images still records an empty ``thumbnail_url`` sentinel so the channel
+    isn't re-probed forever; genuine failures leave it NULL to retry later.
 
     Returns the number of channels newly given art this pass.
     """
+    vs = video_sources()
     archived = (
-        select(Video.channel_id)
-        .join(Download, Download.video_id == Video.video_id)
+        select(vs.c.source_id)
+        .join(Download, Download.video_id == vs.c.video_id)
         .where(Download.status == "complete")
         .distinct()
     )
@@ -835,6 +852,16 @@ def backfill_channel_art(db: Session, *, limit: int = 5) -> int:
 
     done = 0
     for channel in channels:
+        if channel.platform == playlists.PLATFORM:
+            # A playlist has no avatar or banner, just its cover.
+            try:
+                channel.thumbnail_url = playlists.fetch_cover(channel.channel_id) or ""
+            except httpx.HTTPError as exc:
+                logger.warning("Playlist cover fetch failed for %s: %s", channel.channel_id, exc)
+                continue
+            db.commit()
+            done += 1
+            continue
         try:
             art = ytdlp.probe_channel(channel.channel_id)
         except ytdlp.ProbeError as exc:
@@ -858,47 +885,58 @@ def _ensure_art_link(src: Path, dst: Path) -> bool:
     return False
 
 
+def _canonical_art_dir(media_root: str, series: Channel) -> Path:
+    """Where a series' canonical poster/backdrop live. By id for a playlist,
+    so one titled like a channel can't share that channel's art."""
+    name = series.channel_id if series.platform == playlists.PLATFORM else series.title
+    return naming.canonical_channel_dir(media_root, name)
+
+
 def sync_library_art(db: Session, media_root: str) -> int:
     """Materialise channel/season posters into each user's library. Idempotent.
 
-    Two steps: (1) fetch each archived channel's avatar/banner into a single
-    canonical ``poster.jpg``/``backdrop.jpg`` under ``.canonical/{Channel}``,
-    then (2) hardlink those into every subscriber's ``{Channel}/`` (series art)
-    and ``{Channel}/Season {YYYY}/`` (season art) folders, sharing one inode the
-    same way episodes do. Season posters reuse the channel avatar so seasons
-    aren't blank tiles. Returns the number of art hardlinks created this pass.
+    Two steps: (1) fetch each archived channel's avatar/banner (a playlist's
+    cover) into a single canonical ``poster.jpg``/``backdrop.jpg`` under
+    ``.canonical/``, then (2) hardlink those into every subscriber's
+    ``{Channel}/`` (series art) and ``{Channel}/Season {YYYY}/`` (season art)
+    folders, sharing one inode the same way episodes do. Season posters reuse
+    the channel avatar so seasons aren't blank tiles. Returns the number of art
+    hardlinks created this pass.
     """
     channels = {c.channel_id: c for c in db.execute(select(Channel)).scalars().all()}
     videos = {v.video_id: v for v in db.execute(select(Video)).scalars().all()}
     links = [link for link in db.execute(select(DownloadLink)).scalars().all() if link.link_path]
+    sources = sources_of(db, {link.video_id for link in links})
 
-    def channel_for(video_id: str) -> Channel | None:
-        video = videos.get(video_id)
-        channel = channels.get(video.channel_id) if video else None
+    def series_for(link: DownloadLink) -> Channel | None:
+        """The channel or playlist whose series folder ``link`` is in — by the
+        folder's name, since that's what ``reconcile_links`` named it after."""
+        folder = _required_path(link.link_path).parent.parent.name
+        video = videos.get(link.video_id)
+        uploader = channels.get(video.channel_id) if video else None
+        named = (channels.get(cid) for cid in sorted(sources.get(link.video_id, ())))
+        # Failing a match, its channel: one renamed since keeps its old folder.
+        series = next((ch for ch in named if ch is not None and naming.sanitize(ch.title) == folder), uploader)
         # A blank thumbnail_url means "probed, no art" — nothing to place.
-        return channel if channel and channel.thumbnail_url else None
+        return series if series is not None and series.thumbnail_url else None
 
-    # Step 1: ensure the canonical art files exist for every linked channel.
-    for cid in {video.channel_id for link in links if (video := videos.get(link.video_id))}:
-        channel = channels.get(cid)
-        if channel is None or not channel.thumbnail_url:
-            continue
-        cdir = naming.canonical_channel_dir(media_root, channel.title)
+    linked = [(link, series) for link in links if (series := series_for(link)) is not None]
+
+    # Step 1: ensure the canonical art files exist for every linked series.
+    for series in {series.channel_id: series for _, series in linked}.values():
+        cdir = _canonical_art_dir(media_root, series)
         poster = cdir / naming.POSTER_NAME
-        if not poster.exists():
-            _fetch_image(channel.thumbnail_url, poster)
-        if channel.banner_url:
+        if series.thumbnail_url and not poster.exists():
+            _fetch_image(series.thumbnail_url, poster)
+        if series.banner_url:
             backdrop = cdir / naming.BACKDROP_NAME
             if not backdrop.exists():
-                _fetch_image(channel.banner_url, backdrop)
+                _fetch_image(series.banner_url, backdrop)
 
     # Step 2: hardlink canonical art into each user's channel + season dirs.
     created = 0
-    for link in links:
-        channel = channel_for(link.video_id)
-        if channel is None:
-            continue
-        cdir = naming.canonical_channel_dir(media_root, channel.title)
+    for link, series in linked:
+        cdir = _canonical_art_dir(media_root, series)
         canon_poster = cdir / naming.POSTER_NAME
         canon_backdrop = cdir / naming.BACKDROP_NAME
         season_dir = _required_path(link.link_path).parent

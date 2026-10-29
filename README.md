@@ -11,6 +11,7 @@ A multi-user web app that syncs YouTube subscriptions via the YouTube Data API a
 - OIDC login for providers such as Keycloak, Authentik, Authelia, etc.
 - Per-user YouTube OAuth, with automatic subscription sync (every 6 hours)
 - Add channels by hand from a URL, `@handle`, or channel ID, including Nebula channels
+- Follow a single YouTube playlist instead of a whole channel (for channels that publish several shows), archived as its own series in Jellyfin
 - Ignore channels you don't want in any feed
 
 **Feeds**

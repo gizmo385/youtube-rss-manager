@@ -24,6 +24,7 @@ from youtube_subs_opml.web.models import (
     ChannelCategory,
     Download,
     OpmlToken,
+    PlaylistVideo,
     Subscription,
     User,
     Video,
@@ -73,6 +74,7 @@ def client(audio_file):
                 ChannelCategory,
                 OpmlToken,
                 Video,
+                PlaylistVideo,
                 Download,
             )
         ],

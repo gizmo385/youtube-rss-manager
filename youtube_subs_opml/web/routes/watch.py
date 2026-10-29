@@ -23,10 +23,11 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import get_current_user
-from ..models import Download, DownloadLink, JellyfinAccount, Subscription, User, Video
+from ..models import Download, DownloadLink, JellyfinAccount, User, Video
 from ..services import sponsorblock
 from ..services.crypto import decrypt_token
 from ..services.jellyfin import JellyfinClient, JellyfinError
+from ..services.sources import followed_video_ids
 from ..services.stats import shell_stats
 from ..services.watch import build_watch_feed, save_progress, search_videos, set_watched
 from ..templating import templates
@@ -141,17 +142,14 @@ def archived_media(
     db: Session = Depends(get_db),
 ) -> FileResponse:
     """Stream an archived video for the in-page player, with range support
-    for seeking. Only for channels the user subscribes to, so this isn't an
-    open file server over the archive."""
+    for seeking. Only for channels and playlists the user subscribes to, so
+    this isn't an open file server over the archive."""
     path = db.execute(
-        select(Download.file_path)
-        .join(Video, Video.video_id == Download.video_id)
-        .join(Subscription, Subscription.channel_id == Video.channel_id)
-        .where(
+        select(Download.file_path).where(
             Download.video_id == video_id,
+            Download.video_id.in_(followed_video_ids(user.id, include_ignored=True)),
             Download.status == "complete",
             Download.file_path.is_not(None),
-            Subscription.user_id == user.id,
         )
     ).scalar_one_or_none()
     if path is None or not os.path.isfile(path):

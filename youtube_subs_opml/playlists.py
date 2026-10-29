@@ -14,8 +14,9 @@ the channel that uploaded them (``Video.channel_id``), through a stub
 is recorded separately in ``playlist_videos``, so one video can be in a followed
 channel and in several followed playlists at once.
 
-For now playlists are feed-only, like Nebula channels: no archive, podcast audio
-or history backfill.
+Followed playlists are archived like channels too, each its own series in
+Jellyfin, with the playlist's cover as its poster. They have no history
+backfill: a playlist's videos are the ones seen on its feed.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ PAGE_URL = "https://www.youtube.com/playlist?list={playlist_id}"
 # are better followed as the channel.
 _PLAYLIST_ID_RE = re.compile(r"^PL[A-Za-z0-9_-]{10,}$")
 _HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"})
-_OG_RE = re.compile(r'<meta property="og:(title|description)" content="([^"]*)"')
+_OG_RE = re.compile(r'<meta property="og:(title|description|image)" content="([^"]*)"')
 
 _ATOM = "http://www.w3.org/2005/Atom"
 _TIMEOUT = 15.0
@@ -87,15 +88,22 @@ def parse_input(value: str) -> str | None:
     return ids[0]
 
 
+def _og(playlist_id: str, client: httpx.Client) -> dict[str, str]:
+    """The playlist page's Open Graph tags. The page lists its cover as
+    ``og:image`` at a few sizes, smallest first; this keeps the largest."""
+    resp = client.get(page_url(playlist_id))
+    resp.raise_for_status()
+    return {key: html.unescape(text) for key, text in _OG_RE.findall(resp.text)}
+
+
 def _from_page(playlist_id: str, client: httpx.Client) -> ResolvedChannel | None:
-    """Title and description from the playlist's page, or None if it has none.
+    """Title, description and cover from the playlist's page, or None if it
+    has none.
 
     YouTube answers 200 for a playlist that doesn't exist or is private, just
     without a real title (``og:title`` is literally "undefined").
     """
-    resp = client.get(page_url(playlist_id))
-    resp.raise_for_status()
-    og = {key: html.unescape(text) for key, text in _OG_RE.findall(resp.text)}
+    og = _og(playlist_id, client)
     title = og.get("title", "").strip()
     if not title or title == "undefined":
         return None
@@ -105,6 +113,7 @@ def _from_page(playlist_id: str, client: httpx.Client) -> ResolvedChannel | None
         description=og.get("description", ""),
         topics=None,
         platform=PLATFORM,
+        thumbnail_url=og.get("image"),
     )
 
 
@@ -116,6 +125,18 @@ def _from_feed(playlist_id: str, client: httpx.Client) -> ResolvedChannel:
     resp.raise_for_status()
     title = ET.fromstring(resp.content).findtext(f"{{{_ATOM}}}title") or playlist_id
     return ResolvedChannel(channel_id=playlist_id, title=title, description="", topics=None, platform=PLATFORM)
+
+
+def _client() -> httpx.Client:
+    headers = {"User-Agent": _USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}
+    return httpx.Client(headers=headers, timeout=_TIMEOUT, follow_redirects=True)
+
+
+def fetch_cover(playlist_id: str) -> str | None:
+    """The playlist's cover image URL, or None if it has none. Raises
+    ``httpx.HTTPError`` if the page can't be fetched."""
+    with _client() as client:
+        return _og(playlist_id, client).get("image") or None
 
 
 def resolve_playlist(value: str) -> ResolvedChannel:
@@ -130,8 +151,7 @@ def resolve_playlist(value: str) -> ResolvedChannel:
     playlist_id = parse_input(value)
     if playlist_id is None:
         raise ChannelLookupError(f"'{value}' isn't a YouTube playlist")
-    headers = {"User-Agent": _USER_AGENT, "Accept-Language": "en-US,en;q=0.9"}
-    with httpx.Client(headers=headers, timeout=_TIMEOUT, follow_redirects=True) as client:
+    with _client() as client:
         try:
             resolved = _from_page(playlist_id, client)
         except httpx.HTTPError:

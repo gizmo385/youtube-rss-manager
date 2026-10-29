@@ -14,8 +14,8 @@ from ..models import (
     Download,
     Subscription,
     User,
-    Video,
 )
+from .sources import followed_video_ids
 
 
 def format_bytes(num: int) -> str:
@@ -39,10 +39,7 @@ def shell_stats(user: User, db: Session) -> dict:
     # Downloads are global; scope disk + failures to this user's subscriptions.
     status_rows = db.execute(
         select(Download.status, func.count(), func.coalesce(func.sum(Download.file_size_bytes), 0))
-        .select_from(Download)
-        .join(Video, Video.video_id == Download.video_id)
-        .join(Subscription, Subscription.channel_id == Video.channel_id)
-        .where(Subscription.user_id == user.id)
+        .where(Download.video_id.in_(followed_video_ids(user.id, include_ignored=True)))
         .group_by(Download.status)
     ).all()
 

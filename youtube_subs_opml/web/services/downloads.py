@@ -1,8 +1,8 @@
 """Downloader visibility and manual retry, scoped to a user's subscriptions.
 
 ``downloads`` rows are global (one file, shared across subscribers), so every
-query here joins through the user's non-ignored subscriptions — a user only
-ever sees, or can retry, a download for a channel they follow.
+query here is scoped to the user's non-ignored subscriptions — a user only
+ever sees, or can retry, a download in a channel or playlist they follow.
 
 "Retry" just resets a terminal row back to ``pending`` (clearing the attempt
 count, backoff, skip reason and last error); the downloader worker claims
@@ -15,6 +15,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..models import Channel, ChannelCategory, Download, Subscription, Video
+from .sources import ARCHIVABLE_PLATFORMS, followed_video_ids, source_video_ids, video_sources
 
 # Terminal states a user can meaningfully retry from.
 _RETRYABLE_STATUSES = ("failed", "skipped")
@@ -57,35 +58,15 @@ PER_PAGE = 25
 
 
 def _visible(user_id: int):
-    """A join onto the user's non-ignored subscriptions for a Download query."""
-    return (
-        select(Download)
-        .join(Video, Video.video_id == Download.video_id)
-        .join(
-            Subscription,
-            and_(
-                Subscription.channel_id == Video.channel_id,
-                Subscription.user_id == user_id,
-                Subscription.ignored == False,  # noqa: E712
-            ),
-        )
-    )
+    """A Download query scoped to the user's non-ignored subscriptions."""
+    return select(Download).where(Download.video_id.in_(followed_video_ids(user_id)))
 
 
 def status_counts(db: Session, user_id: int) -> dict[str, int]:
     """Count of downloads by status within the user's scope."""
     rows = db.execute(
         select(Download.status, func.count())
-        .select_from(Download)
-        .join(Video, Video.video_id == Download.video_id)
-        .join(
-            Subscription,
-            and_(
-                Subscription.channel_id == Video.channel_id,
-                Subscription.user_id == user_id,
-                Subscription.ignored == False,  # noqa: E712
-            ),
-        )
+        .where(Download.video_id.in_(followed_video_ids(user_id)))
         .group_by(Download.status)
     ).tuples()
     return dict(rows.all())
@@ -96,29 +77,22 @@ def recoverable_count(db: Session, user_id: int) -> int:
     return db.execute(
         select(func.count())
         .select_from(Download)
-        .join(Video, Video.video_id == Download.video_id)
-        .join(
-            Subscription,
-            and_(
-                Subscription.channel_id == Video.channel_id,
-                Subscription.user_id == user_id,
-                Subscription.ignored == False,  # noqa: E712
-            ),
-        )
         .where(
+            Download.video_id.in_(followed_video_ids(user_id)),
             or_(
                 Download.status == "failed",
                 and_(
                     Download.status == "skipped",
                     Download.skip_reason == "unavailable",
                 ),
-            )
+            ),
         )
     ).scalar_one()
 
 
 def subscribed_channels(db: Session, user_id: int) -> list[dict]:
-    """The user's non-ignored channels, for the channel filter dropdown.
+    """The user's non-ignored channels and playlists, for the channel filter
+    dropdown.
 
     Feed-only (Nebula) channels are left out: they never have downloads."""
     rows = db.execute(
@@ -131,7 +105,7 @@ def subscribed_channels(db: Session, user_id: int) -> list[dict]:
                 Subscription.ignored == False,  # noqa: E712
             ),
         )
-        .where(Channel.platform == "youtube")
+        .where(Channel.platform.in_(ARCHIVABLE_PLATFORMS))
         .order_by(func.lower(Channel.title))
     ).all()
     return [{"channel_id": cid, "title": title or cid} for cid, title in rows]
@@ -145,35 +119,37 @@ def _filtered_query(
     status: str | None,
     q: str | None,
 ):
-    """Base SELECT over (Video, Download, Channel) in scope, with filters applied."""
+    """Base SELECT over (Video, Download, Channel) in scope, with filters
+    applied. ``Channel`` is the video's own channel, even when it's in scope
+    through a playlist; ``channel_id`` and ``category_id`` filter on either."""
     stmt = (
         select(Video, Download, Channel)
         .join(Download, Download.video_id == Video.video_id)
         .join(Channel, Channel.channel_id == Video.channel_id)
-        .join(
-            Subscription,
-            and_(
-                Subscription.channel_id == Video.channel_id,
-                Subscription.user_id == user_id,
-                Subscription.ignored == False,  # noqa: E712
-            ),
-        )
+        .where(Video.video_id.in_(followed_video_ids(user_id)))
     )
+    vs = video_sources()
     if channel_id:
-        stmt = stmt.where(Video.channel_id == channel_id)
+        stmt = stmt.where(Video.video_id.in_(source_video_ids(channel_id)))
     if status:
         stmt = stmt.where(Download.status == status)
     if q:
         stmt = stmt.where(Video.title.ilike(f"%{q}%"))
     if category_id:
-        stmt = stmt.join(
-            ChannelCategory,
-            and_(
-                ChannelCategory.channel_id == Video.channel_id,
-                ChannelCategory.user_id == user_id,
-                ChannelCategory.category_id == category_id,
-            ),
+        in_category = (
+            select(vs.c.video_id)
+            .join(ChannelCategory, ChannelCategory.channel_id == vs.c.source_id)
+            .join(
+                Subscription,
+                and_(
+                    Subscription.user_id == user_id,
+                    Subscription.channel_id == vs.c.source_id,
+                    Subscription.ignored == False,  # noqa: E712
+                ),
+            )
+            .where(ChannelCategory.user_id == user_id, ChannelCategory.category_id == category_id)
         )
+        stmt = stmt.where(Video.video_id.in_(in_category))
     return stmt
 
 

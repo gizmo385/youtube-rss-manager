@@ -25,8 +25,9 @@ class ResolvedChannel:
     description: str
     topics: list[str] | None
     platform: str = "youtube"
-    # Only Nebula lookups supply art up front; YouTube's is probed later by
-    # the downloader (see downloader.worker.backfill_channel_art).
+    # Only Nebula and playlist lookups supply art up front; a YouTube
+    # channel's is probed later by the downloader (see
+    # downloader.worker.backfill_channel_art).
     thumbnail_url: str | None = None
     banner_url: str | None = None
 

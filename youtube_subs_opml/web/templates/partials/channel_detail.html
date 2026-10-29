@@ -154,10 +154,6 @@
     <p class="unsupported-note">Unavailable for Nebula channels — their videos can't be
       downloaded, so there's no Jellyfin archive, podcast audio or Jellyfin feed links.
       Archive defaults inherited from categories or your account are ignored here.</p>
-    {% elif not d.archivable %}
-    <p class="unsupported-note">Not available for playlists yet — there's no Jellyfin
-      archive or podcast audio for them, and archive defaults inherited from categories
-      or your account are ignored here.</p>
     {% else %}
     {% for s in d.archive_settings %}
     <div class="pref-row">

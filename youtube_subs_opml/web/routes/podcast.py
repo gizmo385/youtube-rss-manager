@@ -24,7 +24,7 @@ from xml.etree import ElementTree as ET
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
 from sqlalchemy import and_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from ..config import get_settings
 from ..db import get_db
@@ -40,6 +40,7 @@ from ..models import (
     Video,
 )
 from ..services import sponsorblock
+from ..services.sources import followed_video_ids, sources_of, video_sources
 
 router = APIRouter(tags=["podcast"])
 
@@ -180,11 +181,19 @@ def build_podcast_feed(
     return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
 
 
-def _cuts(db: Session, user: User, episodes: list[tuple[str, str]]) -> dict[str, AudioCut]:
-    """The SponsorBlock-cut copy to serve ``user`` for each of ``episodes``
-    (video id, channel id) that has one, by video id."""
-    kinds_by_channel = {ch: sponsorblock.podcast_cut(db, user, ch) for ch in {ch for _, ch in episodes}}
-    wanted = {vid: kinds_by_channel[ch] for vid, ch in episodes if kinds_by_channel[ch]}
+def _cuts(db: Session, user: User, video_ids: list[str]) -> dict[str, AudioCut]:
+    """The SponsorBlock-cut copy to serve ``user`` for each of ``video_ids``
+    that has one, by video id. Whether an episode is cut depends on every
+    channel and playlist of the user's it's in (``podcast_cut_for``), the
+    same as when the downloader decides which cuts to make."""
+    kinds_by_sources: dict[frozenset[str], str | None] = {}
+    wanted: dict[str, str] = {}
+    for vid, sources in sources_of(db, video_ids).items():
+        key = frozenset(sources)
+        if key not in kinds_by_sources:
+            kinds_by_sources[key] = sponsorblock.podcast_cut_for(db, user, key)
+        if kinds := kinds_by_sources[key]:
+            wanted[vid] = kinds
     if not wanted:
         return {}
     rows = db.execute(select(AudioCut).where(AudioCut.video_id.in_(wanted), AudioCut.path.is_not(None))).scalars()
@@ -192,21 +201,26 @@ def _cuts(db: Session, user: User, episodes: list[tuple[str, str]]) -> dict[str,
 
 
 def _podcast_items(db: Session, user: User, base_url: str, token: str, category_id: int | None) -> list[dict]:
-    """Completed downloads with extracted audio, in the user's scope.
+    """Completed downloads with extracted audio, in the user's scope: in a
+    channel or playlist they follow (in the category, when there is one).
 
     Only videos with ``audio_path`` set and a ``complete`` download are eligible;
     the ``length`` is the real on-disk byte count (wrong counts break scrubbing)
-    — of the SponsorBlock-cut copy, where that's what will be served.
+    — of the SponsorBlock-cut copy, where that's what will be served. A video
+    in more than one of the user's channels and playlists is listed once.
     """
     user_id = user.id
+    vs = video_sources()
+    uploader = aliased(Channel)
     stmt = (
-        select(Video, Download, Channel)
+        select(Video, Download, uploader.title)
         .join(Download, Download.video_id == Video.video_id)
-        .join(Channel, Channel.channel_id == Video.channel_id)
+        .join(uploader, uploader.channel_id == Video.channel_id)
+        .join(vs, vs.c.video_id == Video.video_id)
         .join(
             Subscription,
             and_(
-                Subscription.channel_id == Video.channel_id,
+                Subscription.channel_id == vs.c.source_id,
                 Subscription.user_id == user_id,
             ),
         )
@@ -215,28 +229,30 @@ def _podcast_items(db: Session, user: User, base_url: str, token: str, category_
             Download.status == "complete",
             Download.audio_path.is_not(None),
         )
-        .order_by(Video.published_at.desc().nullslast())
+        .order_by(Video.published_at.desc().nullslast(), Video.video_id)
     )
     if category_id is not None:
         stmt = stmt.join(
             ChannelCategory,
             and_(
-                ChannelCategory.channel_id == Video.channel_id,
+                ChannelCategory.channel_id == vs.c.source_id,
                 ChannelCategory.user_id == user_id,
                 ChannelCategory.category_id == category_id,
             ),
         )
 
-    rows = db.execute(stmt).all()
-    cuts = _cuts(db, user, [(video.video_id, video.channel_id) for video, _, _ in rows])
+    # One row per (video, source); keep each video's first, in feed order.
+    rows = {video.video_id: (video, download, author) for video, download, author in db.execute(stmt).tuples()}
+    cuts = _cuts(db, user, list(rows))
     items = []
-    for video, download, channel in rows:
+    for video, download, author in rows.values():
         cut = cuts.get(video.video_id)
         items.append(
             {
                 "video_id": video.video_id,
                 "title": video.title or video.video_id,
-                "author": channel.title,
+                # Whoever made it, even when it's here through a playlist.
+                "author": author,
                 "description": video.description,
                 "pub_date": video.published_at,
                 "duration_seconds": (cut.duration_seconds if cut else None) or video.duration_seconds,
@@ -314,34 +330,25 @@ def podcast_by_category(token: str, slug: str, db: Session = Depends(get_db)) ->
 def media_audio(token: str, video_id: str, db: Session = Depends(get_db)) -> FileResponse:
     """Serve a video's extracted audio, with HTTP range support for seeking.
 
-    Only serves audio for a video on a channel the token's user is subscribed
-    to, so the token is not an open file proxy.
+    Only serves audio for a video in a channel or playlist the token's user is
+    subscribed to, so the token is not an open file proxy.
     """
     opml_token = _validate_token(token, db)
 
-    row = db.execute(
-        select(Download, Video)
-        .join(Video, Video.video_id == Download.video_id)
-        .join(
-            Subscription,
-            and_(
-                Subscription.channel_id == Video.channel_id,
-                Subscription.user_id == opml_token.user_id,
-            ),
-        )
-        .where(
+    download = db.execute(
+        select(Download).where(
             Download.video_id == video_id,
+            Download.video_id.in_(followed_video_ids(opml_token.user_id, include_ignored=True)),
             Download.status == "complete",
             Download.audio_path.is_not(None),
         )
-    ).first()
-    if row is None:
+    ).scalar_one_or_none()
+    if download is None:
         raise HTTPException(status_code=404)
 
-    download, video = row
-    cut = _cuts(db, db.get_one(User, opml_token.user_id), [(video.video_id, video.channel_id)]).get(video_id)
+    cut = _cuts(db, db.get_one(User, opml_token.user_id), [video_id]).get(video_id)
     path = cut.path if cut and cut.path and os.path.isfile(cut.path) else download.audio_path
-    if not os.path.isfile(path):
+    if path is None or not os.path.isfile(path):  # the query filters out None; narrows the type
         # The row says complete but the file isn't reachable from this process
         # (e.g. the media volume isn't mounted into the web container).
         raise HTTPException(status_code=404)
