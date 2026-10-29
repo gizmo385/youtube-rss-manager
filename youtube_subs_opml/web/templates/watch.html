@@ -124,6 +124,7 @@
     selCat: null,
     selKey: null,           // card key: category id + '|' + video key
     toast: null,
+    lingering: {},          // keys just marked watched, kept in view for now — see linger()
     edits: 0,               // watched changes made here, and how many are
     saving: 0               // still saving — see refresh()
   };
@@ -174,9 +175,10 @@
 
   function matches(v, c) {
     var q = S.query.trim().toLowerCase();
-    // The video playing stays put even though playing it marked it watched;
-    // and playing anything marks it watched, so Continue watching ignores it.
-    if (S.unwatchedOnly && v.watched && !isPlaying(v) && c.id !== CONT.id) return false;
+    // The video playing stays put even though playing it marked it watched,
+    // as do ones just marked watched (see linger()); and playing anything
+    // marks it watched, so Continue watching ignores it.
+    if (S.unwatchedOnly && v.watched && !isPlaying(v) && !S.lingering[v.key] && c.id !== CONT.id) return false;
     // The server matched these on more than the title and channel.
     if (c.id === SEARCH.id) q = '';
     if (S.platform === 'youtube' && v.nebula) return false;
@@ -624,6 +626,31 @@
     render();
   }
 
+  // In unwatched-only mode, videos just marked watched stay where they are,
+  // shown as watched, until marking pauses for LINGER_MS, then leave
+  // together: marking several in a row doesn't reflow the page under each
+  // click, and the selection stays put to mark the next one.
+  var LINGER_MS = 4000, lingerTimer = null;
+  function linger(keys) {
+    keys.forEach(function (k) { S.lingering[k] = true; });
+    clearTimeout(lingerTimer);
+    lingerTimer = setTimeout(settle, LINGER_MS);
+  }
+  function settle() {
+    lingerTimer = null;
+    // A selection about to vanish goes to its neighbour first.
+    var sv = S.selKey && videoOf(S.selKey);
+    if (sv && sv.watched && S.lingering[sv.key] && !isPlaying(sv)) {
+      var f = flat().filter(function (x) { return !x.v.watched || x.k === S.selKey; });
+      var i = f.map(function (x) { return x.k; }).indexOf(S.selKey);
+      var nx = f[i + 1] || f[i - 1];
+      S.selKey = nx ? nx.k : null;
+      if (nx) S.selCat = nx.cat;
+    }
+    S.lingering = {};
+    render();
+  }
+
   // Apply {key: watched} locally at once, then save; roll back if saving fails.
   function applyWatched(changes) {
     var prev = {}, groups = {true: [], false: []};
@@ -634,18 +661,9 @@
       v.watched = changes[k];
       groups[changes[k]].push(k);
     });
-    // In unwatched-only mode a newly-watched selection is about to vanish;
-    // hand the selection to its neighbour first.
-    if (S.unwatchedOnly && S.selKey) {
-      var sv = videoOf(S.selKey);
-      if (sv && sv.watched && prev[sv.key] === false && !isPlaying(sv)) {
-        var f = flat().filter(function (x) { return !x.v.watched || x.k === S.selKey; });
-        var i = f.map(function (x) { return x.k; }).indexOf(S.selKey);
-        var nx = f[i + 1] || f[i - 1];
-        S.selKey = nx ? nx.k : null;
-        if (nx) S.selCat = nx.cat;
-      }
-    }
+    // Newly watched videos would vanish in unwatched-only mode; let them
+    // linger a moment instead.
+    if (S.unwatchedOnly && groups[true].length) linger(groups[true]);
     render();
     var saves = [];
     if (groups[true].length) saves.push(Watch.saveWatched(groups[true], true));
