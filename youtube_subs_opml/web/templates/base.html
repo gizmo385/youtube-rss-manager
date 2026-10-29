@@ -58,7 +58,8 @@
   <div id="qs-overlay" class="qs-overlay" hidden>
     <div class="qs-modal" role="dialog" aria-modal="true" aria-label="Quick switcher">
       <input id="qs-input" class="qs-input" type="text" autocomplete="off" spellcheck="false"
-             placeholder="Jump to a channel or page…" aria-label="Jump to a channel or page">
+             placeholder="Jump to a channel or page, or paste a link to add one…"
+             aria-label="Jump to a channel or page, or paste a link to add one">
       <ul id="qs-results" class="qs-results" role="listbox"></ul>
       <div class="qs-foot">
         <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
@@ -99,11 +100,35 @@
         .then(function (r) { return r.ok ? r.json() : []; })
         .then(function (data) {
           channels = data.map(function (c) {
-            return {label: c.title, kind: 'Channel',
+            return {id: c.id, label: c.title, kind: 'Channel',
                     url: '/channels?selected=' + encodeURIComponent(c.id)};
           });
         })
         .catch(function () { channels = []; });
+    }
+
+    // Something to add rather than search for: a YouTube or Nebula link, or a
+    // bare channel or playlist id. The add route works out which.
+    var LINK = /^(https?:\/\/|(www\.|m\.|music\.)?youtube\.com\/|youtu\.be\/|(www\.)?nebula\.(tv|app)\/|rss\.nebula\.app\/)/i;
+    // Case matters here, or a long enough word starting "pl" would pass.
+    var BARE_ID = /^(UC[\w-]{22}|PL[\w-]{10,})$/;
+
+    // The id a link names, where that can be read off the link itself; a
+    // handle URL can't, so it's left to the add route, which just selects
+    // the channel if it's already followed.
+    function linkedId(raw) {
+      var m = raw.match(/\/channel\/(UC[\w-]{22})/) || raw.match(/^(UC[\w-]{22})$/);
+      if (m) return m[1];
+      m = raw.match(/[?&](?:list|playlist_id)=(PL[\w-]+)/) || raw.match(/^(PL[\w-]{10,})$/);
+      if (m) return m[1];
+      m = raw.match(/nebula\.(?:tv|app)\/(?!videos\/)([\w-]+)/i);
+      return m ? 'nebula:' + m[1] : null;
+    }
+
+    function linkItems(raw) {
+      var id = linkedId(raw);
+      var known = id && (channels || []).filter(function (c) { return c.id === id; })[0];
+      return known ? [known] : [{label: raw, kind: 'Add channel', add: raw}];
     }
 
     function score(q, text) {
@@ -112,9 +137,12 @@
     }
 
     function render() {
-      var q = input.value.trim().toLowerCase();
+      var raw = input.value.trim();
+      var q = raw.toLowerCase();
       var pool = PAGES.concat(channels || []);
-      if (!q) {
+      if (LINK.test(raw) || BARE_ID.test(raw)) {
+        items = linkItems(raw);
+      } else if (!q) {
         items = pool.slice(0, 50);
       } else {
         items = pool
@@ -159,8 +187,44 @@
       rows[active].scrollIntoView({block: 'nearest'});
     }
 
+    function showMessage(text, cls) {
+      list.innerHTML = '';
+      var li = document.createElement('li');
+      li.className = cls;
+      li.textContent = text;
+      list.appendChild(li);
+      items = [];
+    }
+
+    var adding = false;
+
+    function add(raw) {
+      if (adding) return;
+      adding = true;
+      showMessage('Looking up ' + raw + '…', 'qs-empty');
+      var fd = new FormData();
+      fd.append('channel_input', raw);
+      fetch('/channels/add', {method: 'POST', body: fd, headers: {'HX-Request': 'true'}})
+        .then(function (r) {
+          if (r.ok) {
+            window.location.href = '/channels?selected=' + encodeURIComponent(r.headers.get('X-Channel-Id') || '');
+            return;
+          }
+          return r.text().then(function (t) {
+            var detail;
+            try { detail = JSON.parse(t).detail; } catch (e) { detail = null; }
+            showMessage(detail || 'Couldn\'t add that channel.', 'qs-empty qs-error');
+          });
+        })
+        .catch(function () { showMessage('Couldn\'t reach the server.', 'qs-empty qs-error'); })
+        .then(function () { adding = false; });
+    }
+
     function go() {
-      if (items[active]) window.location.href = items[active].url;
+      var it = items[active];
+      if (!it) return;
+      if (it.add) add(it.add);
+      else window.location.href = it.url;
     }
 
     function open() {

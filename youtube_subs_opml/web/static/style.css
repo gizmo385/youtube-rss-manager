@@ -1283,6 +1283,7 @@ label { display: block; }
 }
 .qs-item.active .qs-item-kind { color: var(--accent-2); }
 .qs-empty { padding: 18px; text-align: center; color: var(--muted-2); font-style: italic; }
+.qs-error { color: var(--accent-2); font-style: normal; }
 .qs-foot {
   border-top: 1px solid var(--line); padding: 8px 14px;
   display: flex; gap: 14px; font-size: 11px; color: var(--muted-2);

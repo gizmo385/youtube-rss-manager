@@ -1192,7 +1192,10 @@ async def add_manual_channel(
         warm_new_channels_soon()
 
     filt = form_text(form, "filter") or "All"
-    return _list_response(request, user, db, resolved.channel_id, filt)
+    resp = _list_response(request, user, db, resolved.channel_id, filt)
+    # For callers off the channels page (the quick switcher) to go to it.
+    resp.headers["X-Channel-Id"] = resolved.channel_id
+    return resp
 
 
 def _resolve_nebula(raw: str):

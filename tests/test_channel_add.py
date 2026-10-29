@@ -104,6 +104,14 @@ def test_add_without_account_uses_public_resolver(client, calls, session_factory
     assert stored_channel(session_factory).title == "From RSS"
 
 
+def test_add_names_the_channel_for_the_quick_switcher(client):
+    # Off the channels page, the switcher goes to it by this.
+    for _ in range(2):  # and again once it's already followed
+        resp = client.post("/channels/add", data={"channel_input": "https://www.youtube.com/@veritasium"})
+        assert resp.status_code == 200
+        assert resp.headers["X-Channel-Id"] == "UCnew"
+
+
 def test_add_with_account_prefers_the_api(client, calls, monkeypatch, session_factory):
     connect_account(session_factory)
 
