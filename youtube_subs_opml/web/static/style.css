@@ -1669,6 +1669,12 @@ section.focused > * > .w-sec-hint { display: inline; }
 @media (pointer: coarse) {
   .w-check, .w-row .w-check { width: 32px; height: 32px; }
 }
+/* Touch screens wider than the phone layout (an iPad, or the installed app
+   on a phone held sideways): no keyboard, so no shortcut hints, and no
+   theater mode (see theaterOn in watch.html). */
+@media (hover: none) and (pointer: coarse) {
+  .w-help-btn, .w-theater-btn, .w-key, .w-sec-hint { display: none !important; }
+}
 
 /* In-page player: the video over an info panel, as a modal overlay or (see
    .watch.theater below) a pane in the Watch tab's layout. */
@@ -1737,6 +1743,28 @@ section.focused > * > .w-sec-hint { display: inline; }
 .w-player-notice {
   font-size: 12px; color: var(--ink-2); padding: 6px 10px;
   background: var(--accent-tint); border-left: 2px solid var(--accent);
+}
+
+/* Phones: the player is a sheet over the whole screen, the video across the
+   top and its details scrolling under it, rather than a box floating mid-screen
+   with no room to spare. Held sideways, the video gets the screen's height
+   and the details are a scroll away. */
+@media (max-width: 860px), (max-height: 500px) {
+  .w-player-overlay {
+    padding: 0; align-items: flex-start; overflow-y: auto; overscroll-behavior: contain; background: var(--panel);
+  }
+  .w-player { width: 100%; min-width: 0; border: 0; box-shadow: none; }
+  .w-player-info { padding: 12px 12px 20px; }
+  .w-player-title { font-size: 17px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .w-player { width: min(100%, calc(100vh * 16 / 9)); width: min(100%, calc(100dvh * 16 / 9)); }
+}
+/* Touch: bigger buttons, and no key hints (or theater mode) without a keyboard. */
+@media (hover: none) and (pointer: coarse) {
+  .w-pbtn { padding: 9px 12px; }
+  .w-plink { padding: 9px 4px; }
+  .w-pbtn kbd, .w-pbtn[data-act="theater"] { display: none; }
 }
 
 /* Theater mode: the player takes the feed's place, the feed docks on the

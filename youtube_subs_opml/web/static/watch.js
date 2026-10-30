@@ -130,14 +130,73 @@ window.Watch = (function () {
         seekBy(e.key === 'ArrowLeft' ? -SEEK_STEP : SEEK_STEP);
       }
     }, true);
+    swipeToClose();
+  }
+
+  // ---- swipe down to close ----------------------------------------------
+  // On a touch screen, dragging the player down closes it, as in the YouTube
+  // app. Touches on YouTube's embed stay inside its iframe, so there it's the
+  // details under the video that drag; an archived video drags by the video
+  // too. Only from the top of the sheet: scrolled down, a drag scrolls.
+  var SWIPE_CLOSE_PX = 120, SWIPE_CLOSE_SPEED = 0.6;   // dragged this far, or flicked this fast (px/ms)
+  function swipeToClose() {
+    var start = null, dragging = false, dy = 0;
+    overlay.addEventListener('touchstart', function (e) {
+      start = null;
+      if (e.touches.length !== 1 || isTheater() || overlay.scrollTop > 0) return;
+      start = {x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now()};
+      dragging = false;
+      dy = 0;
+    }, {passive: true});
+    // Not passive: once it's a drag, the page mustn't scroll or bounce under it.
+    overlay.addEventListener('touchmove', function (e) {
+      if (!start) return;
+      var dx = e.touches[0].clientX - start.x;
+      dy = e.touches[0].clientY - start.y;
+      if (!dragging) {
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        if (dy <= 0 || Math.abs(dx) > dy) { start = null; return; }   // a scroll, or scrubbing the video
+        dragging = true;
+        overlay.style.transition = 'none';
+      }
+      e.preventDefault();
+      dy = Math.max(0, dy);
+      overlay.style.transform = 'translateY(' + dy + 'px)';
+      overlay.style.opacity = String(Math.max(0.4, 1 - dy / 600));
+    }, {passive: false});
+    function end(e) {
+      var was = start;
+      start = null;
+      if (!was || !dragging) return;
+      dragging = false;
+      var speed = dy / Math.max(1, Date.now() - was.t);
+      overlay.style.transition = 'transform 0.2s ease-out, opacity 0.2s ease-out';
+      if (e.type === 'touchend' && (dy > SWIPE_CLOSE_PX || speed > SWIPE_CLOSE_SPEED)) {
+        overlay.style.transform = 'translateY(100%)';
+        overlay.style.opacity = '0';
+        var v = cur;
+        setTimeout(function () { if (cur === v) close(); }, 200);
+      } else {
+        overlay.style.transform = '';
+        overlay.style.opacity = '';
+      }
+    }
+    overlay.addEventListener('touchend', end);
+    overlay.addEventListener('touchcancel', end);
+  }
+  // Put the sheet back where a swipe left it.
+  function resetSwipe() {
+    overlay.style.transition = overlay.style.transform = overlay.style.opacity = '';
   }
 
   // Phones and touch tablets hand videos to their own apps (YouTube,
   // Jellyfin) via the plain link instead of the overlay. Decided by the
   // device rather than the window's width, so a desktop browser in a narrow
-  // window still plays here.
+  // window still plays here. Installed to the home screen, though, this is
+  // the app, so it plays them itself.
   var handOff = window.matchMedia('(hover: none) and (pointer: coarse)');
-  function canPlayHere(v) { return !handOff.matches && !v.nebula && !!v.videoId; }
+  var installed = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  function canPlayHere(v) { return (installed || !handOff.matches) && !v.nebula && !!v.videoId; }
   function youtubeUrl(v) { return 'https://www.youtube.com/watch?v=' + encodeURIComponent(v.videoId); }
   function isOpen() { return !!overlay && !overlay.hidden; }
   function isTheater() { return !!overlay && overlay.classList.contains('theater'); }
@@ -230,7 +289,13 @@ window.Watch = (function () {
     track.started = false;
     track = null;
   }
+  // Leaving an app installed to the iPhone home screen often skips pagehide,
+  // and it may be killed in the background without another word, so hiding
+  // saves too.
   window.addEventListener('pagehide', function () { if (track) saveProgress(track, true); });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden' && track) saveProgress(track, true);
+  });
 
   // Whether ``v`` is playing and saving its resume point as it goes.
   function tracking(v) { return !!track && track.v === v && !track.off; }
@@ -385,6 +450,10 @@ window.Watch = (function () {
     return ytApi;
   }
 
+  // How long an archived file gets to become playable before it's taken as
+  // one this browser won't play (see play).
+  var LOAD_TIMEOUT_MS = 15000;
+
   // Play ``v``, from its resume point unless ``o.fromStart``. ``o.source``
   // forces 'file' or 'youtube' (``o.fellBack`` saying why it's YouTube's);
   // ``o.onClose`` runs when the player is
@@ -405,9 +474,19 @@ window.Watch = (function () {
     var t;
 
     if (source === 'file') {
-      stage.innerHTML = '<video controls autoplay preload="metadata" src="/watch/media/' + encodeURIComponent(v.videoId) + '"></video>';
+      // playsinline: an iPhone otherwise jumps straight to its own fullscreen player.
+      stage.innerHTML = '<video controls autoplay playsinline preload="metadata" src="/watch/media/' +
+        encodeURIComponent(v.videoId) + '"></video>';
       var video = stage.querySelector('video');
+      // iOS ignores autoplay until the page has been tapped; asking while
+      // the tap that opened the player is still being handled counts.
+      var started = video.play();
+      if (started) started.catch(function () {});
       video.addEventListener('error', function () { if (track === t) fallBack(v); });
+      // iOS Safari can meet a file it won't play with silence — no error, no
+      // metadata — so give up on one that hasn't got anywhere in a while.
+      var stalled = setTimeout(function () { if (track === t) fallBack(v); }, LOAD_TIMEOUT_MS);
+      video.addEventListener('canplay', function () { clearTimeout(stalled); }, {once: true});
       video.addEventListener('loadedmetadata', function () {
         // A container the browser opens but a video codec it can't decode
         // plays as sound over black, which is no better than an error.
@@ -430,7 +509,7 @@ window.Watch = (function () {
       }
     } else {
       stage.innerHTML = '<iframe src="https://www.youtube-nocookie.com/embed/' + encodeURIComponent(v.videoId) +
-        '?autoplay=1&rel=0&enablejsapi=1&origin=' + encodeURIComponent(location.origin) +
+        '?autoplay=1&playsinline=1&rel=0&enablejsapi=1&origin=' + encodeURIComponent(location.origin) +
         (resumedAt ? '&start=' + resumedAt : '') + '" title="' + esc(v.title) +
         '" allow="autoplay; encrypted-media; picture-in-picture; fullscreen"' +
         ' allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>';
@@ -453,6 +532,7 @@ window.Watch = (function () {
       }).catch(function () {});
     }
     startSponsorBlock(t);
+    resetSwipe();
     overlay.hidden = false;
     renderInfo();
   }
@@ -472,6 +552,7 @@ window.Watch = (function () {
     stage.innerHTML = '';   // removing the element is what stops playback
     overlay.hidden = true;
     overlay.classList.remove('theater');
+    resetSwipe();
     var cb = opts.onClose;
     opts = {};
     cur = null;

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ...downloader import webm
 from ..db import get_db
 from ..deps import get_current_user
 from ..models import Download, DownloadLink, JellyfinAccount, User, Video
@@ -155,7 +157,11 @@ def archived_media(
     if path is None or not os.path.isfile(path):
         # Not archived, or the media volume isn't mounted into this container.
         raise HTTPException(status_code=404)
-    return FileResponse(path, media_type="video/x-matroska")
+    # Most archived files are WebM inside despite the .mkv name (see
+    # downloader/webm.py). Saying so lets Safari, which won't touch
+    # video/x-matroska, try them.
+    media_type = "video/webm" if webm.doctype(Path(path)) == "webm" else "video/x-matroska"
+    return FileResponse(path, media_type=media_type)
 
 
 @router.post("/played/{video_id}", status_code=204)

@@ -237,6 +237,16 @@ def test_media_streams_archived_file_for_subscribers(client, sessionmaker_, tmp_
     assert resp.headers["content-type"] == "video/x-matroska"
 
 
+def test_media_says_webm_for_files_rewritten_as_webm(client, sessionmaker_, tmp_path):
+    f = tmp_path / "b_arch.mkv"
+    # An EBML header whose DocType is "webm", as ffmpeg writes it.
+    f.write_bytes(b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\x82\x84webm" + b"\x00" * 32)
+    with sessionmaker_() as s:
+        s.get_one(Download, "b_arch").file_path = str(f)
+        s.commit()
+    assert client.get("/watch/media/b_arch").headers["content-type"] == "video/webm"
+
+
 def test_media_404s_for_unarchived_or_missing_files(client, sessionmaker_):
     assert client.get("/watch/media/a_new").status_code == 404  # no download
     with sessionmaker_() as s:

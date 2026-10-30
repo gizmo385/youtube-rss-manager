@@ -145,8 +145,12 @@
   function videoOf(k) { return k ? BY_KEY[k.slice(k.indexOf('|') + 1)] : null; }
   function isPlaying(v) { return !!S.playing && videoOf(S.playing) === v; }
   // Not in a narrow window, whose single-column layout has no room for the
-  // rail; the player opens as the overlay there instead.
-  function theaterOn() { return S.theater && !!S.playing && Watch.isOpen() && !NARROW.matches; }
+  // rail, nor on a touch screen (the app installed on a phone held sideways),
+  // where it's a keyboard-driven layout with no keyboard; the player opens
+  // as the overlay there instead.
+  var TOUCH = window.matchMedia('(hover: none) and (pointer: coarse)');
+  function theaterAllowed() { return !NARROW.matches && !TOUCH.matches; }
+  function theaterOn() { return S.theater && !!S.playing && Watch.isOpen() && theaterAllowed(); }
   // Where the feed's cards are on screen: the rail in theater mode, else the
   // main feed (which stays in the DOM, hidden, while the rail shows).
   function feedRoot() { return document.getElementById(theaterOn() ? 'w-rail-list' : 'watch-main'); }
@@ -792,7 +796,7 @@
     return {
       cat: catName(cat), pos: ci >= 0 ? (ci + 1) + ' of ' + inCat.length : '',
       watched: !Watch.tracking(videoOf(k)), hasPrev: !!playable(-1), hasNext: !!playable(1),
-      theater: S.theater && !NARROW.matches
+      theater: S.theater && theaterAllowed()
     };
   }
   function closed() {
