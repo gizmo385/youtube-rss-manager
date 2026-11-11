@@ -281,6 +281,25 @@
   </script>
   {% endif %}
 
+  <script>
+  // Rows and chips that act on click but aren't buttons or links ([data-kbd])
+  // answer Enter and Space too, so they work from the keyboard.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var el = e.target.closest && e.target.closest('[data-kbd]');
+    if (!el || e.target !== el) return;
+    e.preventDefault();
+    el.click();
+  });
+  function copyUrl(btn, url) {
+    navigator.clipboard.writeText(url).then(function () {
+      var orig = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = orig; }, 1500);
+    });
+  }
+  </script>
+
   {# Autosave feedback. Anything inside a [data-saves] element saves as it
      changes; this is the one place that says so, and says when it didn't. #}
   <div id="save-toast" class="save-toast" role="status" aria-live="polite" hidden></div>

@@ -94,7 +94,8 @@
       {% for c in d.cats %}
       <span class="cat-chip">
         {{ c.name }}
-        <span class="chip-x" title="Remove from {{ c.name }}"
+        <span class="chip-x" title="Remove from {{ c.name }}" role="button" tabindex="0" data-kbd
+              aria-label="Remove from {{ c.name }}"
               hx-post="/channels/unassign" hx-include="#channel-detail [type=hidden]"
               hx-vals='{"category_id": "{{ c.id }}"}'
               hx-target="#channel-detail" hx-swap="innerHTML">&times;</span>
@@ -259,7 +260,10 @@
     {% if d.feed_url %}
     <div class="callout">
       <div class="callout-k">Effective feed URL</div>
-      <div class="callout-url mono">{{ d.feed_url }}</div>
+      <div class="callout-row">
+        <div class="callout-url mono">{{ d.feed_url }}</div>
+        <button type="button" class="btn btn-sm" data-url="{{ d.feed_url }}" onclick="copyUrl(this, this.dataset.url)">Copy</button>
+      </div>
     </div>
     {% else %}
     <div class="callout">

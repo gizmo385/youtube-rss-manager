@@ -4,6 +4,7 @@
 <div class="chan-row overview-row{% if not selected_id %} selected{% endif %}"
      data-title="overview" data-overview="1"
      hx-get="/channels/overview" hx-target="#channel-detail" hx-swap="innerHTML"
+     role="button" tabindex="0" data-kbd{% if not selected_id %} aria-current="true"{% endif %}
      onclick="selectRow(this)">
   <span class="chan-title">Overview</span>
   <span class="chan-badges"><span class="badge" title="Total channels">{{ total }}</span></span>
@@ -18,8 +19,11 @@
   <div class="chan-row{% if ch.channel_id == selected_id %} selected{% endif %}{% if ch.ignored %} ignored{% endif %}"
        data-title="{{ ch.title|lower }}" data-channel-id="{{ ch.channel_id }}"
        hx-get="/channels/{{ ch.channel_id }}/detail" hx-target="#channel-detail" hx-swap="innerHTML"
+       role="button" tabindex="0" data-kbd{% if ch.channel_id == selected_id %} aria-current="true"{% endif %}
        onclick="selectRow(this)">
-    <span class="chan-check" data-id="{{ ch.channel_id }}" title="Select" onclick="toggleCheck(event, this)"></span>
+    <span class="chan-check" data-id="{{ ch.channel_id }}" title="Select"
+          role="checkbox" aria-checked="false" aria-label="Select {{ ch.title }}" tabindex="0" data-kbd
+          onclick="toggleCheck(event, this)"></span>
     <span class="chan-title">{{ ch.title }}</span>
     <span class="chan-badges">
       {% if ch.cat_count > 1 %}

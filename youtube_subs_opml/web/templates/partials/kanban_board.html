@@ -4,14 +4,14 @@
   {% for col in columns %}
   <div class="kcol" data-col-key="{{ col.id if col.id is not none else 'none' }}" data-col-name="{{ col.name }}">
     <div class="kcol-head">
-      <button class="kcol-pin" title="Pin column" onclick="togglePin(this)">◇</button>
+      <button type="button" class="kcol-pin" title="Keep this column at the left" aria-pressed="false" onclick="togglePin(this)">Pin</button>
       <span class="kcol-name">{{ col.name }}</span>
       <span class="kcol-count">{{ col.channels|length }}</span>
     </div>
     <div class="kcol-cards" data-category-id="{{ col.id or '' }}">
       {% for ch in col.channels %}
       <div class="kcard" data-channel-id="{{ ch.channel_id }}" data-title="{{ ch.title|lower }}"
-           onclick="inspectCard(this)">
+           role="button" tabindex="0" data-kbd onclick="inspectCard(this)">
         <span class="kcard-title">{{ ch.title }}</span>
         <span class="kcard-badges">
           {% if ch.other_category_count > 0 %}

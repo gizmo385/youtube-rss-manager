@@ -84,8 +84,11 @@
 var currentFilter = {{ active_filter|tojson }};
 
 function selectRow(el) {
-  document.querySelectorAll('.chan-row.selected').forEach(function(r){ r.classList.remove('selected'); });
+  document.querySelectorAll('.chan-row.selected').forEach(function(r){
+    r.classList.remove('selected'); r.removeAttribute('aria-current');
+  });
   el.classList.add('selected');
+  el.setAttribute('aria-current', 'true');
 }
 
 // '' when the Overview row is selected, so writes don't re-select a channel.
@@ -98,6 +101,7 @@ function toggleCheck(event, box) {
   event.stopPropagation();
   box.classList.toggle('on');
   box.textContent = box.classList.contains('on') ? '✓' : '';
+  box.setAttribute('aria-checked', box.classList.contains('on') ? 'true' : 'false');
   updateBulk();
 }
 
@@ -114,7 +118,7 @@ function updateBulk() {
 }
 
 function clearSelection() {
-  document.querySelectorAll('.chan-check.on').forEach(function(b){ b.classList.remove('on'); b.textContent=''; });
+  document.querySelectorAll('.chan-check.on').forEach(function(b){ b.classList.remove('on'); b.textContent=''; b.setAttribute('aria-checked', 'false'); });
   updateBulk();
 }
 

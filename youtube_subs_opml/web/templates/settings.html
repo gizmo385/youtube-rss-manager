@@ -420,14 +420,6 @@
 </div>
 
 <script>
-function copyUrl(btn, url) {
-  navigator.clipboard.writeText(url).then(function() {
-    var orig = btn.textContent;
-    btn.textContent = 'Copied';
-    setTimeout(function(){ btn.textContent = orig; }, 1500);
-  });
-}
-
 (function () {
   var buttons = document.querySelectorAll('.page-tab');
   function show(tab) {
