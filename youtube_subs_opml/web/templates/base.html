@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+{# The user's colour theme (style.css has one block per theme). Signed out,
+   or before a pick, it's Ember, the original dark theme. #}
+{% set theme = theme_key(user.theme if user else None) %}
+<html lang="en" data-theme="{{ theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -17,7 +20,9 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="{{ app_short_name(user) }}">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="theme-color" content="#201e1d">
+  {% for color, media in theme_chrome_colors(theme) %}
+  <meta name="theme-color" content="{{ color }}"{% if media %} media="{{ media }}"{% endif %}>
+  {% endfor %}
   <link rel="stylesheet" href="/static/vendor/archivo.css">
   <script src="/static/vendor/htmx-2.0.4.min.js"></script>
   <link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">

@@ -575,3 +575,61 @@ def test_manifest_icons_exist_and_cover_install_surfaces(app_db):
         assert (static / icon["src"].lstrip("/")).is_file(), icon["src"]
     purposes = {(i["sizes"], i["purpose"]) for i in icons}
     assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= purposes
+
+
+# --- colour theme ----------------------------------------------------------
+
+
+def test_theme_defaults_to_ember_and_renders_on_html(app_db):
+    client, _ = app_db
+    html = client.get("/settings").text
+    assert '<html lang="en" data-theme="ember">' in html
+    assert '<meta name="theme-color" content="#201e1d">' in html
+    assert 'name="theme" value="ember" checked' in html
+
+
+def test_theme_saves_and_unknown_falls_back(app_db):
+    client, Session_ = app_db
+    resp = client.post("/settings/theme", data={"theme": "paper"}, headers={"HX-Request": "true"})
+    assert resp.status_code == 204
+    with Session_() as db:
+        assert db.get(User, USER_ID).theme == "paper"
+    html = client.get("/settings").text
+    assert 'data-theme="paper"' in html
+    assert '<meta name="theme-color" content="#fdfcfa">' in html
+
+    client.post("/settings/theme", data={"theme": "<script>"}, follow_redirects=False)
+    with Session_() as db:
+        assert db.get(User, USER_ID).theme == "ember"
+
+
+def test_auto_theme_gives_browser_chrome_a_colour_per_scheme(app_db):
+    client, _ = app_db
+    client.post("/settings/theme", data={"theme": "auto"}, follow_redirects=False)
+    html = client.get("/settings").text
+    assert 'data-theme="auto"' in html
+    assert 'content="#201e1d" media="(prefers-color-scheme: dark)"' in html
+    assert 'content="#fdfcfa" media="(prefers-color-scheme: light)"' in html
+
+
+def test_every_theme_has_a_stylesheet_block():
+    from pathlib import Path
+
+    from youtube_subs_opml.web.services.themes import DEFAULT_THEME, THEMES
+
+    css = (Path(__file__).parents[1] / "youtube_subs_opml/web/static/style.css").read_text()
+    for t in THEMES:
+        if t.key != DEFAULT_THEME:
+            assert f':root[data-theme="{t.key}"]' in css, t.key
+
+
+def test_installed_app_colours_follow_the_theme():
+    from types import SimpleNamespace
+
+    from youtube_subs_opml.web.services import branding
+
+    paper = branding.manifest(SimpleNamespace(app_name="", theme="paper"))  # type: ignore[arg-type]
+    assert (paper["background_color"], paper["theme_color"]) == ("#f6f4f1", "#fdfcfa")
+    auto = branding.manifest(SimpleNamespace(app_name="", theme="auto"))  # type: ignore[arg-type]
+    assert auto["theme_color"] == "#201e1d"
+    assert branding.manifest(None)["theme_color"] == "#201e1d"

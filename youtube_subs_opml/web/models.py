@@ -73,6 +73,9 @@ class User(Base):
     podcast_sponsorblock_categories: Mapped[str] = mapped_column(
         String(255), server_default="sponsor,selfpromo,interaction", default="sponsor,selfpromo,interaction"
     )
+    # --- Appearance ------------------------------------------------------------
+    # Colour theme key, or 'auto' to follow the device — see services/themes.
+    theme: Mapped[str] = mapped_column(String(16), server_default="ember", default="ember")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     youtube_accounts: Mapped[list[YoutubeAccount]] = relationship(back_populates="user", cascade="all, delete-orphan")

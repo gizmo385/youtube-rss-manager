@@ -44,6 +44,9 @@ def short_name(user: User | None) -> str:
 
 
 def manifest(user: User | None) -> dict[str, Any]:
+    from .themes import manifest_theme
+
+    splash = manifest_theme(user.theme if user is not None else None)
     return {
         "id": "/watch",
         "name": app_name(user),
@@ -52,7 +55,8 @@ def manifest(user: User | None) -> dict[str, Any]:
         "start_url": "/watch",
         "scope": "/",
         "display": "standalone",
-        "background_color": "#1a1918",
-        "theme_color": "#201e1d",
+        # The installed app's splash and title bar follow the user's theme.
+        "background_color": splash.bg,
+        "theme_color": splash.panel,
         "icons": _ICONS,
     }

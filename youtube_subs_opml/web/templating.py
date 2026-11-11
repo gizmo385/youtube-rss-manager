@@ -50,3 +50,8 @@ from .services.branding import MAX_APP_NAME, app_name, short_name  # noqa: E402
 _globals["app_name"] = app_name
 _globals["app_short_name"] = short_name
 _globals["MAX_APP_NAME"] = MAX_APP_NAME
+
+from .services.themes import chrome_colors, parse_theme  # noqa: E402
+
+_globals["theme_key"] = parse_theme
+_globals["theme_chrome_colors"] = chrome_colors

@@ -24,6 +24,58 @@
 
 <div id="panel-settings" class="tab-panel"{% if active_tab == 'downloads' %} hidden{% endif %}>
 <div class="settings-grid">
+  {# Applied to the page the moment it's picked (see the script below), then
+     saved like the defaults are. #}
+  <form method="post" action="/settings/theme" class="card theme-card" data-saves
+        hx-post="/settings/theme" hx-trigger="change" hx-swap="none">
+    <div class="card-head">
+      <h2 class="card-title" id="theme-title">Theme</h2>
+      <span class="card-note">Applies to this account on every device</span>
+    </div>
+    <div class="card-body">
+      <div class="theme-grid" role="radiogroup" aria-labelledby="theme-title">
+        {% set current = theme_key(user.theme) %}
+        {% for t in themes %}
+        <label class="theme-opt">
+          <input type="radio" name="theme" value="{{ t.key }}"{% if current == t.key %} checked{% endif %}>
+          <span class="theme-swatch" aria-hidden="true" style="--sw-bg: {{ t.bg }}; --sw-panel: {{ t.panel }}; --sw-accent: {{ t.accent }}; --sw-ink: {{ t.ink }}">
+            <span class="sw-bar"></span><span class="sw-line"></span><span class="sw-line short"></span>
+          </span>
+          <span class="theme-name">{{ t.label }}</span>
+          <span class="theme-hint">{{ t.hint }}</span>
+        </label>
+        {% endfor %}
+        <label class="theme-opt">
+          <input type="radio" name="theme" value="{{ auto_theme }}"{% if current == auto_theme %} checked{% endif %}>
+          <span class="theme-swatch theme-swatch-auto" aria-hidden="true">
+            <span class="theme-swatch" style="--sw-bg: #1a1918; --sw-panel: #201e1d; --sw-accent: #ff563c; --sw-ink: #f3f2f2"><span class="sw-bar"></span><span class="sw-line"></span><span class="sw-line short"></span></span>
+            <span class="theme-swatch" style="--sw-bg: #f6f4f1; --sw-panel: #fdfcfa; --sw-accent: #c2381f; --sw-ink: #1c1a19"><span class="sw-bar"></span><span class="sw-line"></span><span class="sw-line short"></span></span>
+          </span>
+          <span class="theme-name">Auto</span>
+          <span class="theme-hint">Ember or Paper, following your device</span>
+        </label>
+      </div>
+    </div>
+  </form>
+  <script>
+  (function () {
+    var form = document.querySelector('.theme-card');
+    form.addEventListener('change', function (e) {
+      if (e.target.name !== 'theme') return;
+      document.documentElement.setAttribute('data-theme', e.target.value);
+      // The browser chrome colour, from the swatch's own panel colour.
+      var metas = document.querySelectorAll('meta[name="theme-color"]');
+      var sw = e.target.parentNode.querySelector('.theme-swatch');
+      var panel = sw && sw.style.getPropertyValue('--sw-panel');
+      if (panel && metas.length) {
+        metas[0].setAttribute('content', panel.trim());
+        metas[0].removeAttribute('media');
+        for (var i = 1; i < metas.length; i++) metas[i].remove();
+      }
+    });
+  })();
+  </script>
+
   {# Defaults save as they change, like channel and category settings do.
      Connections below keep an explicit Save: they hold credentials. #}
   <form method="post" action="/settings/defaults" style="display:contents" data-saves
