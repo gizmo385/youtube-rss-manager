@@ -1408,6 +1408,8 @@ label { display: block; }
   .subbar { position: static; padding: 8px 12px; }
   .toast { left: 12px; right: 12px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px); }
   .save-toast { left: 12px; right: 12px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px); }
+  /* Clear of the tab bar, like the save toast. */
+  .toast { left: 12px; right: 12px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px); justify-content: space-between; }
   .phone-only { display: block; }
 
   .split { display: block; height: auto; }

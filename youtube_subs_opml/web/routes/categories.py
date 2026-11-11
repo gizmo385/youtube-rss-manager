@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -13,6 +14,7 @@ from ..deps import get_current_user
 from ..forms import form_text
 from ..models import (
     Category,
+    CategoryPlaylist,
     Channel,
     ChannelCategory,
     Download,
@@ -270,7 +272,9 @@ def _categories_with_counts(user: User, db: Session) -> list[dict]:
     return items
 
 
-def _category_list_response(request: Request, user: User, db: Session) -> HTMLResponse:
+def _category_list_response(
+    request: Request, user: User, db: Session, deleted: dict[str, Any] | None = None
+) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "partials/category_list.html",
@@ -278,8 +282,46 @@ def _category_list_response(request: Request, user: User, db: Session) -> HTMLRe
             "categories_with_counts": _categories_with_counts(user, db),
             "user": user,
             "link_targets": LINK_TARGETS,
+            # The category just deleted, for the Undo toast (see _snapshot).
+            "deleted": deleted,
         },
     )
+
+
+# --- undoing a delete ---
+# Deleting is immediate, with an Undo offered for a few seconds. What Undo
+# needs — the category's name, overrides and channels — goes out with the
+# delete's response and comes back with the restore, so nothing lingers
+# server-side for the deletes nobody undoes. It comes back from the browser,
+# so the restore trusts none of it: every value is re-checked and the
+# channels are cut down to the user's own subscriptions.
+
+
+def _snapshot(category: Category, db: Session) -> dict[str, Any]:
+    channel_ids = (
+        db.execute(select(ChannelCategory.channel_id).where(ChannelCategory.category_id == category.id)).scalars().all()
+    )
+    return {
+        "name": category.name,
+        "prefs": {field: getattr(category, field) for field in _ARCHIVE_FIELD_KINDS},
+        "channels": list(channel_ids),
+    }
+
+
+def _restored_pref(field: str, value: object) -> bool | int | str | None:
+    """A snapshot's value for ``field`` if it's one the column could hold, else inherit."""
+    kind = _ARCHIVE_FIELD_KINDS[field]
+    if kind == "bool":
+        return value if isinstance(value, bool) else None
+    if kind in ("int", "minutes"):
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+    if not isinstance(value, str):
+        return None
+    if kind == "sponsorblock":
+        return sponsorblock.parse_mode(value, allow_inherit=True)
+    if kind == "podcast_sponsorblock":
+        return sponsorblock.parse_mode(value, allow_inherit=True, modes=sponsorblock.PODCAST_MODES)
+    return parse_link_target(value, allow_inherit=True)
 
 
 # --- routes ---
@@ -373,7 +415,63 @@ def delete_category(
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     category = _get_owned_category(category_id, user, db)
+    deleted = _snapshot(category, db)
+    # Postgres cascades these; local SQLite doesn't enforce foreign keys, and
+    # the leftovers would collide with a restored category that reuses the id.
+    db.execute(delete(ChannelCategory).where(ChannelCategory.category_id == category.id))
+    db.execute(delete(CategoryPlaylist).where(CategoryPlaylist.category_id == category.id))
     db.delete(category)
+    db.commit()
+
+    return _category_list_response(request, user, db, deleted=deleted)
+
+
+@router.post("/restore")
+async def restore_category(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Undo a delete: recreate the category from the snapshot its delete handed out."""
+    try:
+        snapshot = json.loads(form_text(await request.form(), "snapshot") or "")
+    except ValueError:
+        snapshot = None
+    name = snapshot.get("name") if isinstance(snapshot, dict) else None
+    if not isinstance(snapshot, dict) or not isinstance(name, str):
+        raise HTTPException(status_code=400, detail="Nothing to restore")
+    name = name.strip()[:255]
+    slug = slugify(name)
+    if not slug:
+        raise HTTPException(status_code=400, detail="Invalid category name")
+    taken = db.execute(select(Category.id).where(Category.user_id == user.id, Category.slug == slug)).first()
+    if taken is not None:
+        raise HTTPException(status_code=409, detail="Category already exists")
+
+    prefs = snapshot.get("prefs")
+    prefs = prefs if isinstance(prefs, dict) else {}
+    category = Category(user_id=user.id, name=name, slug=slug)
+    for field in _ARCHIVE_FIELD_KINDS:
+        setattr(category, field, _restored_pref(field, prefs.get(field)))
+    db.add(category)
+    db.flush()
+
+    wanted = snapshot.get("channels")
+    wanted = [c for c in wanted if isinstance(c, str)] if isinstance(wanted, list) else []
+    if wanted:
+        subscribed = (
+            db.execute(
+                select(Subscription.channel_id).where(
+                    Subscription.user_id == user.id, Subscription.channel_id.in_(wanted)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        db.add_all(
+            ChannelCategory(user_id=user.id, channel_id=channel_id, category_id=category.id)
+            for channel_id in subscribed
+        )
     db.commit()
 
     return _category_list_response(request, user, db)

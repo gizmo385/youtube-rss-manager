@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -646,3 +646,69 @@ def test_mark_watched_at_defaults_to_open_and_saves(app_db):
     client.post("/settings/defaults", data={"mark_watched_at": "never", "keep_last_n": "15"})
     with Session_() as db:
         assert db.get(User, USER_ID).mark_watched_at == "open"
+
+
+# --- undoing a category delete ------------------------------------------
+
+
+def _undo_snapshot(html: str) -> str:
+    import html as html_lib
+    import re
+
+    match = re.search(r'name="snapshot" value="([^"]*)"', html)
+    assert match, "the delete response should carry an Undo form"
+    return html_lib.unescape(match.group(1))
+
+
+def test_deleting_a_category_offers_undo_that_restores_it(app_db):
+    client, Session_ = app_db
+    with Session_() as db:
+        cat = db.get(Category, 1)
+        cat.download_enabled = True
+        cat.keep_last_n = 7
+        cat.link_target = "hold"
+        db.add(ChannelCategory(user_id=USER_ID, channel_id=CID, category_id=1))
+        db.commit()
+
+    resp = client.delete("/categories/1", headers={"HX-Request": "true"})
+    assert resp.status_code == 200
+    assert "hx-confirm" not in resp.text
+    assert "Deleted Tech" in resp.text and "1 channel left" in resp.text
+    with Session_() as db:
+        assert db.execute(select(Category)).scalars().all() == []
+        # Gone without relying on the database to cascade (SQLite here doesn't).
+        assert db.execute(select(ChannelCategory)).scalars().all() == []
+
+    restored = client.post("/categories/restore", data={"snapshot": _undo_snapshot(resp.text)})
+    assert restored.status_code == 200
+    assert 'name="snapshot"' not in restored.text
+    with Session_() as db:
+        cat = db.execute(select(Category)).scalar_one()
+        assert (cat.name, cat.slug, cat.user_id) == ("Tech", "tech", USER_ID)
+        assert (cat.download_enabled, cat.keep_last_n, cat.link_target) == (True, 7, "hold")
+        assert cat.include_shorts is None
+        links = db.execute(select(ChannelCategory)).scalars().all()
+        assert [(link.channel_id, link.category_id) for link in links] == [(CID, cat.id)]
+
+
+def test_restore_trusts_nothing_in_the_snapshot(app_db):
+    import json
+
+    client, Session_ = app_db
+    client.delete("/categories/1")
+    snapshot = {
+        "name": "Tech",
+        "prefs": {"download_enabled": "yes", "keep_last_n": -4, "link_target": "nowhere", "user_id": 99},
+        "channels": [CID, "UCsomeoneelses000000000", 7],
+    }
+    assert client.post("/categories/restore", data={"snapshot": json.dumps(snapshot)}).status_code == 200
+    with Session_() as db:
+        cat = db.execute(select(Category)).scalar_one()
+        assert cat.user_id == USER_ID
+        assert (cat.download_enabled, cat.keep_last_n, cat.link_target) == (None, None, None)
+        assert [link.channel_id for link in db.execute(select(ChannelCategory)).scalars().all()] == [CID]
+
+    # A second restore would duplicate it; junk is refused outright.
+    assert client.post("/categories/restore", data={"snapshot": json.dumps(snapshot)}).status_code == 409
+    assert client.post("/categories/restore", data={"snapshot": "not json"}).status_code == 400
+    assert client.post("/categories/restore", data={"snapshot": "[]"}).status_code == 400
