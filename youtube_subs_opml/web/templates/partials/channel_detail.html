@@ -242,7 +242,14 @@
         <div class="activity-title">{{ v.title }}</div>
         <div class="activity-meta">{{ v.meta }}</div>
       </div>
+      {% if v.retryable %}
+      <button type="button" class="btn btn-sm activity-retry"
+              hx-post="/channels/retry-download" hx-include="#channel-detail [type=hidden]"
+              hx-vals='{"video_id": "{{ v.video_id }}"}'
+              hx-target="#channel-detail" hx-swap="innerHTML">Retry</button>
+      {% else %}
       <span class="activity-size">{{ v.size }}</span>
+      {% endif %}
     </div>
     {% else %}
     <div class="empty" style="padding:8px 0">Nothing archived yet for this channel.</div>

@@ -21,7 +21,7 @@
         <button type="button" id="w-theater" class="w-toggle w-theater-btn" title="Play videos in theater mode — player center, feed docked right (T)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"><rect x="2" y="5" width="14" height="14"></rect><path d="M19 5v14"></path><path d="M22 5v14"></path></svg>Theater<span class="w-key">T</span></button>
         <span class="w-view-label">View</span>
         <div class="seg" id="w-layouts"></div>
-        <button type="button" class="w-help-btn" id="w-help-btn" title="Keyboard shortcuts">?</button>
+        <button type="button" class="w-help-btn" id="w-help-btn" title="Keyboard shortcuts (?)">Shortcuts<kbd>?</kbd></button>
       </div>
     </div>
   </div>
@@ -54,8 +54,6 @@
       </button>
     </aside>
   </div>
-
-  <footer class="watch-legend" id="watch-legend"></footer>
 </div>
 
 <div id="w-help" class="w-help-overlay" hidden>
@@ -893,11 +891,8 @@
     if (t.onUndo) t.onUndo(); else applyWatched(t.prev);
   }
 
-  // ---- help + legend ----------------------------------------------------
+  // ---- help ----------------------------------------------------------------
   function keysHtml(keys) { return keys.map(function (k) { return '<kbd>' + esc(k) + '</kbd>'; }).join(''); }
-  document.getElementById('watch-legend').innerHTML = SHORTCUTS.filter(function (r) { return r[2]; }).map(function (r) {
-    return '<span class="w-legend-item">' + keysHtml(r[0]) + '<span>' + esc(r[2]) + '</span></span>';
-  }).join('');
   document.getElementById('w-help-rows').innerHTML = SHORTCUTS.map(function (r) {
     return '<div class="w-help-row"><span>' + esc(r[1]) + '</span><span class="w-help-keys">' + keysHtml(r[0]) + '</span></div>';
   }).join('');

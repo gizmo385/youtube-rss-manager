@@ -60,7 +60,8 @@ window.Watch = (function () {
         '<div class="w-title">' + esc(v.title) + '</div>' +
         '<div class="w-meta">' + (v.watched ? '' : '<span class="dot"></span>') +
           (showChannel ? '<span class="w-meta-ch">' + esc(v.channel) + '</span><span>·</span>' : '') +
-          '<span class="nowrap">' + ago(v) + '</span></div>' +
+          '<span class="nowrap">' + ago(v) + '</span>' +
+          (!v.watched && v.progress ? '<span>·</span><span class="nowrap w-meta-prog">In progress</span>' : '') + '</div>' +
       '</div>' + watchBtn(v) + '</div></a>';
   }
 
@@ -226,7 +227,9 @@ window.Watch = (function () {
         pbtn('next', 'Next →', 'J', i.hasNext ? '' : ' dim') + '</div>';
     }
     if (opts.onWatch) {
-      actions += pbtn('watch', CHECK + (i.watched ? 'Watched' : 'Mark watched'), 'W', i.watched ? ' on' : '');
+      // "Finished", not "Mark watched": playing a video only starts it, and
+      // this is the button that says you're done with it.
+      actions += pbtn('watch', CHECK + (i.watched ? 'Watched' : 'Finished'), 'W', i.watched ? ' on' : '');
     }
     if (opts.onTheater) actions += pbtn('theater', i.theater ? 'Exit theater' : 'Theater', 'T');
     if (resumedAt) actions += pbtn('restart', 'Resumed at ' + dur(resumedAt) + ' · Start over');

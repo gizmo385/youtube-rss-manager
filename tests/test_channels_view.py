@@ -17,8 +17,10 @@ from youtube_subs_opml.web.models import (
     Category,
     Channel,
     ChannelCategory,
+    Download,
     Subscription,
     User,
+    Video,
 )
 from youtube_subs_opml.web.routes import channels
 
@@ -46,6 +48,10 @@ def client(monkeypatch):
         s.add(Subscription(user_id=1, channel_id="UCc", ignored=True))
         s.add(ChannelCategory(user_id=1, channel_id="UCb", category_id=7))
         s.add(ChannelCategory(user_id=1, channel_id="UCc", category_id=7))
+        # Bravo has one download that failed.
+        s.add(Video(video_id="vfail", channel_id="UCb", title="Broken upload"))
+        s.commit()
+        s.add(Download(video_id="vfail", status="failed", last_error="boom", attempts=3))
         s.commit()
 
     def odb():
@@ -170,6 +176,32 @@ def test_link_targets_use_readable_names(client):
     html = client.get("/channels?selected=UCa").text
     assert "Jellyfin when ready" in html
     assert ">when_ready<" not in html
+
+
+def test_failed_download_can_be_retried_from_the_channel(client):
+    html = client.get("/channels?selected=UCb").text
+    assert "Failed — boom" in html
+    assert 'hx-post="/channels/retry-download"' in html
+    resp = client.post(
+        "/channels/retry-download",
+        data={"channel_ids": "UCb", "selected": "UCb", "return": "detail", "filter": "All", "video_id": "vfail"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 200
+    # Requeued: no longer a failure, so no Retry button either.
+    assert "Failed — boom" not in resp.text
+    assert "/channels/retry-download" not in resp.text
+
+
+def test_channels_without_failures_offer_no_retry(client):
+    assert "/channels/retry-download" not in client.get("/channels?selected=UCa").text
+
+
+def test_failures_surface_in_the_nav_not_a_separate_pill(client):
+    html = client.get("/channels").text
+    assert 'href="/settings?tab=downloads&amp;status=failed"' in html
+    assert 'class="nav-badge">1<' in html
+    assert "alert-pill" not in html
 
 
 def test_ignored_channels_group_at_the_bottom(client):

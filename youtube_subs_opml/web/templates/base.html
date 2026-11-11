@@ -19,7 +19,10 @@
   <script src="/static/vendor/htmx-2.0.4.min.js"></script>
   <link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
 </head>
-<body class="sb">
+{# Watch drops the stats bar: the page is for videos, and library totals
+   and failures have their own home (Channels, and Downloads in the nav). #}
+{% set show_subbar = stats is defined and stats and active_nav != 'watch' %}
+<body class="sb{% if not show_subbar %} no-subbar{% endif %}">
   {% if user %}
   <header class="app-header">
     <div class="brand">
@@ -37,7 +40,13 @@
       <a href="/channels" class="nav-link{% if active_nav == 'channels' %} active{% endif %}">Channels</a>
       <a href="/categories" class="nav-link{% if active_nav == 'categories' %} active{% endif %}">Categories</a>
       <a href="/channels/board" class="nav-link{% if active_nav == 'board' %} active{% endif %}">Board</a>
-      <a href="/settings" class="nav-link{% if active_nav == 'settings' %} active{% endif %}">Settings</a>
+      {# Failures surface here on every page; the badge lands on the list
+         already filtered to them, where each one can be retried. #}
+      {% set failed = stats.failed if stats is defined and stats else 0 %}
+      <a href="/settings?tab=downloads{% if failed %}&amp;status=failed{% endif %}" id="nav-downloads"
+         class="nav-link{% if active_nav == 'downloads' %} active{% endif %}"{% if failed %}
+         aria-label="Downloads, {{ failed }} failed" title="{{ failed }} download{{ '' if failed == 1 else 's' }} failed"{% endif %}>Downloads{% if failed %}<span class="nav-badge">{{ failed }}</span>{% endif %}</a>
+      <a href="/settings" id="nav-settings" class="nav-link{% if active_nav == 'settings' %} active{% endif %}">Settings</a>
       <button type="button" class="qs-trigger" onclick="qsOpen()" aria-label="Open quick switcher">
         <span>Jump to…</span><kbd class="qs-kbd">⌘K</kbd>
       </button>
@@ -47,19 +56,13 @@
     </nav>
   </header>
 
-  {% if stats is defined and stats %}
+  {% if show_subbar %}
   <div class="subbar">
     <div class="subbar-stats">
       {{ stats.channels }} channel{{ '' if stats.channels == 1 else 's' }}
       · {{ stats.categories }} categor{{ 'y' if stats.categories == 1 else 'ies' }}
       · {{ stats.archived_human }} archived
     </div>
-    {% if stats.failed %}
-    <a href="/channels?filter=Failed" class="alert-pill">
-      <span class="dot"></span>
-      {{ stats.failed }} download{{ '' if stats.failed == 1 else 's' }} failed
-    </a>
-    {% endif %}
   </div>
   {% endif %}
 

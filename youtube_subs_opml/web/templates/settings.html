@@ -431,6 +431,9 @@ function copyUrl(btn, url) {
     buttons.forEach(function (b) { b.classList.toggle('active', b.dataset.tab === tab); });
     document.getElementById('panel-settings').hidden = (tab === 'downloads');
     document.getElementById('panel-downloads').hidden = (tab !== 'downloads');
+    // The two tabs are separate items in the main nav; keep it in step.
+    document.getElementById('nav-downloads').classList.toggle('active', tab === 'downloads');
+    document.getElementById('nav-settings').classList.toggle('active', tab !== 'downloads');
   }
   buttons.forEach(function (b) {
     b.addEventListener('click', function () {
