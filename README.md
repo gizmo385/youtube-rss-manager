@@ -31,8 +31,11 @@ A multi-user web app that syncs YouTube subscriptions via the YouTube Data API a
 
 **Getting around**
 
+- A Watch tab of recent uploads by category, with an in-page player, resume points and watched state
 - A library overview with archive activity and anything that needs attention
 - A Ctrl/Cmd-K quick switcher for jumping to any channel
+
+![Watch tab](./images/watch.png)
 
 ![Channel detail](./images/channel_detail.png)
 
