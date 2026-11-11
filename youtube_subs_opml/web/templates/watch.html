@@ -448,10 +448,19 @@
     }).join('') || '<div class="w-empty"><div class="eyebrow">Nothing matches these filters</div></div>';
   }
 
-  function renderSide(mdl) {
+  // The sidebar lists categories in the order they sit in the feed, so the
+  // two agree while Pack sorts the feed by size: the ones on screen first,
+  // as placed, then those with nothing showing, in their own order.
+  function sideOrder(mdl, secs) {
+    var at = {};
+    secs.forEach(function (p, i) { at[p.c.id] = i; });
+    return mdl.filter(function (c) { return !pinned(c); }).map(function (c, i) {
+      return {c: c, at: c.id in at ? at[c.id] : secs.length + i};
+    }).sort(function (a, b) { return a.at - b.at; }).map(function (o) { return o.c; });
+  }
+  function renderSide(mdl, secs) {
     var html = '';
-    mdl.forEach(function (c) {
-      if (pinned(c)) return;
+    sideOrder(mdl, secs).forEach(function (c) {
       html += '<div class="w-side-cat" data-cat="' + c.id + '">' +
         '<div class="w-side-row">' +
           '<button type="button" class="w-side-chev" data-act="toggle-cat" title="Collapse / expand">' +
@@ -517,7 +526,7 @@
     if (!S.selCat || !secs.some(function (p) { return p.c.id === S.selCat; })) S.selCat = secs.length ? secs[0].c.id : null;
 
     renderToolbar(mdl);
-    renderSide(mdl);
+    renderSide(mdl, secs);
     // The main feed is hidden in theater mode, so leave it (and its shelves'
     // scroll positions) alone until it's back.
     if (theaterOn()) renderRail(secs); else renderMain(secs);
@@ -683,8 +692,8 @@
     var v = videoOf(k);
     if (!v) return;
     if (isPlaying(v)) { playerWatched(); return; }
-    // Everything in Continue watching is already watched (opening a video
-    // marks it), so there W means done with it.
+    // Continue watching holds videos already started (and, unless they're
+    // marked at the finish, already watched), so there W means done with it.
     if (k.indexOf(CONT.id + '|') === 0) { done(k); return; }
     var c = {}; c[v.key] = !v.watched;
     applyWatched(c);
@@ -771,11 +780,17 @@
     Watch.play(v, {
       info: playerInfo, onClose: closed,
       onPrev: function () { playRel(-1); }, onNext: function () { playRel(1); },
-      onWatch: playerWatched, onTheater: toggleTheater
+      onWatch: playerWatched, onTheater: toggleTheater,
+      onFinished: function (fv) { var fc = {}; fc[fv.key] = true; applyWatched(fc); }
     });
-    var c = {}; c[v.key] = true;
-    var prev = applyWatched(c);   // renders, which lays out theater mode
-    if (prev[v.key] === false) showToast({text: 'Marked watched', sub: v.title, prev: prev});
+    if (Watch.markAtFinish) {
+      // Watched once most of it has played (onFinished), or on Finished.
+      render();   // lays out theater mode
+    } else {
+      var c = {}; c[v.key] = true;
+      var prev = applyWatched(c);   // renders, which lays out theater mode
+      if (prev[v.key] === false) showToast({text: 'Marked watched', sub: v.title, prev: prev});
+    }
     if (theaterOn()) select(k);   // bring it into view in the rail
   }
   // The player's neighbours in feed order, skipping what can't play here.

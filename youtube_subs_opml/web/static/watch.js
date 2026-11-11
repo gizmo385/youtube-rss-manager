@@ -254,6 +254,10 @@ window.Watch = (function () {
   // and there's nothing to resume.
   var RESUME_MIN = 10, RESUME_DONE = 0.9, SAVE_EVERY_MS = 10000;
   var track = null;   // the video playing: {v, pos(), dur(), started, saved, off}
+  // The user's choice (Settings) of when a video played here counts as
+  // watched: 'open', where the page marks it as it starts, or 'finish',
+  // where it's marked once it has played past RESUME_DONE of its length.
+  var markAtFinish = document.body.dataset.markWatched === 'finish';
 
   function resumable(pos, d) { return pos >= RESUME_MIN && !(d && pos >= d * RESUME_DONE); }
   function resumeAt(v) { return v.progress && resumable(v.progress.pos, v.progress.dur) ? v.progress.pos : 0; }
@@ -261,8 +265,22 @@ window.Watch = (function () {
   function startTracking(v, pos, d, seek) {
     var t = {v: v, pos: pos, dur: d, seek: seek, started: false, saved: null, off: false};
     t.timer = setInterval(function () { saveProgress(t); }, SAVE_EVERY_MS);
+    t.last = 0;
+    if (markAtFinish) t.finishTimer = setInterval(function () { checkFinished(t); }, 1000);
     track = t;
     return t;
+  }
+  // Tell the page (``opts.onFinished``) the moment playback crosses into the
+  // last stretch, so it can mark the video watched. Only on the crossing:
+  // someone who then un-marks it isn't overruled a second later.
+  function checkFinished(t) {
+    if (track !== t || !t.started) return;
+    var pos, d;
+    try { pos = t.pos() || 0; d = t.dur() || t.v.duration; } catch (e) { return; }
+    if (!d) return;
+    var was = t.last;
+    t.last = pos;
+    if (was < d * RESUME_DONE && pos >= d * RESUME_DONE && !t.v.watched && opts.onFinished) opts.onFinished(t.v);
   }
   // Nothing is saved until playback has actually started: before that the
   // position reads 0, which would wipe out the point being resumed from.
@@ -288,6 +306,7 @@ window.Watch = (function () {
     stopSponsorBlock();
     if (!track) return;
     clearInterval(track.timer);
+    clearInterval(track.finishTimer);
     saveProgress(track, true);
     track.started = false;
     track = null;
@@ -566,6 +585,6 @@ window.Watch = (function () {
     esc: esc, hue: hue, ago: ago, agoShort: agoShort, dur: dur,
     badges: badges, watchBtn: watchBtn, thumb: thumb, card: card, progressBar: progressBar, setProgress: setProgress, saveWatched: saveWatched,
     canPlayHere: canPlayHere, play: play, close: close, isOpen: isOpen, refresh: refresh,
-    tracking: tracking, setTracking: setTracking
+    tracking: tracking, setTracking: setTracking, markAtFinish: markAtFinish
   };
 })();
