@@ -24,6 +24,13 @@ LinkTarget = Literal["youtube", "when_ready", "hold"]
 
 LINK_TARGETS: tuple[str, ...] = ("youtube", "when_ready", "hold")
 
+# What the UI calls each one; the raw values are only ever stored and posted.
+LINK_TARGET_LABELS: dict[str, str] = {
+    "youtube": "YouTube",
+    "when_ready": "Jellyfin when ready",
+    "hold": "Hold until ready",
+}
+
 #: What each link_target does to a feed entry:
 #:
 #: youtube     — always link to YouTube. Current behavior; the default.

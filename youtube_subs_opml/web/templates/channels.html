@@ -97,7 +97,7 @@ function currentSelectedId() {
 function toggleCheck(event, box) {
   event.stopPropagation();
   box.classList.toggle('on');
-  box.textContent = box.classList.contains('on') ? '✕' : '';
+  box.textContent = box.classList.contains('on') ? '✓' : '';
   updateBulk();
 }
 

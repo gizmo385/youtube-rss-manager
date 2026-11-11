@@ -91,7 +91,7 @@
             <span class="field-label">Feed link target</span>
             <select name="link_target">
               {% for lt in link_targets %}
-              <option value="{{ lt }}"{% if user.link_target == lt %} selected{% endif %}>{{ lt }}</option>
+              <option value="{{ lt }}"{% if user.link_target == lt %} selected{% endif %}>{{ LINK_TARGET_LABELS[lt] }}</option>
               {% endfor %}
             </select>
             <span class="field-hint">Where a feed entry links once archived</span>

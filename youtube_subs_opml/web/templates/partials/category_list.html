@@ -93,7 +93,7 @@
                 hx-target="#category-list" hx-swap="innerHTML">
           <option value="inherit"{% if cat.link_target is none %} selected{% endif %}>Inherit</option>
           {% for lt in link_targets %}
-          <option value="{{ lt }}"{% if cat.link_target == lt %} selected{% endif %}>{{ lt }}</option>
+          <option value="{{ lt }}"{% if cat.link_target == lt %} selected{% endif %}>{{ LINK_TARGET_LABELS[lt] }}</option>
           {% endfor %}
         </select>
       </div>
