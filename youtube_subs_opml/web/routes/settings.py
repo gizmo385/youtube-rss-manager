@@ -153,7 +153,7 @@ def settings_page(
         "user_podcast_sponsorblock_categories": sponsorblock.user_categories(user, podcast=True),
         "max_duration_minutes": user.max_duration_seconds // 60,
         "min_duration_minutes": user.min_duration_seconds // 60,
-        "active_nav": "settings",
+        "active_nav": active_tab,
         "active_tab": active_tab,
         "stats": shell_stats(user, db),
         # Downloader tab: summary counts, retry-all count, filter options, and

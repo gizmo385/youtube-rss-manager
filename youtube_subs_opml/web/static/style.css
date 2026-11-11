@@ -144,6 +144,13 @@ h1, h2, h3, h4 { margin: 0; font-weight: 800; }
   border-bottom-color: var(--accent);
 }
 
+.nav-badge {
+  margin-left: 6px; padding: 0 5px; font-size: 11px; font-weight: 800; letter-spacing: 0;
+  color: var(--bg); background: var(--warn);
+}
+/* Pages without the stats bar (Watch) get its height back. */
+.no-subbar { --subbar-h: 0px; }
+
 .nav-divider { width: 1px; height: 22px; background: var(--line); margin: 0 10px; }
 .nav-user { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .nav-logout { font-size: 12px; font-weight: 600; margin-left: 10px; }
@@ -715,6 +722,7 @@ label { display: block; }
   padding: 7px 0;
   border-bottom: 1px solid var(--line-3);
 }
+.activity-retry { align-self: center; }
 .activity-dot { width: 8px; height: 8px; margin-top: 5px; display: block; background: var(--line); }
 .activity-dot.ok { background: var(--ok); }
 .activity-dot.fail { background: var(--warn); }
@@ -1393,10 +1401,13 @@ label { display: block; }
 .w-view-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); }
 .w-key { font-size: 10px; opacity: 0.6; margin-left: 6px; }
 .w-help-btn {
-  background: transparent; border: 1px solid var(--faint); color: var(--ink);
-  font-size: 12px; font-weight: 600; padding: 3px 9px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: 1px solid var(--line); color: var(--muted);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 4px 8px; cursor: pointer;
 }
-.w-help-btn:hover { border-color: var(--muted); }
+.w-help-btn kbd { font-family: inherit; font-size: 10px; color: var(--ink-2); border: 1px solid var(--faint); padding: 0 4px; }
+.w-help-btn:hover { color: var(--ink); }
 .w-pack-btn, .w-theater-btn { margin-right: 6px; }
 .w-pack-btn[hidden] { display: none; }
 .w-toggle .w-key { margin-left: 0; }
@@ -1592,8 +1603,13 @@ section.focused > * > .w-sec-hint { display: inline; }
   flex-shrink: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
   background: transparent; border: 1px solid var(--line); color: var(--faint); cursor: pointer; padding: 0;
 }
+/* An empty box until it's watched: a tick on every card read as "done" at a
+   glance, even on videos that had only been started. */
+.w-check svg { opacity: 0; }
 .w-check:hover { border-color: var(--muted); }
-.watched .w-check { color: var(--ok); }
+.w-check:hover svg { opacity: 1; }
+.watched .w-check, .w-row.watched .w-check { color: var(--bg); background: var(--ok); border-color: var(--ok); }
+.watched .w-check svg { opacity: 1; }
 
 /* List rows */
 .w-row {
@@ -1613,12 +1629,7 @@ section.focused > * > .w-sec-hint { display: inline; }
 .w-row-age { color: var(--muted-2); }
 .w-row .w-check { width: 22px; height: 22px; border-color: var(--line-2); }
 
-/* Shortcut legend + help */
-.watch-legend {
-  display: flex; align-items: center; gap: 18px; padding: 7px 20px; flex-shrink: 0;
-  border-top: 2px solid var(--line); background: var(--panel); overflow-x: auto; white-space: nowrap;
-}
-.w-legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted-2); }
+/* Shortcut help */
 
 .w-help-overlay {
   position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.55);
@@ -1647,7 +1658,7 @@ section.focused > * > .w-sec-hint { display: inline; }
 @media (max-width: 860px) {
   .watch { height: auto; }
   .watch-body { display: block; }
-  .watch-side, .watch-legend { display: none; }
+  .watch-side { display: none; }
   .watch-main { overflow: visible; }
 
   .watch-toolbar { padding: 8px 12px; gap: 8px; }

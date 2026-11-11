@@ -30,6 +30,7 @@ from ..models import (
     Video,
     YoutubeAccount,
 )
+from ..services import downloads as downloads_service
 from ..services import sponsorblock
 from ..services.crypto import decrypt_token
 from ..services.downloads import SKIP_REASON_LABELS
@@ -410,6 +411,9 @@ def _activity_item(dl: Download, vid: Video, channel_title: str | None = None) -
         "meta": meta,
         "size": size,
         "status": status,
+        "video_id": vid.video_id,
+        # A failure can be retried right where it's shown.
+        "retryable": dl.status == "failed",
     }
 
 
@@ -1124,6 +1128,22 @@ async def ignore_channels(
         .values(ignored=ignored)
     )
     db.commit()
+    return _write_response(request, form, user, db, grouping_changed=True)
+
+
+@router.post("/retry-download")
+async def retry_channel_download(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Requeue one failed download from a channel's archive activity."""
+    form = await request.form()
+    video_id = form_text(form, "video_id")
+    if not video_id:
+        raise HTTPException(status_code=400, detail="No video given")
+    downloads_service.retry_one(db, user.id, video_id)
+    # The failure badge in the list may clear, so refresh it alongside.
     return _write_response(request, form, user, db, grouping_changed=True)
 
 
