@@ -220,6 +220,7 @@ async def update_defaults(
 ) -> Response:
     form = await request.form()
     user.app_name = branding.parse_app_name(form_text(form, "app_name"))
+    user.mark_watched_at = "finish" if form_text(form, "mark_watched_at") == "finish" else "open"
     user.include_shorts = "include_shorts" in form
     user.include_live = "include_live" in form
 

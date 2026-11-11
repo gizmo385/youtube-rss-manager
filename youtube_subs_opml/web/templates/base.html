@@ -30,7 +30,7 @@
 {# Watch drops the stats bar: the page is for videos, and library totals
    and failures have their own home (Channels, and Downloads in the nav). #}
 {% set show_subbar = stats is defined and stats and active_nav != 'watch' %}
-<body class="sb{% if not show_subbar %} no-subbar{% endif %}">
+<body class="sb{% if not show_subbar %} no-subbar{% endif %}"{% if user %} data-mark-watched="{{ user.mark_watched_at }}"{% endif %}>
   {% if user %}
   <header class="app-header">
     <div class="brand">

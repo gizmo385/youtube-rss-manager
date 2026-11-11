@@ -692,8 +692,8 @@
     var v = videoOf(k);
     if (!v) return;
     if (isPlaying(v)) { playerWatched(); return; }
-    // Everything in Continue watching is already watched (opening a video
-    // marks it), so there W means done with it.
+    // Continue watching holds videos already started (and, unless they're
+    // marked at the finish, already watched), so there W means done with it.
     if (k.indexOf(CONT.id + '|') === 0) { done(k); return; }
     var c = {}; c[v.key] = !v.watched;
     applyWatched(c);
@@ -780,11 +780,17 @@
     Watch.play(v, {
       info: playerInfo, onClose: closed,
       onPrev: function () { playRel(-1); }, onNext: function () { playRel(1); },
-      onWatch: playerWatched, onTheater: toggleTheater
+      onWatch: playerWatched, onTheater: toggleTheater,
+      onFinished: function (fv) { var fc = {}; fc[fv.key] = true; applyWatched(fc); }
     });
-    var c = {}; c[v.key] = true;
-    var prev = applyWatched(c);   // renders, which lays out theater mode
-    if (prev[v.key] === false) showToast({text: 'Marked watched', sub: v.title, prev: prev});
+    if (Watch.markAtFinish) {
+      // Watched once most of it has played (onFinished), or on Finished.
+      render();   // lays out theater mode
+    } else {
+      var c = {}; c[v.key] = true;
+      var prev = applyWatched(c);   // renders, which lays out theater mode
+      if (prev[v.key] === false) showToast({text: 'Marked watched', sub: v.title, prev: prev});
+    }
     if (theaterOn()) select(k);   // bring it into view in the rail
   }
   // The player's neighbours in feed order, skipping what can't play here.

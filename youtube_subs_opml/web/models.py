@@ -58,6 +58,9 @@ class User(Base):
     # 'youtube' | 'when_ready' | 'hold' — see services/prefs.LinkTarget.
     link_target: Mapped[str] = mapped_column(String(16), server_default="youtube", default="youtube")
     # --- Playback preferences ------------------------------------------------
+    # When playing a video in the app marks it watched: 'open' (as soon as it
+    # starts) | 'finish' (once most of it has played) — see services/watch.
+    mark_watched_at: Mapped[str] = mapped_column(String(8), server_default="open", default="open")
     # SponsorBlock in the in-page player: 'off' | 'show' | 'skip' — see
     # services/sponsorblock.
     sponsorblock: Mapped[str] = mapped_column(String(8), server_default="off", default="off")

@@ -633,3 +633,16 @@ def test_installed_app_colours_follow_the_theme():
     auto = branding.manifest(SimpleNamespace(app_name="", theme="auto"))  # type: ignore[arg-type]
     assert auto["theme_color"] == "#201e1d"
     assert branding.manifest(None)["theme_color"] == "#201e1d"
+
+
+def test_mark_watched_at_defaults_to_open_and_saves(app_db):
+    client, Session_ = app_db
+    assert 'data-mark-watched="open"' in client.get("/settings").text
+    client.post("/settings/defaults", data={"mark_watched_at": "finish", "keep_last_n": "15"})
+    with Session_() as db:
+        assert db.get(User, USER_ID).mark_watched_at == "finish"
+    assert 'data-mark-watched="finish"' in client.get("/settings").text
+    # Anything unrecognised is the default rather than stored as-is.
+    client.post("/settings/defaults", data={"mark_watched_at": "never", "keep_last_n": "15"})
+    with Session_() as db:
+        assert db.get(User, USER_ID).mark_watched_at == "open"

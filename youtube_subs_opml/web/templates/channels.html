@@ -331,7 +331,11 @@ document.getElementById('channel-detail').addEventListener('click', function(e){
   // which has no embeddable player, and phones (see Watch.canPlayHere).
   if (!(e.ctrlKey || e.metaKey || e.shiftKey) && Watch.canPlayHere(v)) {
     e.preventDefault();
-    Watch.play(v, {onClose: drawChannelVideos});   // shows where it got to
+    Watch.play(v, {   // onClose shows where it got to
+      onClose: drawChannelVideos,
+      onFinished: function (fv) { setChannelVideoWatched(fv, true); }
+    });
+    if (Watch.markAtFinish) return;   // watched once most of it has played
   }
   setChannelVideoWatched(v, true);
 });
