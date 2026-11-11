@@ -144,6 +144,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 800; }
   border-bottom-color: var(--accent);
 }
 
+.nav-ico { display: none; }
 .nav-badge {
   margin-left: 6px; padding: 0 5px; font-size: 11px; font-weight: 800; letter-spacing: 0;
   color: var(--bg); background: var(--warn);
@@ -151,6 +152,9 @@ h1, h2, h3, h4 { margin: 0; font-weight: 800; }
 /* Pages without the stats bar (Watch) get its height back. */
 .no-subbar { --subbar-h: 0px; }
 
+.phone-only { display: none; }
+.page-head-links { font-size: 12px; font-weight: 600; }
+.page-head-links span { margin: 0 8px; color: var(--faint); }
 .nav-divider { width: 1px; height: 22px; background: var(--line); margin: 0 10px; }
 .nav-user { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .nav-logout { font-size: 12px; font-weight: 600; margin-left: 10px; }
@@ -845,6 +849,8 @@ label { display: block; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
   gap: 14px;
+  /* A card with its editor open shouldn't stretch its row-mates. */
+  align-items: start;
 }
 .cat-card {
   border: 1px solid var(--line-2);
@@ -853,57 +859,66 @@ label { display: block; }
   flex-direction: column;
 }
 .cat-card-head { padding: 12px 14px; border-bottom: 2px solid var(--line); }
-.cat-card-head-row {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
-}
-.cat-card-name {
-  font-size: 17px; font-weight: 800; margin: 0 0 3px;
-  overflow: hidden; text-overflow: ellipsis;
-}
-.cat-card-name input {
-  font-size: 17px; font-weight: 800; width: 100%;
-  background: transparent; border: 1px solid transparent; padding: 2px 4px; margin: -2px -4px 1px;
-  color: var(--ink); font-family: inherit;
-}
-.cat-card-name input:hover { border-color: var(--line-2); }
-.cat-card-name input:focus { border-color: var(--line); background: var(--bg); outline: none; }
-.cat-card-slug { font-size: 11px; color: var(--muted-2); }
-.cat-card-count { text-align: right; flex-shrink: 0; }
-.cat-card-count .num { font-size: 22px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
-.cat-card-count .lbl { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-2); }
+.cat-card-name { font-size: 17px; font-weight: 800; margin: 0 0 3px; overflow-wrap: anywhere; }
+.cat-card-sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-.cat-card-settings {
-  padding: 10px 14px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 14px;
+.cat-card-sec { padding: 10px 14px; border-bottom: 1px solid var(--line-3); display: flex; flex-direction: column; gap: 6px; }
+.cat-card-k { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.cat-card-note { font-size: 12px; color: var(--muted); }
+.cat-card-note code { font-size: 11px; color: var(--ink-2); }
+.cat-card-channels { font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+.cat-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.cat-chip-set {
+  border: 1px solid var(--accent); background: var(--accent-tint); color: var(--accent-2);
+  font-size: 12px; font-weight: 600; padding: 2px 8px;
 }
-.cat-setting {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
-  border-bottom: 1px solid var(--line-3); padding-bottom: 3px;
-}
-.cat-setting .k { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-2); }
-.cat-setting .v { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
-/* inline editable controls inside a category setting */
-.cat-setting select, .cat-setting input {
-  background: transparent; border: 0; color: var(--ink);
-  font-size: 12px; font-weight: 600; text-align: right;
-  padding: 0; width: auto; max-width: 6.5rem;
-}
-.cat-setting select:focus, .cat-setting input:focus { outline: 1px solid var(--line); }
-.cat-setting .archive-num { width: 3.5rem; }
 
 .cat-card-foot {
-  padding: 8px 14px;
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   margin-top: auto;
-  border-top: 1px solid var(--line-3);
 }
-.cat-card-foot .disk { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.cat-card-foot .foot-actions { display: flex; gap: 4px; margin-left: auto; }
+.cat-menu { position: relative; margin-left: auto; }
+.cat-menu summary { list-style: none; letter-spacing: 0.1em; font-weight: 800; }
+.cat-menu summary::-webkit-details-marker { display: none; }
+.cat-menu-list {
+  position: absolute; right: 0; bottom: calc(100% + 4px); z-index: 20; min-width: 130px;
+  display: flex; flex-direction: column;
+  background: var(--panel-4); border: 1px solid var(--line);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.cat-menu-list button {
+  background: transparent; border: 0; color: var(--ink); text-align: left;
+  font-size: 12px; font-weight: 600; padding: 8px 12px; cursor: pointer;
+}
+.cat-menu-list button:hover { background: var(--raised); }
+.cat-menu-list button.danger { color: var(--warn); border-top: 1px solid var(--line-2); }
+
+/* Panels that open under a card: the settings editor, rename, and the
+   channel list / add picker. */
+.cat-panel { padding: 12px 14px; border-top: 2px solid var(--line); background: var(--panel-2); }
+.cat-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.cat-panel-title { font-size: 15px; font-weight: 800; }
+.cat-panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.cat-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 6px 0; border-bottom: 1px solid var(--line-3);
+}
+.cat-row-label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.override-mark.off { background: transparent; }
+.cat-row-ctl {
+  font-size: 12px; font-weight: 600; padding: 4px 6px; max-width: 100%;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink-2);
+}
+.cat-row-ctl.set { border-color: var(--accent); color: var(--accent-2); background: var(--accent-tint); }
+.cat-row-num { display: inline-flex; align-items: center; gap: 8px; }
+.cat-row-num .pref-num { width: 140px; }
+.cat-row-num .pref-num::placeholder { font-size: 12px; }
+.cat-rename-row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.cat-rename-row input { flex: 1; min-width: 0; }
 
 /* Category expandable detail (channel list / add picker) */
-.cat-detail { padding: 10px 14px; border-top: 1px solid var(--line-2); background: var(--panel-2); }
+
 .cat-channel-list { margin: 0; padding-left: 1.1rem; columns: 2; column-gap: 1.5rem; }
 .cat-channel-list li { padding: 0.1rem 0; font-size: 12px; break-inside: avoid; }
 .empty { color: var(--muted-2); font-style: italic; font-size: 12px; }
@@ -1015,6 +1030,17 @@ label { display: block; }
 .kanban-ghost { opacity: 0.4; border: 2px dashed var(--accent); background: var(--accent-tint); }
 .kanban-chosen { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); }
 .kanban-drag { opacity: 0.9; }
+
+/* Autosave confirmation */
+.save-toast {
+  position: fixed; right: 20px; bottom: 18px; z-index: 70;
+  background: var(--raised); border: 1px solid var(--faint); border-left: 3px solid var(--ok);
+  padding: 8px 14px; font-size: 12px; font-weight: 600;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.save-toast.fail { border-left-color: var(--warn); color: var(--warn); }
+.save-toast[hidden] { display: none; }
+.autosave-note { font-size: 12px; color: var(--muted); }
 
 /* Undo toast */
 .toast {
@@ -1245,16 +1271,29 @@ label { display: block; }
 @media (max-width: 860px) {
   .app-header { flex-wrap: wrap; height: auto; gap: 6px 12px; padding: 8px 12px; position: static; }
   .brand-tag { display: none; }
+  /* The nav is a tab bar at the foot of the screen, where a thumb reaches. */
+  :root { --tabbar-h: 60px; }
+  body { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); }
   .app-nav {
-    order: 3; width: 100%; flex-wrap: nowrap; justify-content: flex-start;
-    overflow-x: auto; scrollbar-width: none;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0;
+    height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--panel); border-top: 2px solid var(--line);
   }
-  .app-nav::-webkit-scrollbar { display: none; }
-  .nav-link { flex-shrink: 0; }
-  .nav-divider, .nav-user { display: none; }
-  .nav-logout { margin-left: auto; padding-left: 10px; white-space: nowrap; }
+  .nav-link {
+    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    padding: 0; font-size: 10px; letter-spacing: 0.02em;
+    border-bottom: 0; border-top: 2px solid transparent; margin-top: -2px;
+  }
+  .nav-link.active { border-top-color: var(--accent); }
+  .nav-ico { display: block; }
+  .nav-badge { position: absolute; top: 6px; left: calc(50% + 6px); margin: 0; font-size: 10px; padding: 0 4px; }
+  .nav-divider, .nav-user, .nav-desktop { display: none; }
   .subbar { position: static; padding: 8px 12px; }
-  .toast { left: 12px; right: 12px; bottom: 12px; }
+  .toast { left: 12px; right: 12px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px); }
+  .save-toast { left: 12px; right: 12px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px); }
+  .phone-only { display: block; }
 
   .split { display: block; height: auto; }
   .list-pane { border-right: 0; border-bottom: 2px solid var(--line); height: auto; max-height: 60vh; }
@@ -1264,9 +1303,6 @@ label { display: block; }
   /* minmax(0, …) rather than 1fr: a bare 1fr track won't shrink below its
      content, which pushed these pages wider than a phone. */
   .cat-grid { grid-template-columns: minmax(0, 1fr); }
-  .cat-card-settings { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .cat-setting { flex-wrap: wrap; min-width: 0; }
-  .cat-setting select, .cat-setting input, .cat-setting .v { margin-left: auto; }
   .page-head-actions, .page-head-actions form { min-width: 0; max-width: 100%; }
   .page-head-actions input { min-width: 0; flex: 1; }
   .statbar { flex-wrap: wrap; }

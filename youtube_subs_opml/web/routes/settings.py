@@ -5,7 +5,7 @@ import secrets
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
@@ -201,7 +201,7 @@ async def update_defaults(
     request: Request,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> Response:
     form = await request.form()
     user.include_shorts = "include_shorts" in form
     user.include_live = "include_live" in form
@@ -226,6 +226,9 @@ async def update_defaults(
         form_texts(form, "podcast_sponsorblock_categories")
     )
     db.commit()
+    if request.headers.get("HX-Request"):
+        # Saved as it changed; the page already shows the new value.
+        return Response(status_code=204)
     return RedirectResponse("/settings", status_code=303)
 
 

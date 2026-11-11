@@ -379,6 +379,47 @@ def test_category_archive_pref_persists(app_db):
         assert db.get(Category, 1).min_duration_seconds == 240
 
 
+def test_category_card_summarises_overrides_and_names_defaults(app_db):
+    client, _ = app_db
+    html = client.get("/categories").text
+    # Nothing overridden yet: the card says so, and every control names the
+    # account default it follows instead of a bare "Inherit".
+    assert "Every setting follows your account defaults" in html
+    assert ">Account: Off<" in html
+    assert ">Inherit<" not in html
+
+    client.patch("/categories/1/archive-pref", data={"field": "download_enabled", "value": "true"})
+    html = client.patch("/categories/1/archive-pref", data={"field": "keep_last_n", "value": "30"}).text
+    assert '<span class="cat-chip-set">Archive videos: On</span>' in html
+    assert '<span class="cat-chip-set">Keep last 30 videos</span>' in html
+    assert "9 other settings follow your account defaults" in html
+    # With a video window set on the category, a blank audio window follows it.
+    assert 'placeholder="Same as videos"' in html
+
+
+def test_category_feed_filters_save_through_the_shared_pref_route(app_db):
+    client, Session_ = app_db
+    client.patch("/categories/1/archive-pref", data={"field": "include_shorts", "value": "false"})
+    with Session_() as db:
+        assert db.get(Category, 1).include_shorts is False
+    client.patch("/categories/1/archive-pref", data={"field": "include_shorts", "value": "inherit"})
+    with Session_() as db:
+        assert db.get(Category, 1).include_shorts is None
+
+
+def test_defaults_autosave_answers_without_a_redirect(app_db):
+    client, Session_ = app_db
+    resp = client.post(
+        "/settings/defaults",
+        data={"keep_last_n": "40", "include_shorts": "true"},
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 204
+    with Session_() as db:
+        assert db.get(User, USER_ID).keep_last_n == 40
+
+
 # --- disk usage + failure surfacing -------------------------------------
 
 

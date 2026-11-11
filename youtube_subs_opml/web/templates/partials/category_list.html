@@ -2,152 +2,123 @@
 <div class="cat-grid">
   {% for item in categories_with_counts %}
   {% set cat = item.category %}
-  <article class="cat-card" id="category-{{ cat.id }}">
+  <article class="cat-card" id="category-{{ cat.id }}" data-cat="{{ cat.id }}">
     <div class="cat-card-head">
-      <div class="cat-card-head-row">
-        <div style="min-width:0">
-          <div class="cat-card-name">
-            <input type="text" name="name" value="{{ cat.name }}" form="edit-{{ cat.id }}" aria-label="Category name">
-          </div>
-          <code class="cat-card-slug">{{ cat.slug }}</code>
-        </div>
-        <div class="cat-card-count">
-          <a href="#" class="num" style="color:inherit"
-             hx-get="/categories/{{ cat.id }}/channels" hx-target="#cat-detail-{{ cat.id }}" hx-swap="innerHTML"
-             onclick="toggleCatDetail({{ cat.id }}); return false;">{{ item.channel_count }}</a>
-          <div class="lbl">channels</div>
-        </div>
+      <h2 class="cat-card-name">{{ cat.name }}</h2>
+      <div class="cat-card-sub">
+        {{ item.channel_count }} channel{{ '' if item.channel_count == 1 else 's' }} · {{ item.disk_human }} on disk
       </div>
     </div>
 
-    <div class="cat-card-settings">
-      <div class="cat-setting">
-        <span class="k">Archive</span>
-        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "download_enabled"}'
-                hx-target="#category-list" hx-swap="innerHTML">
-          <option value="inherit"{% if cat.download_enabled is none %} selected{% endif %}>Inherit</option>
-          <option value="true"{% if cat.download_enabled == true %} selected{% endif %}>On</option>
-          <option value="false"{% if cat.download_enabled == false %} selected{% endif %}>Off</option>
-        </select>
+    {# What is special about this category, at a glance. The full list of
+       settings lives behind "Edit settings". #}
+    <div class="cat-card-sec">
+      <div class="cat-card-k">Overrides</div>
+      {% if item.overrides %}
+      <div class="cat-chips">
+        {% for o in item.overrides %}<span class="cat-chip-set">{{ o }}</span>{% endfor %}
       </div>
-      <div class="cat-setting">
-        <span class="k">Keep</span>
-        <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
-               value="{{ cat.keep_last_n if cat.keep_last_n is not none else '' }}"
-               hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "keep_last_n"}'
-               hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
+      {% set rest = item.settings|length - item.overrides|length %}
+      <div class="cat-card-note">{{ rest }} other setting{{ '' if rest == 1 else 's' }} follow{{ 's' if rest == 1 }} your account defaults</div>
+      {% else %}
+      <div class="cat-card-note">None. Every setting follows your account defaults.</div>
+      {% endif %}
+    </div>
+
+    <div class="cat-card-sec">
+      <div class="cat-card-k">Channels</div>
+      {% if item.channel_names %}
+      <div class="cat-card-channels">
+        {{ item.channel_names|join(', ') }}{% if item.more_channels %}
+        <a href="#" hx-get="/categories/{{ cat.id }}/channels" hx-target="#cat-detail-{{ cat.id }}" hx-swap="innerHTML"
+           onclick="catPanel({{ cat.id }}, 'detail', true); return false;">and {{ item.more_channels }} more</a>{% endif %}
       </div>
-      <div class="cat-setting">
-        <span class="k">Keep audio</span>
-        <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
-               title="Blank matches this category's video window"
-               value="{{ cat.keep_last_n_audio if cat.keep_last_n_audio is not none else '' }}"
-               hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "keep_last_n_audio"}'
-               hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
-      </div>
-      <div class="cat-setting">
-        <span class="k">Max min</span>
-        <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
-               value="{{ (cat.max_duration_seconds // 60) if cat.max_duration_seconds is not none else '' }}"
-               hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "max_duration_seconds"}'
-               hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
-      </div>
-      <div class="cat-setting">
-        <span class="k">Min min</span>
-        <input class="archive-num" type="number" min="0" step="1" placeholder="—" name="value"
-               title="Skip anything shorter. Blank inherits, 0 = no floor"
-               value="{{ (cat.min_duration_seconds // 60) if cat.min_duration_seconds is not none else '' }}"
-               hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "min_duration_seconds"}'
-               hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
-      </div>
-      <div class="cat-setting">
-        <span class="k">Shorts</span>
-        <select name="include_shorts" hx-patch="/categories/{{ cat.id }}/include-shorts"
-                hx-target="#category-list" hx-swap="innerHTML">
-          <option value="inherit"{% if cat.include_shorts is none %} selected{% endif %}>Inherit</option>
-          <option value="true"{% if cat.include_shorts == true %} selected{% endif %}>Include</option>
-          <option value="false"{% if cat.include_shorts == false %} selected{% endif %}>Exclude</option>
-        </select>
-      </div>
-      <div class="cat-setting">
-        <span class="k">Live</span>
-        <select name="include_live" hx-patch="/categories/{{ cat.id }}/include-live"
-                hx-target="#category-list" hx-swap="innerHTML">
-          <option value="inherit"{% if cat.include_live is none %} selected{% endif %}>Inherit</option>
-          <option value="true"{% if cat.include_live == true %} selected{% endif %}>Include</option>
-          <option value="false"{% if cat.include_live == false %} selected{% endif %}>Exclude</option>
-        </select>
-      </div>
-      <div class="cat-setting">
-        <span class="k">Podcast</span>
-        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "generate_podcast"}'
-                hx-target="#category-list" hx-swap="innerHTML">
-          <option value="inherit"{% if cat.generate_podcast is none %} selected{% endif %}>Inherit</option>
-          <option value="true"{% if cat.generate_podcast == true %} selected{% endif %}>On</option>
-          <option value="false"{% if cat.generate_podcast == false %} selected{% endif %}>Off</option>
-        </select>
-      </div>
-      <div class="cat-setting">
-        <span class="k">Link</span>
-        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "link_target"}'
-                hx-target="#category-list" hx-swap="innerHTML">
-          <option value="inherit"{% if cat.link_target is none %} selected{% endif %}>Inherit</option>
-          {% for lt in link_targets %}
-          <option value="{{ lt }}"{% if cat.link_target == lt %} selected{% endif %}>{{ LINK_TARGET_LABELS[lt] }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="cat-setting">
-        <span class="k">SponsorBlock</span>
-        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "sponsorblock"}'
-                hx-target="#category-list" hx-swap="innerHTML">
-          <option value="inherit"{% if cat.sponsorblock is none %} selected{% endif %}>Inherit</option>
-          <option value="off"{% if cat.sponsorblock == 'off' %} selected{% endif %}>Off</option>
-          <option value="show"{% if cat.sponsorblock == 'show' %} selected{% endif %}>Show</option>
-          <option value="skip"{% if cat.sponsorblock == 'skip' %} selected{% endif %}>Skip</option>
-        </select>
-      </div>
-      <div class="cat-setting">
-        <span class="k">Podcast SponsorBlock</span>
-        <select name="value" hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "podcast_sponsorblock"}'
-                hx-target="#category-list" hx-swap="innerHTML">
-          <option value="inherit"{% if cat.podcast_sponsorblock is none %} selected{% endif %}>Inherit</option>
-          <option value="off"{% if cat.podcast_sponsorblock == 'off' %} selected{% endif %}>Off</option>
-          <option value="remove"{% if cat.podcast_sponsorblock == 'remove' %} selected{% endif %}>Remove</option>
-        </select>
-      </div>
+      {% else %}
+      <div class="cat-card-note">No channels yet.</div>
+      {% endif %}
     </div>
 
     <div class="cat-card-foot">
-      <span class="disk">{{ item.disk_human }} on disk</span>
-      <div class="foot-actions">
-        <button class="btn btn-sm" hx-get="/categories/{{ cat.id }}/available-channels"
-                hx-target="#cat-detail-{{ cat.id }}" hx-swap="innerHTML"
-                onclick="showCatDetail({{ cat.id }})">+ Add</button>
-        <form id="edit-{{ cat.id }}" hx-put="/categories/{{ cat.id }}" hx-target="#category-list" hx-swap="innerHTML"
-              style="display:inline">
-          <button type="submit" class="btn btn-sm">Save</button>
-        </form>
-        <button class="btn btn-sm btn-danger" hx-delete="/categories/{{ cat.id }}"
-                hx-target="#category-list" hx-swap="innerHTML" hx-confirm="Delete '{{ cat.name }}'?">Delete</button>
+      <button type="button" class="btn btn-sm" aria-expanded="false" aria-controls="cat-settings-{{ cat.id }}"
+              onclick="catPanel({{ cat.id }}, 'settings')">Edit settings</button>
+      <button type="button" class="btn btn-sm" hx-get="/categories/{{ cat.id }}/available-channels"
+              hx-target="#cat-detail-{{ cat.id }}" hx-swap="innerHTML"
+              onclick="catPanel({{ cat.id }}, 'detail', true)">Add channels</button>
+      {# Rename and Delete are rare, and Delete is destructive, so they sit
+         one step away from the everyday actions. #}
+      <details class="cat-menu">
+        <summary class="btn btn-sm btn-ghost" aria-label="More actions for {{ cat.name }}">···</summary>
+        <div class="cat-menu-list">
+          <button type="button" onclick="catPanel({{ cat.id }}, 'rename', true); this.closest('details').open = false">Rename</button>
+          <button type="button" class="danger" hx-delete="/categories/{{ cat.id }}"
+                  hx-target="#category-list" hx-swap="innerHTML"
+                  hx-confirm="Delete '{{ cat.name }}'? Its {{ item.channel_count }} channel{{ '' if item.channel_count == 1 else 's' }} stay subscribed but leave this category, and its overrides are lost.">Delete</button>
+        </div>
+      </details>
+    </div>
+
+    <form class="cat-panel hidden" id="cat-rename-{{ cat.id }}" data-panel="rename"
+          hx-put="/categories/{{ cat.id }}" hx-target="#category-list" hx-swap="innerHTML" data-saves>
+      <label class="cat-card-k" for="cat-name-{{ cat.id }}">Name</label>
+      <div class="cat-rename-row">
+        <input type="text" id="cat-name-{{ cat.id }}" name="name" value="{{ cat.name }}" required>
+        <button type="submit" class="btn btn-sm btn-primary">Rename</button>
+        <button type="button" class="btn btn-sm btn-ghost" onclick="catPanel({{ cat.id }}, 'rename', false)">Cancel</button>
+      </div>
+      <div class="cat-card-note">Feed address: <code>{{ cat.slug }}</code>. Renaming changes it, so feed readers need the new URL.</div>
+    </form>
+
+    <div class="cat-panel hidden" id="cat-settings-{{ cat.id }}" data-panel="settings" data-saves>
+      <div class="cat-panel-head">
+        <span class="cat-panel-title">{{ cat.name }} settings</span>
+        {% if item.overrides %}
+        <span class="override-note has" style="margin:0"><span class="override-mark"></span>{{ item.overrides|length }} override{{ '' if item.overrides|length == 1 else 's' }}</span>
+        {% endif %}
+      </div>
+      {% for s in item.settings %}
+      <div class="cat-row">
+        <label class="cat-row-label" for="cat-{{ cat.id }}-{{ s.field }}">
+          <span class="override-mark{% if not s.overridden %} off{% endif %}"></span>{{ s.label }}
+        </label>
+        {% if s.kind == 'choice' %}
+        <select id="cat-{{ cat.id }}-{{ s.field }}" name="value" class="cat-row-ctl{% if s.overridden %} set{% endif %}"
+                hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "{{ s.field }}"}'
+                hx-target="#category-list" hx-swap="innerHTML">
+          <option value="inherit"{% if not s.overridden %} selected{% endif %}>{{ s.inherit_label }}</option>
+          {% for o in s.options %}
+          <option value="{{ o.value }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>
+          {% endfor %}
+        </select>
+        {% else %}
+        <span class="cat-row-num">
+          <input id="cat-{{ cat.id }}-{{ s.field }}" class="pref-num{% if s.overridden %} set{% endif %}" type="number" min="0" step="1"
+                 name="value" value="{{ s.value }}" placeholder="{{ s.inherit_label }}"
+                 title="Blank follows the default ({{ s.inherit_label }})"
+                 hx-patch="/categories/{{ cat.id }}/archive-pref" hx-vals='{"field": "{{ s.field }}"}'
+                 hx-trigger="change" hx-target="#category-list" hx-swap="innerHTML">
+          <span class="pref-unit">{{ s.unit }}</span>
+        </span>
+        {% endif %}
+      </div>
+      {% endfor %}
+      <div class="cat-panel-foot">
+        <span class="cat-card-note">Changes save automatically</span>
+        <button type="button" class="btn btn-sm btn-primary" onclick="catPanel({{ cat.id }}, 'settings', false)">Done</button>
       </div>
     </div>
 
-    <div class="cat-detail hidden" id="cat-detail-row-{{ cat.id }}">
+    <div class="cat-panel cat-detail hidden" id="cat-detail-row-{{ cat.id }}" data-panel="detail">
       <div id="cat-detail-{{ cat.id }}"></div>
+      <div class="cat-panel-foot">
+        <span></span>
+        <button type="button" class="btn btn-sm btn-primary"
+                hx-get="/categories" hx-target="#category-list" hx-swap="innerHTML"
+                onclick="catPanel({{ cat.id }}, 'detail', false)">Done</button>
+      </div>
     </div>
   </article>
   {% endfor %}
 </div>
-
-<script>
-function toggleCatDetail(catId) {
-  document.getElementById('cat-detail-row-' + catId).classList.toggle('hidden');
-}
-function showCatDetail(catId) {
-  document.getElementById('cat-detail-row-' + catId).classList.remove('hidden');
-}
-</script>
 {% else %}
 <p class="empty">No categories yet. Create one above.</p>
 {% endif %}

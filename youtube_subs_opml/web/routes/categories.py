@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -20,6 +21,7 @@ from ..models import (
 )
 from ..services import sponsorblock
 from ..services.prefs import (
+    LINK_TARGET_LABELS,
     LINK_TARGETS,
     minutes_to_seconds,
     parse_inherit_int,
@@ -33,6 +35,8 @@ router = APIRouter(prefix="/categories", tags=["categories"])
 
 # Same archive prefs as subscriptions carry, editable at the category level.
 _ARCHIVE_FIELD_KINDS = {
+    "include_shorts": "bool",
+    "include_live": "bool",
     "download_enabled": "bool",
     "generate_podcast": "bool",
     "keep_last_n": "int",
@@ -97,6 +101,109 @@ def _get_owned_category(category_id: int, user: User, db: Session) -> Category:
     return category
 
 
+_ON_OFF = [("On", "true", True), ("Off", "false", False)]
+_INCLUDE = [("Include", "true", True), ("Exclude", "false", False)]
+
+# Every setting a category can override, in the order the editor lists them:
+# (field, label, kind, extra). For "choice", extra is the options as
+# (label, form value, stored value); for numbers, (unit, what 0 means, the
+# card's summary of an override, and of an override of 0). Minutes fields are
+# stored as seconds.
+_SETTINGS: list[tuple[str, str, str, Any]] = [
+    ("download_enabled", "Archive videos", "choice", _ON_OFF),
+    (
+        "keep_last_n",
+        "Keep last N videos",
+        "number",
+        ("videos", "every video", "Keep last {} videos", "Keep every video"),
+    ),
+    (
+        "keep_last_n_audio",
+        "Keep last N podcast episodes",
+        "number",
+        ("episodes", "every episode", "Keep last {} podcast episodes", "Keep every podcast episode"),
+    ),
+    (
+        "max_duration_seconds",
+        "Longest video to archive",
+        "minutes",
+        ("min", "no limit", "Longest video: {} min", "No limit on video length"),
+    ),
+    (
+        "min_duration_seconds",
+        "Shortest video to archive",
+        "minutes",
+        ("min", "no minimum", "Shortest video: {} min", "No minimum video length"),
+    ),
+    ("include_shorts", "Shorts in feeds", "choice", _INCLUDE),
+    ("include_live", "Premieres & livestreams", "choice", _INCLUDE),
+    ("generate_podcast", "Podcast audio", "choice", _ON_OFF),
+    ("link_target", "Feed link target", "choice", [(LINK_TARGET_LABELS[lt], lt, lt) for lt in LINK_TARGETS]),
+    (
+        "sponsorblock",
+        "SponsorBlock in player",
+        "choice",
+        [("Off", "off", "off"), ("Show", "show", "show"), ("Skip", "skip", "skip")],
+    ),
+    (
+        "podcast_sponsorblock",
+        "SponsorBlock in podcasts",
+        "choice",
+        [("Off", "off", "off"), ("Remove", "remove", "remove")],
+    ),
+]
+
+
+def _number_text(value: int | None, kind: str, zero: str) -> str | None:
+    """A stored number as the editor shows it: minutes for durations, and
+    words for the 0 that means "no limit"."""
+    if value is None:
+        return None
+    if kind == "minutes":
+        value //= 60
+    return zero if value == 0 else str(value)
+
+
+def _category_settings(cat: Category, user: User) -> list[dict]:
+    """One row per setting for the category editor and its summary.
+
+    Each row says whether the category overrides the setting, what the account
+    default it would otherwise follow is (so "inherit" is never a mystery),
+    and, for an override, the short text the card shows for it.
+    """
+    rows = []
+    for field, label, kind, extra in _SETTINGS:
+        own = getattr(cat, field)
+        account = getattr(user, field)
+        row: dict[str, Any] = {"field": field, "label": label, "kind": kind, "overridden": own is not None}
+        if kind == "choice":
+            names = {raw: name for name, _value, raw in extra}
+            row["options"] = [{"label": name, "value": value, "selected": own == raw} for name, value, raw in extra]
+            row["inherit_label"] = f"Account: {names.get(account, account)}"
+            row["summary"] = f"{label}: {names.get(own, own)}" if own is not None else None
+        else:
+            unit, zero, summary, zero_summary = extra
+            account_text = _number_text(account, kind, zero)
+            inherit_label = f"Account: {account_text}"
+            if field == "keep_last_n_audio" and (cat.keep_last_n is not None or account is None):
+                # A blank audio window follows the video window before it
+                # looks at the account's audio default (see archive._audio_keep).
+                inherit_label = "Same as videos"
+            shown = _number_text(own, kind, zero)
+            row["unit"] = unit
+            row["value"] = "" if own is None else str(own // 60 if kind == "minutes" else own)
+            row["inherit_label"] = inherit_label
+            row["summary"] = None
+            if shown is not None:
+                row["summary"] = zero_summary if shown == zero else summary.format(shown)
+        rows.append(row)
+    return rows
+
+
+# How many channel names a card lists before it says "and N more".
+_CHANNEL_PREVIEW = 8
+
+
 def _categories_with_counts(user: User, db: Session) -> list[dict]:
     """Load categories with their channel counts."""
     categories = db.execute(select(Category).where(Category.user_id == user.id).order_by(Category.name)).scalars().all()
@@ -135,15 +242,32 @@ def _categories_with_counts(user: User, db: Session) -> list[dict]:
         .all()
     )
 
-    return [
-        {
-            "category": cat,
-            "channel_count": counts.get(cat.id, 0),
-            "disk_bytes": int(disk.get(cat.id) or 0),
-            "disk_human": _format_bytes(int(disk.get(cat.id) or 0)),
-        }
-        for cat in categories
-    ]
+    titles: dict[int, list[str]] = {}
+    for category_id, title in db.execute(
+        select(ChannelCategory.category_id, Channel.title)
+        .join(Channel, Channel.channel_id == ChannelCategory.channel_id)
+        .where(ChannelCategory.user_id == user.id)
+        .order_by(Channel.title)
+    ).tuples():
+        titles.setdefault(category_id, []).append(title)
+
+    items = []
+    for cat in categories:
+        settings = _category_settings(cat, user)
+        names = titles.get(cat.id, [])
+        items.append(
+            {
+                "category": cat,
+                "channel_count": counts.get(cat.id, 0),
+                "disk_bytes": int(disk.get(cat.id) or 0),
+                "disk_human": _format_bytes(int(disk.get(cat.id) or 0)),
+                "settings": settings,
+                "overrides": [s["summary"] for s in settings if s["overridden"]],
+                "channel_names": names[:_CHANNEL_PREVIEW],
+                "more_channels": max(0, len(names) - _CHANNEL_PREVIEW),
+            }
+        )
+    return items
 
 
 def _category_list_response(request: Request, user: User, db: Session) -> HTMLResponse:

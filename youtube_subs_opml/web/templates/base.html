@@ -35,24 +35,28 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
       <span>Jump to…</span>
     </button>
-    <nav class="app-nav">
-      <a href="/watch" class="nav-link{% if active_nav == 'watch' %} active{% endif %}">Watch</a>
-      <a href="/channels" class="nav-link{% if active_nav == 'channels' %} active{% endif %}">Channels</a>
-      <a href="/categories" class="nav-link{% if active_nav == 'categories' %} active{% endif %}">Categories</a>
-      <a href="/channels/board" class="nav-link{% if active_nav == 'board' %} active{% endif %}">Board</a>
+    {# On phones this becomes a tab bar fixed to the foot of the screen (see
+       the 860px block in style.css): five destinations in thumb reach, with
+       icons that are hidden on wider screens. Board, a drag-and-drop view, is
+       left to the quick switcher there. #}
+    <nav class="app-nav" aria-label="Primary">
+      <a href="/watch" class="nav-link{% if active_nav == 'watch' %} active{% endif %}"><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14"></rect><path d="m10 9 5 3-5 3z"></path></svg>Watch</a>
+      <a href="/channels" class="nav-link{% if active_nav == 'channels' %} active{% endif %}"><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path></svg>Channels</a>
+      <a href="/categories" class="nav-link{% if active_nav == 'categories' %} active{% endif %}"><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>Categories</a>
+      <a href="/channels/board" class="nav-link nav-desktop{% if active_nav == 'board' %} active{% endif %}">Board</a>
       {# Failures surface here on every page; the badge lands on the list
          already filtered to them, where each one can be retried. #}
       {% set failed = stats.failed if stats is defined and stats else 0 %}
       <a href="/settings?tab=downloads{% if failed %}&amp;status=failed{% endif %}" id="nav-downloads"
          class="nav-link{% if active_nav == 'downloads' %} active{% endif %}"{% if failed %}
-         aria-label="Downloads, {{ failed }} failed" title="{{ failed }} download{{ '' if failed == 1 else 's' }} failed"{% endif %}>Downloads{% if failed %}<span class="nav-badge">{{ failed }}</span>{% endif %}</a>
-      <a href="/settings" id="nav-settings" class="nav-link{% if active_nav == 'settings' %} active{% endif %}">Settings</a>
+         aria-label="Downloads, {{ failed }} failed" title="{{ failed }} download{{ '' if failed == 1 else 's' }} failed"{% endif %}><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><path d="M12 4v11"></path><path d="m7 11 5 5 5-5"></path><path d="M4 20h16"></path></svg>Downloads{% if failed %}<span class="nav-badge">{{ failed }}</span>{% endif %}</a>
+      <a href="/settings" id="nav-settings" class="nav-link{% if active_nav == 'settings' %} active{% endif %}"><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><path d="M4 7h10"></path><path d="M18 7h2"></path><rect x="14" y="5" width="4" height="4"></rect><path d="M4 17h2"></path><path d="M10 17h10"></path><rect x="6" y="15" width="4" height="4"></rect></svg>Settings</a>
       <button type="button" class="qs-trigger" onclick="qsOpen()" aria-label="Open quick switcher">
         <span>Jump to…</span><kbd class="qs-kbd">⌘K</kbd>
       </button>
       <span class="nav-divider"></span>
       <span class="nav-user">{{ user.display_name or user.email }}</span>
-      <a href="/auth/logout" class="nav-logout">Log out</a>
+      <a href="/auth/logout" class="nav-logout nav-desktop">Log out</a>
     </nav>
   </header>
 
@@ -276,6 +280,31 @@
   })();
   </script>
   {% endif %}
+
+  {# Autosave feedback. Anything inside a [data-saves] element saves as it
+     changes; this is the one place that says so, and says when it didn't. #}
+  <div id="save-toast" class="save-toast" role="status" aria-live="polite" hidden></div>
+  <script>
+  (function () {
+    var el = document.getElementById('save-toast'), timer;
+    function show(text, failed) {
+      el.textContent = text;
+      el.classList.toggle('fail', !!failed);
+      el.hidden = false;
+      clearTimeout(timer);
+      timer = setTimeout(function () { el.hidden = true; }, failed ? 6000 : 1800);
+    }
+    document.body.addEventListener('htmx:afterRequest', function (e) {
+      var d = e.detail, verb = d.requestConfig && (d.requestConfig.verb || '').toLowerCase();
+      // The control that saved has often been swapped out by now, in which
+      // case d.elt is the swap target; requestConfig keeps the original.
+      var elt = (d.requestConfig && d.requestConfig.elt) || d.elt;
+      if (!verb || verb === 'get' || !elt || !elt.closest || !elt.closest('[data-saves]')) return;
+      if (d.successful) show('Saved');
+      else show("Couldn't save that. Check the value and try again.", true);
+    });
+  })();
+  </script>
 
   {% block body %}
   <main class="page">
