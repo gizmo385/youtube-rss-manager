@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Settings — YouTube Subs OPML{% endblock %}
+{% block title %}Settings — {{ app_name(user) }}{% endblock %}
 
 {% macro toggle(name, checked) -%}
 <span class="toggle"><input type="checkbox" name="{{ name }}" value="true"{% if checked %} checked{% endif %}><span class="track"></span></span>
@@ -28,6 +28,21 @@
      Connections below keep an explicit Save: they hold credentials. #}
   <form method="post" action="/settings/defaults" style="display:contents" data-saves
         hx-post="/settings/defaults" hx-trigger="change" hx-swap="none">
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Appearance</h2>
+        <span class="card-note">Only you see this</span>
+      </div>
+      <div class="card-body">
+        <label class="field">
+          <span class="field-label">App name</span>
+          <input type="text" name="app_name" id="app-name" value="{{ user.app_name }}" maxlength="{{ MAX_APP_NAME }}"
+                 placeholder="{{ app_name(none) }}" autocomplete="off" data-default="{{ app_name(none) }}">
+          <span class="field-hint">Shown in the corner, in the tab title and as the name of the app when you install it to a home screen. Leave blank for the default. An already installed copy keeps its old name until you reinstall it.</span>
+        </label>
+      </div>
+    </section>
+
     <section class="card">
       <div class="card-head">
         <h2 class="card-title">Feed defaults</h2>
@@ -440,6 +455,16 @@
       else { url.searchParams.delete('tab'); }
       history.replaceState(null, '', url);
     });
+  });
+})();
+// The name autosaves without a reload, so show it in the header and the
+// tab title straight away.
+(function () {
+  var input = document.getElementById('app-name');
+  input.addEventListener('change', function () {
+    var name = input.value.replace(/\s+/g, ' ').trim() || input.dataset.default;
+    document.getElementById('brand-name').textContent = name;
+    document.title = 'Settings \u2014 ' + name;
   });
 })();
 </script>

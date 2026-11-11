@@ -514,3 +514,64 @@ def test_sponsorblock_pref_on_channels_and_categories(app_db):
     with Session_() as db:
         assert db.get(Subscription, (USER_ID, CID)).sponsorblock is None
         assert db.get(Category, 1).sponsorblock is None
+
+
+# --- app name -----------------------------------------------------------
+
+
+def _as_user(client):
+    from youtube_subs_opml.web.deps import get_optional_user
+
+    client.app.dependency_overrides[get_optional_user] = client.app.dependency_overrides[get_current_user]
+
+
+def test_app_name_shows_in_header_title_and_manifest(app_db):
+    client, Session_ = app_db
+    _as_user(client)
+    resp = client.post(
+        "/settings/defaults",
+        data={"app_name": "  Chris's   Tube  ", "keep_last_n": "15", "link_target": "youtube"},
+        headers={"HX-Request": "true"},
+    )
+    assert resp.status_code == 204
+    with Session_() as db:
+        assert db.get(User, USER_ID).app_name == "Chris's Tube"
+
+    page = client.get("/settings").text
+    assert "<title>Settings — Chris&#39;s Tube</title>" in page
+    assert 'id="brand-name">Chris&#39;s Tube</a>' in page
+    assert "YouTube Subs OPML</a>" not in page
+
+    manifest = client.get("/manifest.webmanifest")
+    assert manifest.headers["content-type"].startswith("application/manifest+json")
+    body = manifest.json()
+    assert body["name"] == "Chris's Tube"
+    assert body["short_name"] == "Chris's Tube"
+
+
+def test_blank_app_name_falls_back_to_the_default(app_db):
+    client, Session_ = app_db
+    _as_user(client)
+    with Session_() as db:
+        db.get(User, USER_ID).app_name = "Mine"
+        db.commit()
+    client.post("/settings/defaults", data={"app_name": "   ", "keep_last_n": "15", "link_target": "youtube"})
+    body = client.get("/manifest.webmanifest").json()
+    assert body["name"] == "YouTube Subs OPML"
+    assert body["short_name"] == "Subs"
+    assert 'id="brand-name">YouTube Subs OPML</a>' in client.get("/settings").text
+
+
+def test_manifest_icons_exist_and_cover_install_surfaces(app_db):
+    from pathlib import Path
+
+    import youtube_subs_opml.web as web
+
+    client, _ = app_db
+    _as_user(client)
+    icons = client.get("/manifest.webmanifest").json()["icons"]
+    static = Path(web.__file__).parent
+    for icon in icons:
+        assert (static / icon["src"].lstrip("/")).is_file(), icon["src"]
+    purposes = {(i["sizes"], i["purpose"]) for i in icons}
+    assert {("192x192", "any"), ("512x512", "any"), ("512x512", "maskable")} <= purposes

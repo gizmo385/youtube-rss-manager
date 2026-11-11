@@ -104,7 +104,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 800; }
   z-index: 30;
 }
 
-.brand { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
+.brand { display: flex; align-items: baseline; gap: 14px; min-width: 0; overflow: hidden; }
 .brand-name {
   font-weight: 800;
   font-size: 15px;
@@ -112,6 +112,11 @@ h1, h2, h3, h4 { margin: 0; font-weight: 800; }
   text-transform: uppercase;
   color: var(--ink);
   white-space: nowrap;
+  /* The name is the user's to set, so a long one must not push the nav out. */
+  flex: 0 1 auto;
+  min-width: 8ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .brand-name:hover { color: var(--ink); text-decoration: none; }
 .brand-tag {
@@ -120,6 +125,11 @@ h1, h2, h3, h4 { margin: 0; font-weight: 800; }
   text-transform: uppercase;
   color: var(--muted);
   white-space: nowrap;
+  /* Gives way before the name does when the header is tight. */
+  flex: 0 9999 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app-nav { display: flex; align-items: center; gap: 4px; }

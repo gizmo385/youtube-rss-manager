@@ -44,3 +44,9 @@ _globals["SKIP_REASON_HELP"] = SKIP_REASON_HELP
 from .services.prefs import LINK_TARGET_LABELS  # noqa: E402
 
 _globals["LINK_TARGET_LABELS"] = LINK_TARGET_LABELS
+
+from .services.branding import MAX_APP_NAME, app_name, short_name  # noqa: E402
+
+_globals["app_name"] = app_name
+_globals["app_short_name"] = short_name
+_globals["MAX_APP_NAME"] = MAX_APP_NAME

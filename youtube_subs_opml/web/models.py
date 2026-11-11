@@ -30,6 +30,9 @@ class User(Base):
     oidc_sub: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(255), server_default="")
+    # What this user calls the app: shown in the header, page titles and the
+    # installed app's name. Empty means the default (services/branding).
+    app_name: Mapped[str] = mapped_column(String(40), server_default="", default="")
     include_shorts: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True)
     include_live: Mapped[bool] = mapped_column(Boolean, server_default=text("true"), default=True)
     # --- Archive preferences (root of the cascade; never NULL) ---------------
