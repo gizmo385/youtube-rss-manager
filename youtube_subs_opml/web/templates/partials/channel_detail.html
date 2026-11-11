@@ -1,3 +1,9 @@
+{# An inherited choice names where its value comes from ("Account: Include",
+   "Aviation: On") and stays neutral; only a setting this channel overrides
+   gets the accent and a marker. #}
+{% macro seg_class(o) %}{{ 'on' if o.on }}{{ ' inherit' if o.value == 'inherit' }}{% endmacro %}
+{% macro seg_text(o) %}{% if o.hint %}{{ o.source }}: {{ o.hint }}{% else %}{{ o.label }}{% endif %}{% endmacro %}
+{% macro override_mark(s) %}{% if s.overridden %}<span class="override-mark" title="Set for this channel"></span>{% endif %}{% endmacro %}
 {% if not detail %}
 <div class="detail-empty">Select a channel</div>
 {% else %}
@@ -106,6 +112,16 @@
       {% endif %}
     </div>
 
+    {% if not d.is_nebula %}
+    <div class="override-note{% if d.override_count %} has{% endif %}">
+      {% if d.override_count %}
+      <span class="override-mark"></span>{{ d.override_count }} setting{{ 's' if d.override_count != 1 }} set for this {{ d.noun }}
+      {% else %}
+      Every setting follows its category or your account
+      {% endif %}
+    </div>
+    {% endif %}
+
     <h2 class="section-label spaced">Feed</h2>
     {% if d.is_nebula %}
     <p class="unsupported-note">Shorts and livestream filters don't apply: Nebula has
@@ -114,16 +130,16 @@
     {% for s in d.feed_settings %}
     <div class="pref-row">
       <div class="pref-name">
-        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-label">{{ override_mark(s) }}{{ s.label }}</div>
       </div>
       <div class="seg">
         {% set field = 'include_shorts' if 'Shorts' in s.label else 'include_live' %}
         {% for o in s.options %}
-        <button class="{{ 'on' if o.on }}"
+        <button class="{{ seg_class(o) }}"
                 hx-post="/channels/{{ 'include-shorts' if field == 'include_shorts' else 'include-live' }}"
                 hx-include="#channel-detail [type=hidden]"
                 hx-vals='{"{{ field }}": "{{ o.value }}"}'
-                hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}{% if o.hint %} <span class="seg-hint">({{ o.hint }})</span>{% endif %}</button>
+                hx-target="#channel-detail" hx-swap="innerHTML">{{ seg_text(o) }}</button>
         {% endfor %}
       </div>
     </div>
@@ -135,14 +151,14 @@
     {% for s in d.playback_settings %}
     <div class="pref-row">
       <div class="pref-name">
-        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-label">{{ override_mark(s) }}{{ s.label }}</div>
       </div>
       <div class="seg">
         {% for o in s.options %}
-        <button class="{{ 'on' if o.on }}"
+        <button class="{{ seg_class(o) }}"
                 hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
                 hx-vals='{"field": "sponsorblock", "value": "{{ o.value }}"}'
-                hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}{% if o.hint %} <span class="seg-hint">({{ o.hint }})</span>{% endif %}</button>
+                hx-target="#channel-detail" hx-swap="innerHTML">{{ seg_text(o) }}</button>
         {% endfor %}
       </div>
     </div>
@@ -158,14 +174,14 @@
     {% for s in d.archive_settings %}
     <div class="pref-row">
       <div class="pref-name">
-        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-label">{{ override_mark(s) }}{{ s.label }}</div>
       </div>
       <div class="seg">
         {% for o in s.options %}
-        <button class="{{ 'on' if o.on }}"
+        <button class="{{ seg_class(o) }}"
                 hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
                 hx-vals='{"field": "download_enabled", "value": "{{ o.value }}"}'
-                hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}{% if o.hint %} <span class="seg-hint">({{ o.hint }})</span>{% endif %}</button>
+                hx-target="#channel-detail" hx-swap="innerHTML">{{ seg_text(o) }}</button>
         {% endfor %}
       </div>
     </div>
@@ -173,10 +189,10 @@
     {% for s in d.archive_numbers %}
     <div class="pref-row">
       <div class="pref-name">
-        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-label">{{ override_mark(s) }}{{ s.label }}</div>
       </div>
       <div class="pref-num-wrap">
-        <input class="pref-num" type="number" min="0" step="1" value="{{ s.value }}"
+        <input class="pref-num{% if s.overridden %} set{% endif %}" type="number" min="0" step="1" value="{{ s.value }}"
                placeholder="{{ s.placeholder }}" title="{{ s.note }}"
                name="value" hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
                hx-vals='{"field": "{{ s.field }}"}'
@@ -188,14 +204,14 @@
     {% for s in d.archive_choices %}
     <div class="pref-row">
       <div class="pref-name">
-        <div class="pref-label">{{ s.label }}</div>
+        <div class="pref-label">{{ override_mark(s) }}{{ s.label }}</div>
       </div>
       <div class="seg">
         {% for o in s.options %}
-        <button class="{{ 'on' if o.on }}"
+        <button class="{{ seg_class(o) }}"
                 hx-post="/channels/archive-pref" hx-include="#channel-detail [type=hidden]"
                 hx-vals='{"field": "{{ s.field }}", "value": "{{ o.value }}"}'
-                hx-target="#channel-detail" hx-swap="innerHTML">{{ o.label }}{% if o.hint %} <span class="seg-hint">({{ o.hint }})</span>{% endif %}</button>
+                hx-target="#channel-detail" hx-swap="innerHTML">{{ seg_text(o) }}</button>
         {% endfor %}
       </div>
     </div>

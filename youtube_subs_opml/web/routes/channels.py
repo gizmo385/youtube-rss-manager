@@ -32,8 +32,10 @@ from ..models import (
 )
 from ..services import sponsorblock
 from ..services.crypto import decrypt_token
+from ..services.downloads import SKIP_REASON_LABELS
 from ..services.feed_cache import load_feed
 from ..services.prefs import (
+    LINK_TARGET_LABELS,
     LINK_TARGETS,
     minutes_to_seconds,
     parse_inherit_int,
@@ -265,29 +267,43 @@ def _build_list_context(user: User, db: Session, selected: str | None, filt: str
 # --- detail context ---------------------------------------------------------
 
 
-def _inherited_value(cats, user, key):
-    """The value this pref would resolve to if the channel doesn't override it.
+# Where an inherited value comes from when no category sets it.
+_ACCOUNT = "Account"
+
+
+def _inherited_from(cats, user, key):
+    """The value this pref would resolve to if the channel doesn't override
+    it, and what it comes from: a category's name, or the account.
 
     Walks category then account, ignoring the subscription's own value — i.e.
-    what "Inherit" means here. Shown on the control as a hint so the effective
-    value doesn't need a separate line of subtext.
+    what "Inherit" means here. Shown on the control ("Aviation: On") so the
+    effective value and its source don't need a separate line of subtext.
     """
-    if key == "sponsorblock":
+    if key in ("sponsorblock", "podcast_sponsorblock"):
         # Categories that disagree resolve to the strongest, not the first.
-        return sponsorblock.strongest([c.sponsorblock for c in cats]) or user.sponsorblock
-    if key == "podcast_sponsorblock":
-        modes = [c.podcast_sponsorblock for c in cats]
-        return sponsorblock.strongest(modes, sponsorblock.PODCAST_MODES) or user.podcast_sponsorblock
+        modes = [getattr(c, key) for c in cats]
+        if key == "sponsorblock":
+            strongest = sponsorblock.strongest(modes)
+        else:
+            strongest = sponsorblock.strongest(modes, sponsorblock.PODCAST_MODES)
+        if not strongest:
+            return getattr(user, key), _ACCOUNT
+        return strongest, next((c.name for c in cats if getattr(c, key) == strongest), _ACCOUNT)
     for cat in cats:
         v = getattr(cat, key)
         if v is not None:
-            return v
-    return getattr(user, key)
+            return v, cat.name
+    return getattr(user, key), _ACCOUNT
+
+
+def _inherited_value(cats, user, key):
+    return _inherited_from(cats, user, key)[0]
 
 
 def _pref_choice(sub, cats, user, key, label, opts):
-    """A segmented pref row. When inheriting, the Inherit option is annotated
-    with the value it resolves to (e.g. "Inherit (Exclude)"), replacing subtext.
+    """A segmented pref row. When inheriting, the Inherit option names the
+    value it resolves to and where that comes from (e.g. "Account: Exclude"),
+    replacing subtext.
 
     The hint reuses the label of whichever option matches the inherited value,
     so it always speaks the control's own vocabulary (Include/Exclude, On/Off,
@@ -295,9 +311,9 @@ def _pref_choice(sub, cats, user, key, label, opts):
     """
     own = getattr(sub, key)
 
-    hint = None
+    hint = source = None
     if own is None:
-        inherited = _inherited_value(cats, user, key)
+        inherited, source = _inherited_from(cats, user, key)
         hint = next(
             (opt_label for opt_label, _val, raw in opts if raw is not None and raw == inherited),
             None,
@@ -306,12 +322,14 @@ def _pref_choice(sub, cats, user, key, label, opts):
     return {
         "field": key,
         "label": label,
+        "overridden": own is not None,
         "options": [
             {
                 "label": opt_label,
                 "value": val,
                 "on": own == raw,
                 "hint": hint if raw is None else None,
+                "source": source if raw is None else None,
             }
             for opt_label, val, raw in opts
         ],
@@ -355,6 +373,7 @@ def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False, inhe
         placeholder = "0" if inherited is None else str(inherited)
     return {
         "label": label,
+        "overridden": own is not None,
         "field": key,  # the archive-pref the input PATCHes
         "unit": unit,
         "value": own_display,
@@ -365,7 +384,7 @@ def _pref_number(sub, cats, user, key, label, unit, note, *, minutes=False, inhe
 
 def _activity_item(dl: Download, vid: Video, channel_title: str | None = None) -> dict:
     """One download rendered as an activity row (status dot, meta line, size)."""
-    dur = f"{vid.duration_seconds // 60} min" if vid.duration_seconds else None
+    dur = f"{max(1, round(vid.duration_seconds / 60))} min" if vid.duration_seconds else None
     if dl.status == "complete":
         status = "ok"
         when = dl.completed_at.strftime("%Y-%m-%d") if dl.completed_at else "recently"
@@ -378,7 +397,7 @@ def _activity_item(dl: Download, vid: Video, channel_title: str | None = None) -
         size = "—"
     elif dl.status == "skipped":
         status = "skip"
-        meta = f"Skipped — {dl.skip_reason or 'excluded'}"
+        meta = f"Skipped — {SKIP_REASON_LABELS.get(dl.skip_reason or '', 'excluded').lower()}"
         size = "—"
     else:
         status = "idle"
@@ -484,7 +503,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
 
     tri = [("Inherit", "inherit", None), ("On", "true", True), ("Off", "false", False)]
     incl = [("Inherit", "inherit", None), ("Include", "true", True), ("Exclude", "false", False)]
-    link_opts = [("Inherit", "inherit", None)] + [(lt, lt, lt) for lt in LINK_TARGETS]
+    link_opts = [("Inherit", "inherit", None)] + [(LINK_TARGET_LABELS[lt], lt, lt) for lt in LINK_TARGETS]
     sb_opts = [("Inherit", "inherit", None), ("Off", "off", "off"), ("Show", "show", "show"), ("Skip", "skip", "skip")]
     podcast_sb_opts = [("Inherit", "inherit", None), ("Off", "off", "off"), ("Remove", "remove", "remove")]
 
@@ -521,7 +540,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
             "topics_label": "YouTube topics",
         }
 
-    return {
+    detail: dict[str, Any] = {
         **platform,
         "channel_id": ch.channel_id,
         "title": ch.title,
@@ -585,6 +604,11 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         "activity": _archive_activity(channel_id, db),
         "videos": channel_videos(user, db, ch),
     }
+    # How many settings this channel sets for itself, shown above them so an
+    # override is findable without reading every row. Nebula hides most rows.
+    groups = ("feed_settings", "playback_settings", "archive_settings", "archive_numbers", "archive_choices")
+    detail["override_count"] = 0 if is_nebula else sum(1 for g in groups for s in detail[g] if s["overridden"])
+    return detail
 
 
 # --- overview context ---------------------------------------------------------

@@ -40,3 +40,7 @@ from .services.downloads import (  # noqa: E402 — after templates is defined
 _globals["STATUS_LABELS"] = STATUS_LABELS
 _globals["SKIP_REASON_LABELS"] = SKIP_REASON_LABELS
 _globals["SKIP_REASON_HELP"] = SKIP_REASON_HELP
+
+from .services.prefs import LINK_TARGET_LABELS  # noqa: E402
+
+_globals["LINK_TARGET_LABELS"] = LINK_TARGET_LABELS

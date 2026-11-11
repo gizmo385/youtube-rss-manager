@@ -130,6 +130,48 @@ def test_audio_retention_saves_per_subscription(client):
     assert 'value="30"' not in resp.text
 
 
+def test_inherited_settings_name_their_source_and_stay_neutral(client):
+    """An inherited choice says where its value comes from; nothing is marked
+    as an override until the channel sets something itself."""
+    html = client.get("/channels?selected=UCa").text
+    assert "Account: Include" in html
+    assert 'class="on inherit"' in html
+    assert "Every setting follows its category or your account" in html
+    assert 'class="override-mark"' not in html
+
+
+def test_inherited_value_credits_the_category_that_sets_it():
+    user = SimpleNamespace(download_enabled=False)
+    science = SimpleNamespace(name="Science", download_enabled=True)
+    unset = SimpleNamespace(name="Misc", download_enabled=None)
+    assert channels._inherited_from([unset, science], user, "download_enabled") == (True, "Science")
+    assert channels._inherited_from([unset], user, "download_enabled") == (False, "Account")
+
+
+def test_overrides_are_marked_and_counted(client):
+    resp = client.post(
+        "/channels/archive-pref",
+        data={
+            "channel_ids": "UCa",
+            "selected": "UCa",
+            "return": "detail",
+            "field": "keep_last_n",
+            "value": "50",
+            "filter": "All",
+        },
+        headers={"HX-Request": "true"},
+    )
+    assert "1 setting set for this channel" in resp.text
+    assert resp.text.count('class="override-mark"') == 2  # the count line and the row
+    assert 'class="pref-num set"' in resp.text
+
+
+def test_link_targets_use_readable_names(client):
+    html = client.get("/channels?selected=UCa").text
+    assert "Jellyfin when ready" in html
+    assert ">when_ready<" not in html
+
+
 def test_ignored_channels_group_at_the_bottom(client):
     html = client.get("/channels/list").text
     groups = [line for line in html.splitlines() if "group-name" in line]
