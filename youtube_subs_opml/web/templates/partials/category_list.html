@@ -51,8 +51,7 @@
         <div class="cat-menu-list">
           <button type="button" onclick="catPanel({{ cat.id }}, 'rename', true); this.closest('details').open = false">Rename</button>
           <button type="button" class="danger" hx-delete="/categories/{{ cat.id }}"
-                  hx-target="#category-list" hx-swap="innerHTML"
-                  hx-confirm="Delete '{{ cat.name }}'? Its {{ item.channel_count }} channel{{ '' if item.channel_count == 1 else 's' }} stay subscribed but leave this category, and its overrides are lost.">Delete</button>
+                  hx-target="#category-list" hx-swap="innerHTML">Delete</button>
         </div>
       </details>
     </div>
@@ -121,4 +120,19 @@
 </div>
 {% else %}
 <p class="empty">No categories yet. Create one above.</p>
+{% endif %}
+{# Deleting is immediate; this rides along with the re-rendered list and
+   offers to take it back (categories.html shows it for a few seconds). #}
+{% if deleted %}
+<div id="cat-undo" hx-swap-oob="innerHTML">
+  <form class="toast" role="status" hx-post="/categories/restore" hx-target="#category-list" hx-swap="innerHTML">
+    <input type="hidden" name="snapshot" value="{{ deleted|tojson|forceescape }}">
+    <div>
+      <div class="toast-text">Deleted {{ deleted.name }}</div>
+      <div class="toast-sub">{{ deleted.channels|length }} channel{{ '' if deleted.channels|length == 1 else 's' }} left the category</div>
+    </div>
+    <button type="submit" class="btn btn-sm btn-ghost">Undo</button>
+    <button type="button" class="toast-x" aria-label="Dismiss" onclick="catUndoClear()">&times;</button>
+  </form>
+</div>
 {% endif %}

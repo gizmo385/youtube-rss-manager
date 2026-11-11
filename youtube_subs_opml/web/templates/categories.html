@@ -17,8 +17,33 @@
 <div id="category-list">
   {% include "partials/category_list.html" %}
 </div>
+{# Filled by a delete's response (see the end of category_list.html). #}
+<div id="cat-undo" aria-live="polite"></div>
 
 <script>
+// The Undo offered after a delete: shown for a while, then gone. Restoring
+// or dismissing clears it at once.
+var UNDO_MS = 12000, catUndoT;
+function catUndoClear() {
+  clearTimeout(catUndoT);
+  document.getElementById('cat-undo').innerHTML = '';
+}
+document.body.addEventListener('htmx:oobAfterSwap', function (e) {
+  if (e.detail.target.id !== 'cat-undo') return;
+  clearTimeout(catUndoT);
+  catUndoT = setTimeout(catUndoClear, UNDO_MS);
+});
+document.body.addEventListener('htmx:afterRequest', function (e) {
+  var elt = e.detail.requestConfig && e.detail.requestConfig.elt;
+  if (!elt || !elt.closest || !elt.closest('#cat-undo')) return;
+  catUndoClear();
+  if (e.detail.successful) return;
+  document.getElementById('cat-undo').innerHTML = '<div class="toast" role="alert"><div>' +
+    '<div class="toast-text">Couldn\u2019t restore the category</div>' +
+    '<div class="toast-sub">One with that name may already exist</div></div></div>';
+  catUndoT = setTimeout(catUndoClear, 6000);
+});
+
 // Saving a setting re-renders the whole list, so which panels are open is kept
 // here and put back after each swap; otherwise the editor would close under
 // the cursor on every change.
