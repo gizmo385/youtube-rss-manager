@@ -110,7 +110,10 @@
     <div class="callout">
       <div class="callout-k">All-channels OPML</div>
       {% if o.opml_url %}
-      <div class="callout-url mono">{{ o.opml_url }}</div>
+      <div class="callout-row">
+        <div class="callout-url mono">{{ o.opml_url }}</div>
+        <button type="button" class="btn btn-sm" data-url="{{ o.opml_url }}" onclick="copyUrl(this, this.dataset.url)">Copy</button>
+      </div>
       {% else %}
       <div class="help-text">Generate an OPML token in <a href="/settings">Settings</a> to get feed URLs.</div>
       {% endif %}

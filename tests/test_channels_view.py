@@ -204,6 +204,13 @@ def test_failures_surface_in_the_nav_not_a_separate_pill(client):
     assert "alert-pill" not in html
 
 
+def test_channel_rows_work_from_the_keyboard(client):
+    html = client.get("/channels?selected=UCa").text
+    # Rows and their select boxes are focusable and announce what they are.
+    assert 'role="checkbox" aria-checked="false" aria-label="Select Alpha" tabindex="0" data-kbd' in html
+    assert html.count('aria-current="true"') == 1
+
+
 def test_ignored_channels_group_at_the_bottom(client):
     html = client.get("/channels/list").text
     groups = [line for line in html.splitlines() if "group-name" in line]

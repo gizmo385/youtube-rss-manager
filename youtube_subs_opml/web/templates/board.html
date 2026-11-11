@@ -52,7 +52,7 @@ function applyPins() {
     var isPinned = !!pinned[key];
     col.classList.toggle('pinned', isPinned);
     var pin = col.querySelector('.kcol-pin');
-    if (pin) pin.textContent = isPinned ? '◆' : '◇';
+    if (pin) { pin.textContent = isPinned ? 'Pinned' : 'Pin'; pin.setAttribute('aria-pressed', isPinned ? 'true' : 'false'); }
     if (isPinned) wrap.prepend(col);
   });
 }
