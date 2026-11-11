@@ -10,11 +10,54 @@
   <form class="page-head-actions" hx-post="/categories" hx-target="#category-list" hx-swap="innerHTML"
         hx-on::after-request="if(event.detail.successful) this.reset()">
     <input type="text" name="name" placeholder="New category name" required>
-    <button type="submit" class="btn-primary">Create</button>
+    <button type="submit" class="btn btn-primary">Create</button>
   </form>
 </div>
 
 <div id="category-list">
   {% include "partials/category_list.html" %}
 </div>
+
+<script>
+// Saving a setting re-renders the whole list, so which panels are open is kept
+// here and put back after each swap; otherwise the editor would close under
+// the cursor on every change.
+var catOpen = {};   // category id -> {settings: true, ...}
+var catPanelIds = {settings: 'cat-settings-', rename: 'cat-rename-', detail: 'cat-detail-row-'};
+
+function catPanel(id, name, show) {
+  var el = document.getElementById(catPanelIds[name] + id);
+  if (!el) return;
+  if (show === undefined) show = el.classList.contains('hidden');
+  el.classList.toggle('hidden', !show);
+  (catOpen[id] = catOpen[id] || {})[name] = show;
+  var btn = document.querySelector('[aria-controls="' + el.id + '"]');
+  if (btn) btn.setAttribute('aria-expanded', show ? 'true' : 'false');
+  if (show && name === 'rename') el.querySelector('input').select();
+}
+
+// afterSettle, not afterSwap: htmx carries the old elements' attributes over
+// until it settles, which would hide the panel again.
+document.body.addEventListener('htmx:afterSettle', function (e) {
+  if (e.target.id !== 'category-list') return;
+  var focus = window._catFocus;
+  Object.keys(catOpen).forEach(function (id) {
+    // The picker's contents aren't in the re-rendered list, and a rename
+    // that just saved is finished: only the settings editor reopens.
+    catOpen[id] = {settings: catOpen[id].settings};
+    if (catOpen[id].settings) catPanel(id, 'settings', true);
+  });
+  if (focus) { var f = document.getElementById(focus); if (f) f.focus(); }
+});
+// Keep the keyboard where it was across the re-render.
+document.body.addEventListener('htmx:beforeRequest', function (e) {
+  window._catFocus = e.target && e.target.closest && e.target.closest('.cat-panel') ? e.target.id : null;
+});
+// One menu open at a time, and a click elsewhere closes it.
+document.addEventListener('click', function (e) {
+  document.querySelectorAll('.cat-menu[open]').forEach(function (d) {
+    if (!d.contains(e.target)) d.open = false;
+  });
+});
+</script>
 {% endblock %}

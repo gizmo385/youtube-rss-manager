@@ -188,7 +188,7 @@ def client(sessionmaker_, monkeypatch):
 
 def test_page_embeds_the_feed(client):
     html = client.get("/watch").text
-    assert 'class="nav-link active">Watch<' in html
+    assert 'href="/watch" class="nav-link active"' in html
     match = re.search(r'<script id="watch-data" type="application/json">(.*?)</script>', html, re.DOTALL)
     assert match
     data = json.loads(match.group(1))

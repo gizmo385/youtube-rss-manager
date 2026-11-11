@@ -16,11 +16,18 @@
       </button>
     </div>
   </div>
+  {# The phone tab bar has no room for these two. #}
+  <div class="phone-only page-head-links">
+    <a href="/channels/board">Board</a><span>·</span><a href="/auth/logout">Log out</a>
+  </div>
 </div>
 
 <div id="panel-settings" class="tab-panel"{% if active_tab == 'downloads' %} hidden{% endif %}>
 <div class="settings-grid">
-  <form method="post" action="/settings/defaults" style="display:contents">
+  {# Defaults save as they change, like channel and category settings do.
+     Connections below keep an explicit Save: they hold credentials. #}
+  <form method="post" action="/settings/defaults" style="display:contents" data-saves
+        hx-post="/settings/defaults" hx-trigger="change" hx-swap="none">
     <section class="card">
       <div class="card-head">
         <h2 class="card-title">Feed defaults</h2>
@@ -97,9 +104,7 @@
             <span class="field-hint">Where a feed entry links once archived</span>
           </label>
         </div>
-        <div class="form-actions">
-          <button type="submit" class="btn-primary">Save defaults</button>
-        </div>
+        <div class="form-actions autosave-note">Changes save automatically</div>
       </div>
     </section>
 
@@ -139,9 +144,7 @@
           </div>
           {% endfor %}
         </div>
-        <div class="form-actions">
-          <button type="submit" class="btn-primary">Save defaults</button>
-        </div>
+        <div class="form-actions autosave-note">Changes save automatically</div>
       </div>
     </section>
   </form>
