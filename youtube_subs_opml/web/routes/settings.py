@@ -28,6 +28,7 @@ from ..services.prefs import (
     parse_required_int,
 )
 from ..services.sync import sync_account
+from ..services.themes import AUTO_THEME, THEMES, parse_theme
 from ..templating import templates
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,8 @@ def settings_page(
         "sponsorblock_modes": [("off", "Off"), ("show", "Show"), ("skip", "Skip")],
         "podcast_sponsorblock_modes": [("off", "Off"), ("remove", "Remove")],
         "sponsorblock_categories": sponsorblock.CATEGORIES,
+        "themes": THEMES,
+        "auto_theme": AUTO_THEME,
         "user_sponsorblock_categories": sponsorblock.user_categories(user),
         "user_podcast_sponsorblock_categories": sponsorblock.user_categories(user, podcast=True),
         "max_duration_minutes": user.max_duration_seconds // 60,
@@ -242,6 +245,21 @@ async def update_defaults(
     db.commit()
     if request.headers.get("HX-Request"):
         # Saved as it changed; the page already shows the new value.
+        return Response(status_code=204)
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/theme")
+async def update_theme(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Save the colour theme. The picker has already applied it to the page."""
+    form = await request.form()
+    user.theme = parse_theme(form_text(form, "theme"))
+    db.commit()
+    if request.headers.get("HX-Request"):
         return Response(status_code=204)
     return RedirectResponse("/settings", status_code=303)
 
