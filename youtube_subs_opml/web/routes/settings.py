@@ -5,7 +5,7 @@ import secrets
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
@@ -13,11 +13,11 @@ from starlette.datastructures import FormData
 from ...downloader.naming import CANONICAL_SUBDIR, LIBRARIES_SUBDIR
 from ..config import get_settings
 from ..db import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, get_optional_user
 from ..forms import FormValues, form_text, form_texts
 from ..models import Category, FreshRssAccount, FreshRssItem, JellyfinAccount, OpmlToken, User, YoutubeAccount
+from ..services import branding, sponsorblock
 from ..services import downloads as downloads_service
-from ..services import sponsorblock
 from ..services.crypto import decrypt_token, encrypt_token
 from ..services.freshrss_sync import client_for, sync_one
 from ..services.jellyfin import JellyfinClient
@@ -196,6 +196,19 @@ def trigger_sync(
     return RedirectResponse("/settings", status_code=303)
 
 
+@router.get("/manifest.webmanifest")
+def web_manifest(user: User | None = Depends(get_optional_user)) -> JSONResponse:
+    """The install manifest, named the way this user named the app.
+
+    Never cached: a renamed app should install under its new name.
+    """
+    return JSONResponse(
+        branding.manifest(user),
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @router.post("/settings/defaults")
 async def update_defaults(
     request: Request,
@@ -203,6 +216,7 @@ async def update_defaults(
     db: Session = Depends(get_db),
 ) -> Response:
     form = await request.form()
+    user.app_name = branding.parse_app_name(form_text(form, "app_name"))
     user.include_shorts = "include_shorts" in form
     user.include_live = "include_live" in form
 

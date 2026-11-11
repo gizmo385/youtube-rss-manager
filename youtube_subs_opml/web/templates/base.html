@@ -3,16 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}YouTube Subs OPML{% endblock %}</title>
+  <title>{% block title %}{{ app_name(user) }}{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   {# Installable from Safari's "Add to Home Screen": iOS ignores the SVG icon,
      so it gets a PNG, and opens the app without browser chrome (where videos
      then play in the page; see Watch.canPlayHere). #}
-  <link rel="manifest" href="/static/manifest.json">
+  {# Built per user so an installed copy carries their name for the app.
+     use-credentials: browsers fetch a manifest without cookies otherwise. #}
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Subs">
+  <meta name="apple-mobile-web-app-title" content="{{ app_short_name(user) }}">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="theme-color" content="#201e1d">
   <link rel="stylesheet" href="/static/vendor/archivo.css">
@@ -26,7 +29,7 @@
   {% if user %}
   <header class="app-header">
     <div class="brand">
-      <a href="/watch" class="brand-name">YouTube Subs OPML</a>
+      <a href="/watch" class="brand-name" id="brand-name">{{ app_name(user) }}</a>
       <span class="brand-tag">Subscription &amp; archive manager</span>
     </div>
     {# Phones: the nav row scrolls sideways and pushed the switcher off-screen,
