@@ -337,6 +337,30 @@ def _pref_choice(sub, cats, user, key, label, opts):
     }
 
 
+# The two segment-kind overrides, by column: what the UI heads each one.
+_SB_KIND_FIELDS = {"sponsorblock_categories": "Videos", "podcast_sponsorblock_categories": "Podcasts"}
+
+
+def _sponsorblock_kinds(sub, user) -> dict:
+    """The per-channel SponsorBlock segment-kind grid: one column for the
+    player and one for podcasts, each either following the account's choice
+    or set for this channel. The toggles show the effective kinds either way,
+    so flipping one when inheriting starts an override from what's in effect.
+    """
+    columns = []
+    for field, label in _SB_KIND_FIELDS.items():
+        podcast = field.startswith("podcast_")
+        columns.append(
+            {
+                "field": field,
+                "label": label,
+                "overridden": getattr(sub, field) is not None,
+                "kinds": set(sponsorblock.channel_categories(user, sub, podcast=podcast)),
+            }
+        )
+    return {"categories": sponsorblock.CATEGORIES, "columns": columns}
+
+
 def _inherited_audio_keep(cats, user):
     """What the audio window resolves to when this channel doesn't set one.
 
@@ -564,6 +588,7 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
         "playback_settings": [
             _pref_choice(sub, cats, user, "sponsorblock", "SponsorBlock", sb_opts),
         ],
+        "sponsorblock_kinds": _sponsorblock_kinds(sub, user),
         "archive_settings": [
             _pref_choice(sub, cats, user, "download_enabled", "Download to Jellyfin", tri),
         ],
@@ -611,7 +636,12 @@ def _channel_detail(user: User, db: Session, channel_id: str) -> dict | None:
     # How many settings this channel sets for itself, shown above them so an
     # override is findable without reading every row. Nebula hides most rows.
     groups = ("feed_settings", "playback_settings", "archive_settings", "archive_numbers", "archive_choices")
-    detail["override_count"] = 0 if is_nebula else sum(1 for g in groups for s in detail[g] if s["overridden"])
+    detail["override_count"] = (
+        0
+        if is_nebula
+        else sum(1 for g in groups for s in detail[g] if s["overridden"])
+        + sum(1 for c in detail["sponsorblock_kinds"]["columns"] if c["overridden"])
+    )
     return detail
 
 
@@ -1104,6 +1134,37 @@ async def set_archive_pref(
     # download_enabled changes the "Archiving" grouping/badge; refresh the list.
     grouping_changed = field == "download_enabled"
     return _write_response(request, form, user, db, grouping_changed=grouping_changed)
+
+
+@router.post("/sponsorblock-kinds")
+async def set_sponsorblock_kinds(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Set which SponsorBlock segment kinds count for one or more
+    subscriptions, in the player or in podcasts (``field``): the checked
+    ``kinds``, or, with ``reset``, back to following the account.
+    """
+    form = await request.form()
+    channel_ids = form_texts(form, "channel_ids")
+    field = form_text(form, "field") or ""
+    if not channel_ids:
+        raise HTTPException(status_code=400, detail="Select at least one channel")
+    if field not in _SB_KIND_FIELDS:
+        raise HTTPException(status_code=400, detail="Unknown preference")
+
+    value = None if form_text(form, "reset") == "true" else sponsorblock.parse_categories(form_texts(form, field))
+    db.execute(
+        update(Subscription)
+        .where(
+            Subscription.user_id == user.id,
+            Subscription.channel_id.in_(channel_ids),
+        )
+        .values(**{field: value})
+    )
+    db.commit()
+    return _write_response(request, form, user, db, grouping_changed=False)
 
 
 @router.post("/ignore")

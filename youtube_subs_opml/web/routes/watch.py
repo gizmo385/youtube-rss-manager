@@ -123,14 +123,14 @@ def video_segments(
     db: Session = Depends(get_db),
 ) -> dict:
     """The SponsorBlock mode for this video and, unless it's off, the segments
-    to show or skip, in seconds. The mode is the one for ``channel``, the
-    channel or playlist the video is being played from, falling back to the
-    video's own channel."""
+    to show or skip, in seconds. The mode and kinds are the ones for
+    ``channel``, the channel or playlist the video is being played from,
+    falling back to the video's own channel."""
     channel_id = channel or db.execute(select(Video.channel_id).where(Video.video_id == video_id)).scalar_one_or_none()
     mode = sponsorblock.resolve_mode(db, user, channel_id) if channel_id else "off"
-    if mode == "off":
+    if mode == "off" or not channel_id:
         return {"mode": mode, "segments": []}
-    found = sponsorblock.segments(video_id, sponsorblock.user_categories(user))
+    found = sponsorblock.segments(video_id, sponsorblock.resolve_categories(db, user, channel_id))
     return {
         "mode": mode,
         "segments": [{"start": s.start, "end": s.end, "category": s.category} for s in found],

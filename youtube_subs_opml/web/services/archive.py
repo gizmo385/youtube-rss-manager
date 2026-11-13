@@ -52,7 +52,7 @@ from ..models import (
 )
 from .prefs import resolve
 from .sources import ARCHIVABLE_PLATFORMS, in_source, preferred, sources_of, video_sources
-from .sponsorblock import PODCAST_MODES, strongest, user_categories
+from .sponsorblock import PODCAST_MODES, channel_categories, strongest
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -428,25 +428,25 @@ def wanted_audio_cuts(db: Session) -> dict[str, set[str]]:
     playlist of theirs the video is in.
 
     The per-user resolution matches ``sponsorblock.podcast_cut_for``, which
-    is what each user's feed looks the cut up by.
+    is what each user's feed looks the cut up by: the kinds can differ per
+    channel, so a video in several of a user's sources gets the cut of the
+    first of them by id.
     """
     retained = user_retained_podcast_ids(db)
     if not retained:
         return {}
     users = {u.id: u for u in db.execute(select(User)).scalars().all()}
 
-    kinds_by_user: dict[int, str] = {}
-    cut_sources: set[tuple[int, str]] = set()  # (user, channel or playlist)
+    cut_sources: dict[tuple[int, str], str] = {}  # (user, channel or playlist) -> kinds
     for sub, _ in _archivable_subscriptions(db):
         user = users.get(sub.user_id)
         if user is None or sub.user_id not in retained:
             continue
         cat = _category_prefs(db, sub.user_id, sub.channel_id)
         mode = resolve(sub.podcast_sponsorblock, cat.podcast_sponsorblock, user.podcast_sponsorblock)
-        kinds = ",".join(user_categories(user, podcast=True))
+        kinds = ",".join(channel_categories(user, sub, podcast=True))
         if mode == "remove" and kinds:
-            cut_sources.add((sub.user_id, sub.channel_id))
-            kinds_by_user[sub.user_id] = kinds
+            cut_sources[(sub.user_id, sub.channel_id)] = kinds
     if not cut_sources:
         return {}
 
@@ -454,8 +454,10 @@ def wanted_audio_cuts(db: Session) -> dict[str, set[str]]:
     wanted: dict[str, set[str]] = {}
     for user_id, vids in retained.items():
         for vid in vids:
-            if any((user_id, source_id) in cut_sources for source_id in sources[vid]):
-                wanted.setdefault(vid, set()).add(kinds_by_user[user_id])
+            ours = sorted(source_id for source_id in sources[vid] if (user_id, source_id) in cut_sources)
+            kinds = cut_sources[(user_id, ours[0])] if ours else None
+            if kinds:
+                wanted.setdefault(vid, set()).add(kinds)
     return wanted
 
 

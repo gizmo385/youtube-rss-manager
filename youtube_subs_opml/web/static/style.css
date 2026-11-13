@@ -1234,6 +1234,20 @@ label { display: block; }
 .sb-kinds { margin-top: 14px; }
 .sb-kinds-head, .sb-kinds-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px 72px; align-items: center; gap: 8px; }
 .sb-kinds-head .field-label + .field-label, .sb-kinds-row .toggle { justify-self: center; }
+/* The same grid on a channel's page, where each column can follow the account. */
+.ch-sb-kinds .sb-kinds-head { align-items: end; padding-bottom: 4px; }
+.ch-sb-kinds .sb-kinds-head, .ch-sb-kinds .sb-kinds-row { grid-template-columns: minmax(0, 1fr) 92px 92px; }
+.ch-sb-col-head { display: flex; flex-direction: column; align-items: center; gap: 2px; justify-self: center; }
+.ch-sb-col-head .field-label { display: flex; align-items: center; gap: 6px; }
+.ch-sb-source { font-size: 11px; color: var(--muted-2); }
+.ch-sb-reset {
+  font: inherit; font-size: 11px; color: var(--accent-2); background: none; border: 0; padding: 0;
+  cursor: pointer; text-decoration: underline;
+}
+.ch-sb-reset:hover { color: var(--ink); }
+/* Following the account: shown, but quieter than a channel's own choice. */
+.toggle.inherited { opacity: 0.55; }
+.toggle.inherited:hover, .toggle.inherited:focus-within { opacity: 1; }
 
 .field-grid {
   display: grid;

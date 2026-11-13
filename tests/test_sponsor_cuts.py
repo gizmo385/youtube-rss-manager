@@ -132,6 +132,16 @@ def test_concat_list_keeps_the_parts_between_cuts():
 # --- what's wanted ---------------------------------------------------------
 
 
+def test_wanted_follows_a_channels_own_kinds(db):
+    sub = db.get_one(Subscription, (1, CHAN))
+    sub.podcast_sponsorblock_categories = "sponsor,selfpromo"
+    db.commit()
+    assert wanted_audio_cuts(db) == {VID: {"sponsor,selfpromo"}}
+    sub.podcast_sponsorblock_categories = ""
+    db.commit()
+    assert wanted_audio_cuts(db) == {}
+
+
 def test_wanted_follows_the_podcast_cascade(db):
     assert wanted_audio_cuts(db) == {VID: {"sponsor"}}
     db.add(Category(id=3, user_id=1, name="C", slug="c", podcast_sponsorblock="off"))
