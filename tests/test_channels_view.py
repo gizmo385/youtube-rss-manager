@@ -172,6 +172,50 @@ def test_overrides_are_marked_and_counted(client):
     assert 'class="pref-num set"' in resp.text
 
 
+def _set_kinds(client, data):
+    return client.post(
+        "/channels/sponsorblock-kinds",
+        data={"channel_ids": "UCa", "selected": "UCa", "return": "detail", "filter": "All", **data},
+        headers={"HX-Request": "true"},
+    )
+
+
+def test_sponsorblock_kinds_follow_the_account_until_set(client):
+    html = client.get("/channels?selected=UCa").text
+    assert "SponsorBlock segments" in html
+    assert html.count('<span class="ch-sb-source">Account</span>') == 2
+    # The account's defaults show, checked, in both columns.
+    assert html.count('name="sponsorblock_categories" value="selfpromo" checked') == 1
+    assert html.count('name="podcast_sponsorblock_categories" value="selfpromo" checked') == 1
+
+
+def test_sponsorblock_kinds_override_per_channel_and_reset(client):
+    resp = _set_kinds(
+        client, {"field": "podcast_sponsorblock_categories", "podcast_sponsorblock_categories": "sponsor"}
+    )
+    assert resp.status_code == 200
+    html = resp.text
+    assert "1 setting set for this channel" in html
+    assert 'name="podcast_sponsorblock_categories" value="sponsor" checked' in html
+    assert 'name="podcast_sponsorblock_categories" value="selfpromo" checked' not in html
+    # The player's column still follows the account.
+    assert 'name="sponsorblock_categories" value="selfpromo" checked' in html
+    assert html.count('<span class="ch-sb-source">Account</span>') == 1
+
+    # Unchecking everything is an override too: no kinds for this channel.
+    html = _set_kinds(client, {"field": "podcast_sponsorblock_categories"}).text
+    assert "1 setting set for this channel" in html
+    assert 'name="podcast_sponsorblock_categories" value="sponsor" checked' not in html
+
+    html = _set_kinds(client, {"field": "podcast_sponsorblock_categories", "reset": "true"}).text
+    assert "Every setting follows its category or your account" in html
+    assert 'name="podcast_sponsorblock_categories" value="selfpromo" checked' in html
+
+
+def test_sponsorblock_kinds_reject_unknown_fields(client):
+    assert _set_kinds(client, {"field": "sponsorblock"}).status_code == 400
+
+
 def test_link_targets_use_readable_names(client):
     html = client.get("/channels?selected=UCa").text
     assert "Jellyfin when ready" in html

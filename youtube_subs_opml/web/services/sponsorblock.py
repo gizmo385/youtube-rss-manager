@@ -4,7 +4,9 @@ self-promotion, "like and subscribe" reminders and so on.
 In the in-page player it's a preference that cascades like the others
 (subscription > category > user): ``off``; ``show``, which draws the segments
 and offers a button to skip each; or ``skip``, which jumps past them. Which
-kinds of segment count is a user-level choice.
+kinds of segment count is a user-level choice, which a subscription can
+override (``channel_categories``) — say, to skip self-promotion on just the
+channels that overdo it.
 
 Archived files are shared between users, so segments are never cut out of
 them. The downloader only *marks* them, as chapters Jellyfin shows, when any
@@ -14,7 +16,8 @@ and leaves the video alone, so it takes nothing away from anyone else.
 Podcast feeds have their own preference, cascading the same way: ``off``, or
 ``remove``, which cuts the segments out of the episode's audio. Which kinds
 of segment it cuts is again a user-level choice, separate from the player's —
-so a sponsor read can be marked in the video and cut from the podcast. The
+so a sponsor read can be marked in the video and cut from the podcast — and
+again a subscription can override it. The
 extracted audio is shared like the video, so cutting never touches it: the
 downloader makes a cut copy per distinct choice of kinds (see
 ``downloader/sponsor_cuts``) and each subscriber's feed serves theirs.
@@ -99,6 +102,23 @@ def user_categories(user: User, *, podcast: bool = False) -> list[str]:
     return [c for c in chosen.split(",") if c in CATEGORIES]
 
 
+def channel_categories(user: User, sub: Subscription | None, *, podcast: bool = False) -> list[str]:
+    """The kinds that count for a channel: ``sub``'s own choice if it makes
+    one (an empty one meaning none), otherwise ``user``'s."""
+    own = (sub.podcast_sponsorblock_categories if podcast else sub.sponsorblock_categories) if sub else None
+    if own is None:
+        return user_categories(user, podcast=podcast)
+    return [c for c in own.split(",") if c in CATEGORIES]
+
+
+def resolve_categories(db: Session, user: User, channel_id: str, *, podcast: bool = False) -> list[str]:
+    """``channel_categories`` for ``user``'s subscription to ``channel_id``."""
+    sub = db.execute(
+        select(Subscription).where(Subscription.user_id == user.id, Subscription.channel_id == channel_id)
+    ).scalar_one_or_none()
+    return channel_categories(user, sub, podcast=podcast)
+
+
 def strongest(modes: list[str | None], order: tuple[str, ...] = MODES) -> str | None:
     """The strongest mode among those set (skip > show > off, or remove >
     off), for a channel in several categories: one that asks for SponsorBlock
@@ -138,13 +158,15 @@ def podcast_cut(db: Session, user: User, channel_id: str) -> str | None:
     in ``AudioCut.categories``; None when nothing is."""
     if resolve_podcast_mode(db, user, channel_id) != "remove":
         return None
-    return ",".join(user_categories(user, podcast=True)) or None
+    return ",".join(resolve_categories(db, user, channel_id, podcast=True)) or None
 
 
 def podcast_cut_for(db: Session, user: User, source_ids: Iterable[str]) -> str | None:
     """``podcast_cut`` for a video in several channels and playlists (its
-    ``source_ids``): the cut if any of them that ``user`` follows, and isn't
-    ignoring, asks for one."""
+    ``source_ids``): the cut asked for by the first of them, by id, that
+    ``user`` follows, isn't ignoring, and wants one cut — first by id so that
+    ``archive.wanted_audio_cuts`` picks the same one when they disagree on
+    which kinds."""
     followed = db.execute(
         select(Subscription.channel_id).where(
             Subscription.user_id == user.id,
@@ -152,7 +174,7 @@ def podcast_cut_for(db: Session, user: User, source_ids: Iterable[str]) -> str |
             Subscription.ignored.is_(False),
         )
     ).scalars()
-    return next((kinds for channel_id in followed if (kinds := podcast_cut(db, user, channel_id))), None)
+    return next((kinds for channel_id in sorted(followed) if (kinds := podcast_cut(db, user, channel_id))), None)
 
 
 @dataclass(frozen=True)

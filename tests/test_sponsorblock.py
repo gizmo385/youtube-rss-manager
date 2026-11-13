@@ -114,6 +114,30 @@ def test_podcast_mode_cascades_independently_of_the_players(sm):
         assert sponsorblock.resolve_mode(s, s.get_one(User, 1), "UCa") == "skip"
 
 
+def test_a_channel_can_choose_its_own_kinds(sm):
+    _set(sm, User, 1, podcast_sponsorblock="remove", podcast_sponsorblock_categories="sponsor")
+    with sm() as s:
+        user = s.get_one(User, 1)
+        assert sponsorblock.resolve_categories(s, user, "UCa") == ["sponsor", "selfpromo", "interaction"]
+    assert _podcast_cut(sm) == "sponsor"
+    # Self-promotion stripped from this channel only, the player's kinds untouched.
+    _set(sm, Subscription, (1, "UCa"), podcast_sponsorblock_categories="selfpromo,sponsor")
+    assert _podcast_cut(sm) == "selfpromo,sponsor"
+    with sm() as s:
+        assert sponsorblock.resolve_categories(s, s.get_one(User, 1), "UCa") == ["sponsor", "selfpromo", "interaction"]
+        # And another user's subscription to the same channel still follows theirs.
+        assert sponsorblock.resolve_categories(s, s.get_one(User, 2), "UCa", podcast=True) == [
+            "sponsor",
+            "selfpromo",
+            "interaction",
+        ]
+    # An empty choice means none, not "inherit".
+    _set(sm, Subscription, (1, "UCa"), podcast_sponsorblock_categories="")
+    assert _podcast_cut(sm) is None
+    _set(sm, Subscription, (1, "UCa"), podcast_sponsorblock_categories=None)
+    assert _podcast_cut(sm) == "sponsor"
+
+
 def test_podcast_mode_parsing():
     modes = sponsorblock.PODCAST_MODES
     assert sponsorblock.parse_mode("remove", allow_inherit=True, modes=modes) == "remove"
@@ -231,6 +255,14 @@ def test_segments_endpoint_returns_the_users_kinds(client, sm):
     data = client.get(f"/watch/segments/{VID}").json()
     assert data == {"mode": "skip", "segments": [{"start": 60, "end": 90, "category": "sponsor"}]}
     assert client.fetched == [(VID, ["sponsor", "outro"])]
+
+
+def test_segments_endpoint_uses_the_channels_own_kinds(client, sm):
+    _set(sm, User, 1, sponsorblock="skip", sponsorblock_categories="sponsor")
+    _set(sm, Subscription, (1, "UCa"), sponsorblock_categories="sponsor,selfpromo")
+    client.get(f"/watch/segments/{VID}")
+    client.get(f"/watch/segments/{VID}?channel=UCa")
+    assert client.fetched == [(VID, ["sponsor", "selfpromo"])] * 2
 
 
 # --- archive: chapters for anyone who wants them -----------------------------

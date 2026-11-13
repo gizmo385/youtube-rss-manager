@@ -164,6 +164,44 @@
       </div>
     </div>
     {% endfor %}
+
+    {# Which segment kinds count here. Each column follows the account until
+       a toggle in it is flipped, which saves that column's kinds for this
+       channel; Reset goes back to following the account. #}
+    {% set sk = d.sponsorblock_kinds %}
+    <div class="sb-kinds ch-sb-kinds">
+      <div class="sb-kinds-head">
+        <span class="field-label">SponsorBlock segments</span>
+        {% for col in sk.columns %}
+        <span class="ch-sb-col-head">
+          <span class="field-label">{% if col.overridden %}<span class="override-mark" title="Set for this {{ d.noun }}"></span>{% endif %}{{ col.label }}</span>
+          {% if col.overridden %}
+          <button type="button" class="ch-sb-reset" title="Follow your account's choice again"
+                  hx-post="/channels/sponsorblock-kinds" hx-include="#channel-detail [type=hidden]"
+                  hx-vals='{"field": "{{ col.field }}", "reset": "true"}'
+                  hx-target="#channel-detail" hx-swap="innerHTML">Reset</button>
+          {% else %}
+          <span class="ch-sb-source">Account</span>
+          {% endif %}
+        </span>
+        {% endfor %}
+      </div>
+      {% for key, label in sk.categories.items() %}
+      <div class="toggle-row sb-kinds-row">
+        <div class="tr-label">{{ label }}</div>
+        {% for col in sk.columns %}
+        <span class="toggle{% if not col.overridden %} inherited{% endif %}" title="{{ col.label }}">
+          <input type="checkbox" aria-label="{{ label }} in {{ col.label|lower }}"
+                 name="{{ col.field }}" value="{{ key }}"{% if key in col.kinds %} checked{% endif %}
+                 hx-post="/channels/sponsorblock-kinds"
+                 hx-include="#channel-detail [type=hidden], #channel-detail [name={{ col.field }}]"
+                 hx-vals='{"field": "{{ col.field }}"}'
+                 hx-trigger="change" hx-target="#channel-detail" hx-swap="innerHTML"><span class="track"></span>
+        </span>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
     {% endif %}
 
     <h2 class="section-label spaced">Video archive</h2>
