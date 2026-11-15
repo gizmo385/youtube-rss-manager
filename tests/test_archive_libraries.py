@@ -249,7 +249,7 @@ def test_worker_skips_short_when_channel_excludes_shorts(db, monkeypatch):
     monkeypatch.setattr(
         worker.ytdlp,
         "probe",
-        lambda vid: SimpleNamespace(duration_seconds=30, title="t", description="d"),
+        lambda vid: SimpleNamespace(duration_seconds=30, title="t", description="d", chapters=[]),
     )
     monkeypatch.setattr(worker, "classify_videos", lambda video_ids, db: {video_ids[0]: True})
 
@@ -341,7 +341,7 @@ def test_worker_skips_a_video_under_the_duration_floor(db, monkeypatch):
     monkeypatch.setattr(
         worker.ytdlp,
         "probe",
-        lambda vid: SimpleNamespace(duration_seconds=90, title="t", description="d"),
+        lambda vid: SimpleNamespace(duration_seconds=90, title="t", description="d", chapters=[]),
     )
 
     def _no_download(*a, **k):
@@ -376,7 +376,7 @@ def test_worker_keeps_a_video_at_exactly_the_floor(db, tmp_path, monkeypatch):
     monkeypatch.setattr(
         worker.ytdlp,
         "probe",
-        lambda vid: SimpleNamespace(duration_seconds=300, title="t", description="d"),
+        lambda vid: SimpleNamespace(duration_seconds=300, title="t", description="d", chapters=[]),
     )
     monkeypatch.setattr(worker.ytdlp, "extract_audio", _fake_extract_audio)
     # classify_videos probes YouTube over the network; stub it so the test
@@ -408,7 +408,7 @@ def test_worker_fetches_audio_only_for_an_episode_past_the_video_window(db, tmp_
     monkeypatch.setattr(
         worker.ytdlp,
         "probe",
-        lambda vid: SimpleNamespace(duration_seconds=30, title="t", description="d"),
+        lambda vid: SimpleNamespace(duration_seconds=30, title="t", description="d", chapters=[]),
     )
 
     def _no_download(*a, **k):
@@ -1004,7 +1004,9 @@ def test_worker_audio_only_fetches_audio_and_skips_video(db, tmp_path, monkeypat
         ),
     )
     monkeypatch.setattr(
-        worker.ytdlp, "probe", lambda vid: SimpleNamespace(duration_seconds=120, title="T", description="D")
+        worker.ytdlp,
+        "probe",
+        lambda vid: SimpleNamespace(duration_seconds=120, title="T", description="D", chapters=[]),
     )
     monkeypatch.setattr(worker, "classify_videos", lambda video_ids, db: {})
 

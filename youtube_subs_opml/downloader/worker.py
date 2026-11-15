@@ -211,9 +211,16 @@ def process(row: Download, db: Session) -> None:
 
     if meta.duration_seconds is not None:
         video.duration_seconds = meta.duration_seconds
-    # Persist the description so podcast feeds can surface it — the poller never
-    # sees it (RSS omits it) and it would otherwise only live in the NFO.
+    # Persist the description so podcast feeds can surface it. The poller
+    # saves the feed's copy too, but only for the ~15 videos on the feed.
     video.description = meta.description
+    # The in-page player shows these (services.chapters); they include the
+    # auto-generated chapters a description can't give us.
+    video.chapters = [
+        {"start": c.get("start_time"), "end": c.get("end_time"), "title": c.get("title") or ""}
+        for c in meta.chapters
+        if isinstance(c.get("start_time"), int | float)
+    ]
 
     # Merged across its channel and any playlists it's in.
     intent = video_intent(db, row.video_id)

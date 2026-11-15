@@ -85,7 +85,7 @@ window.Watch = (function () {
   var overlay = null, stage = null, info = null, cur = null, curSource = null, opts = {};
   var resumedAt = 0;   // where the video playing picked up from, if it resumed
   var fellBack = false;   // the archived copy wouldn't play, so this is YouTube's
-  var sbBar = null;
+  var sbBar = null, chBar = null;
 
   function ensureOverlay() {
     if (overlay) return;
@@ -95,6 +95,7 @@ window.Watch = (function () {
     overlay.innerHTML =
       '<div class="w-player" role="dialog" aria-modal="true" aria-labelledby="w-player-title">' +
         '<div class="w-player-stage"></div>' +
+        '<div class="w-player-ch"></div>' +
         '<div class="w-player-sb"></div>' +
         '<div class="w-player-info"></div>' +
       '</div>';
@@ -102,7 +103,16 @@ window.Watch = (function () {
     (document.getElementById('w-player-host') || document.body).appendChild(overlay);
     stage = overlay.querySelector('.w-player-stage');
     sbBar = overlay.querySelector('.w-player-sb');
+    chBar = overlay.querySelector('.w-player-ch');
+    chBar.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-start]');
+      if (b) seekChapter(+b.dataset.start);
+    });
     info = overlay.querySelector('.w-player-info');
+    // <details> toggles don't bubble, hence the capture phase.
+    info.addEventListener('toggle', function (e) {
+      if (e.target.classList && e.target.classList.contains('w-chapters')) chOpen = e.target.open;
+    }, true);
     overlay.addEventListener('mousedown', function (e) { if (e.target === overlay && !isTheater()) close(); });
     info.addEventListener('click', function (e) {
       var b = e.target.closest('[data-act]');
@@ -114,6 +124,7 @@ window.Watch = (function () {
       else if (act === 'watch' && opts.onWatch) opts.onWatch();
       else if (act === 'theater' && opts.onTheater) opts.onTheater();
       else if (act === 'restart') play(cur, withOpts({fromStart: true}));
+      else if (act === 'chapter') seekChapter(+b.dataset.start);
     });
     // Capture phase, so Esc and the arrows reach the player before the
     // page's own shortcuts see them. Everything else is left to the video
@@ -242,7 +253,9 @@ window.Watch = (function () {
       '<h2 class="w-player-title" id="w-player-title">' + esc(v.title) + '</h2>' +
       '<div class="w-player-sub">' + esc(v.channel) + ' · ' + ago(v) + (d ? ' · ' + d : '') + '</div>' +
       notice +
-      '<div class="w-player-actions">' + actions + '</div>';
+      '<div class="w-player-actions">' + actions + '</div>' +
+      chapterList();
+    if (ch) { ch.at = -1; chTick(); }
   }
   // Re-draw the panel and mode after the page's state changes underneath it.
   function refresh() { if (isOpen()) renderInfo(); }
@@ -304,6 +317,7 @@ window.Watch = (function () {
   // fired later (a removed <video>'s pause event, say) can save over that.
   function stopTracking() {
     stopSponsorBlock();
+    stopChapters();
     if (!track) return;
     clearInterval(track.timer);
     clearInterval(track.finishTimer);
@@ -422,6 +436,75 @@ window.Watch = (function () {
     }
     s.btn.hidden = !text;
     if (text) { s.btn.textContent = text; s.onClick = onClick; }
+  }
+
+  // ---- chapters -------------------------------------------------------------
+  // The video's own chapters (services/chapters.py): a strip under the video
+  // to click through them, and a list in the panel that follows along.
+  var ch = null;   // {t, list: [{start, end, title}], drawn, at}
+  var chOpen = false;   // the list stays open (or shut) from video to video
+
+  function startChapters(t) {
+    fetch('/watch/chapters/' + encodeURIComponent(t.v.videoId), {headers: {'Accept': 'application/json'}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.chapters || !d.chapters.length || track !== t) return;
+        ch = {t: t, list: d.chapters, drawn: false, at: -1};
+        ch.timer = setInterval(chTick, 500);
+        renderInfo();
+      })
+      .catch(function () {});
+  }
+  function stopChapters() {
+    if (!ch) return;
+    clearInterval(ch.timer);
+    chBar.innerHTML = '';
+    ch = null;
+  }
+  function seekChapter(sec) {
+    if (!track || isNaN(sec)) return;
+    track.seek(sec);
+    if (ch) chTick();
+  }
+  // Where chapter ``i`` ends: its own end if known, else the next one's start.
+  function chapterEnd(i, d) {
+    var c = ch.list[i], next = ch.list[i + 1];
+    return c.end != null ? c.end : next ? next.start : d;
+  }
+  function chTime(sec) { return dur(Math.floor(sec)); }
+  function chapterList() {
+    if (!ch || ch.t !== track) return '';
+    return '<details class="w-chapters"' + (chOpen ? ' open' : '') + '>' +
+      '<summary>Chapters <span class="w-ch-count">' + ch.list.length + '</span>' +
+        '<span class="w-ch-now"></span></summary>' +
+      '<ol>' + ch.list.map(function (c, i) {
+        return '<li><button type="button" class="w-ch-item" data-act="chapter" data-i="' + i + '" data-start="' + c.start + '">' +
+          '<span class="w-ch-time">' + chTime(c.start) + '</span>' +
+          '<span class="w-ch-title">' + esc(c.title || 'Chapter ' + (i + 1)) + '</span></button></li>';
+      }).join('') + '</ol></details>';
+  }
+  function chTick() {
+    var c = ch, t = c.t, pos, d;
+    try { pos = t.pos(); d = t.dur() || t.v.duration; } catch (e) { return; }
+    if (!c.drawn && d) {
+      c.drawn = true;
+      chBar.innerHTML = c.list.map(function (x, i) {
+        var end = Math.min(chapterEnd(i, d), d);
+        return '<button type="button" class="w-ch-seg" data-i="' + i + '" data-start="' + x.start + '" title="' +
+          esc(chTime(x.start) + ' · ' + (x.title || 'Chapter ' + (i + 1))) + '" style="left:' + (x.start / d * 100) +
+          '%;width:' + Math.max(0.4, (end - x.start) / d * 100) + '%"></button>';
+      }).join('');
+    }
+    if (pos == null) return;
+    var at = -1;
+    for (var i = 0; i < c.list.length; i++) if (pos >= c.list[i].start) at = i;
+    if (at === c.at) return;
+    c.at = at;
+    overlay.querySelectorAll('.w-ch-seg, .w-ch-item').forEach(function (el) {
+      el.classList.toggle('on', +el.dataset.i === at);
+    });
+    var now = info.querySelector('.w-ch-now');
+    if (now) now.textContent = at >= 0 ? (c.list[at].title || 'Chapter ' + (at + 1)) : '';
   }
 
   // ← / →: back or forward SEEK_STEP seconds, as on YouTube. While the
@@ -554,6 +637,7 @@ window.Watch = (function () {
       }).catch(function () {});
     }
     startSponsorBlock(t);
+    startChapters(t);
     resetSwipe();
     overlay.hidden = false;
     renderInfo();
