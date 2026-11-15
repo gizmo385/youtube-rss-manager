@@ -264,9 +264,17 @@ class Video(Base):
     # Filled in by the downloader's metadata probe, not by the poller: the RSS
     # feed doesn't carry duration. NULL means "not probed yet".
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # Also filled by the probe; surfaced as podcast episode notes. NULL means
-    # "not probed yet"; an empty string means the video genuinely has none.
+    # From the feed's media:description (kept up to date while the video is
+    # on it), the history backfill or the probe; surfaced as podcast episode
+    # notes, and read for chapters. NULL means "not seen yet"; an empty string
+    # means the video genuinely has none.
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The chapters yt-dlp found when the downloader probed it, as
+    # ``[{"start": s, "end": s, "title": t}, ...]``: YouTube's own, including
+    # the auto-generated ones a description can't give us. NULL means "not
+    # probed"; the player then parses them out of the description (see
+    # services.chapters).
+    chapters: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     # Found other than on its channel's feed — by the history backfill, or on a
     # followed playlist's feed, which can turn up a channel's old uploads: there
     # for search and channel pages, but never archived (see services.archive).

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,9 @@ class VideoMetadata:
     description: str
     uploader: str
     thumbnail_url: str | None
+    #: yt-dlp's own ``chapters`` list (``start_time``, ``end_time``, ``title``):
+    #: YouTube's, including auto-generated ones. Empty when there are none.
+    chapters: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,7 @@ def probe(video_id: str, *, timeout: int = 120) -> VideoMetadata:
         description=data.get("description") or "",
         uploader=data.get("uploader") or "",
         thumbnail_url=data.get("thumbnail"),
+        chapters=[c for c in data.get("chapters") or [] if isinstance(c, dict)],
     )
 
 
@@ -165,6 +169,9 @@ def download(
         "mkv",
         "--no-warnings",
         "--no-playlist",
+        # YouTube's chapters, for Jellyfin. With --sponsorblock-mark below,
+        # its segments are added alongside them.
+        "--embed-chapters",
         "--sleep-requests",
         "2",
         "--sleep-interval",

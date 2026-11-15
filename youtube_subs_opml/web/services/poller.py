@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 
 _ATOM = "http://www.w3.org/2005/Atom"
 _YT = "http://www.youtube.com/xml/schemas/2015"
+_MEDIA = "http://search.yahoo.com/mrss/"
 _TIMEOUT = 15.0
 
 # YouTube is noticeably friendlier to a browser-like UA than to httpx's default.
@@ -207,6 +208,8 @@ class _Entry(NamedTuple):
     # playlist's owner. Empty if the entry doesn't say.
     channel_id: str = ""
     author: str = ""
+    # ``media:group/media:description``; None if the entry hasn't one.
+    description: str | None = None
 
 
 def _parse_entries(xml_bytes: bytes) -> list[_Entry]:
@@ -232,6 +235,7 @@ def _parse_entries(xml_bytes: bytes) -> list[_Entry]:
                 published,
                 entry.findtext(f"{{{_YT}}}channelId") or "",
                 entry.findtext(f"{{{_ATOM}}}author/{{{_ATOM}}}name") or "",
+                entry.findtext(f"{{{_MEDIA}}}group/{{{_MEDIA}}}description"),
             )
         )
     return out
@@ -303,7 +307,7 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
         return 0
 
     ids = [e[0] for e in entries]
-    known = set(db.execute(select(Video.video_id).where(Video.video_id.in_(ids))).scalars().all())
+    known = dict(db.execute(select(Video.video_id, Video.description).where(Video.video_id.in_(ids))).tuples().all())
     # On the feed means a regular upload, archivable like any other, even if
     # the history backfill (services.history) got to it first.
     db.execute(update(Video).where(Video.video_id.in_(ids), Video.backfilled.is_(True)).values(backfilled=False))
@@ -311,6 +315,10 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
     new = 0
     for e in entries:
         if e.video_id in known:
+            # Keep up with edits: creators often add chapter timestamps to a
+            # description after upload, and the player reads them from it.
+            if e.description and e.description != known[e.video_id]:
+                db.execute(update(Video).where(Video.video_id == e.video_id).values(description=e.description))
             continue
         db.add(
             Video(
@@ -318,6 +326,7 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
                 channel_id=channel_id,
                 title=e.title,
                 published_at=e.published,
+                description=e.description,
             )
         )
         new += 1
@@ -367,6 +376,7 @@ def _record_playlist(db: Session, playlist_id: str, content: bytes, channel_attr
                     channel_id=e.channel_id,
                     title=e.title,
                     published_at=e.published,
+                    description=e.description,
                     backfilled=True,
                 )
             )

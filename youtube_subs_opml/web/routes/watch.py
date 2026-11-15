@@ -26,7 +26,7 @@ from ...downloader import webm
 from ..db import get_db
 from ..deps import get_current_user
 from ..models import Download, DownloadLink, JellyfinAccount, User, Video
-from ..services import sponsorblock
+from ..services import chapters, sponsorblock
 from ..services.crypto import decrypt_token
 from ..services.jellyfin import JellyfinClient, JellyfinError
 from ..services.sources import followed_video_ids
@@ -135,6 +135,18 @@ def video_segments(
         "mode": mode,
         "segments": [{"start": s.start, "end": s.end, "category": s.category} for s in found],
     }
+
+
+@router.get("/chapters/{video_id}")
+def video_chapters(
+    video_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The video's own chapters (not SponsorBlock's), in seconds, or none.
+    ``end`` is null where only the start is known: the next chapter's start,
+    or the end of the video, ends it."""
+    return {"chapters": chapters.to_json(chapters.for_video(db, video_id))}
 
 
 @router.get("/media/{video_id}")
