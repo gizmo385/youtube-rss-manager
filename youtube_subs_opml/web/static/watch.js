@@ -489,10 +489,12 @@ window.Watch = (function () {
     if (!c.drawn && d) {
       c.drawn = true;
       chBar.innerHTML = c.list.map(function (x, i) {
-        var end = Math.min(chapterEnd(i, d), d);
+        var end = Math.min(chapterEnd(i, d), d), title = x.title || 'Chapter ' + (i + 1);
+        // Labelled, so the chapters can be scanned without hovering; the
+        // tooltip still has the whole title when CSS has had to cut it short.
         return '<button type="button" class="w-ch-seg" data-i="' + i + '" data-start="' + x.start + '" title="' +
-          esc(chTime(x.start) + ' · ' + (x.title || 'Chapter ' + (i + 1))) + '" style="left:' + (x.start / d * 100) +
-          '%;width:' + Math.max(0.4, (end - x.start) / d * 100) + '%"></button>';
+          esc(chTime(x.start) + ' · ' + title) + '" style="left:' + (x.start / d * 100) +
+          '%;width:' + Math.max(0.4, (end - x.start) / d * 100) + '%">' + esc(title) + '</button>';
       }).join('');
     }
     if (pos == null) return;
