@@ -220,6 +220,12 @@ window.Watch = (function () {
   function isOpen() { return !!overlay && !overlay.hidden; }
   function isTheater() { return !!overlay && overlay.classList.contains('theater'); }
 
+  // The channel's name, linking to its page here (its settings and videos).
+  function channelLink(v) {
+    if (!v.channelId) return esc(v.channel);
+    return '<a class="w-player-ch" href="/channels?selected=' + encodeURIComponent(v.channelId) +
+      '" title="Channel settings">' + esc(v.channel) + '</a>';
+  }
   function pbtn(act, label, key, extra) {
     return '<button type="button" class="w-pbtn' + (extra || '') + '" data-act="' + act + '">' + label +
       (key ? '<kbd>' + key + '</kbd>' : '') + '</button>';
@@ -258,7 +264,7 @@ window.Watch = (function () {
     info.innerHTML =
       '<div class="w-player-eyebrow">' + eyebrow + '</div>' +
       '<h2 class="w-player-title" id="w-player-title">' + esc(v.title) + '</h2>' +
-      '<div class="w-player-sub">' + esc(v.channel) + ' · ' + ago(v) + (d ? ' · ' + d : '') + '</div>' +
+      '<div class="w-player-sub">' + channelLink(v) + ' · ' + ago(v) + (d ? ' · ' + d : '') + '</div>' +
       notice +
       '<div class="w-player-actions">' + actions + '</div>' +
       chapterList();
@@ -587,6 +593,7 @@ window.Watch = (function () {
   // while open replaces the one playing.
   function play(v, o) {
     o = o || {};
+    var opening = !isOpen();
     ensureOverlay();
     stopTracking();   // the video being replaced
     var onClose = o.onClose || opts.onClose;
@@ -662,6 +669,7 @@ window.Watch = (function () {
     resetSwipe();
     overlay.hidden = false;
     renderInfo();
+    if (opening) pushPlayerEntry();
   }
   // ``opts`` with ``extra`` on top, to play the same video again differently.
   function withOpts(extra) {
@@ -674,7 +682,8 @@ window.Watch = (function () {
   // or the file's gone): switch to YouTube's, picking up where it got to.
   function fallBack(v) { play(v, withOpts({source: 'youtube', fellBack: true})); }
   function close() {
-    if (!overlay) return;
+    if (!overlay || overlay.hidden) return;
+    popPlayerEntry();
     stopTracking();
     stage.innerHTML = '';   // removing the element is what stops playback
     overlay.hidden = true;
@@ -685,6 +694,36 @@ window.Watch = (function () {
     cur = null;
     if (cb) cb();
   }
+
+  // ---- history ---------------------------------------------------------
+  // Opening the player adds a history entry (same URL), so Back closes it
+  // and goes no further, as it would leaving a video page. Prev / Next swap
+  // the video in place rather than stacking entries. Closing it any other way
+  // (Esc, Close, the backdrop) takes the entry back off, so the next Back
+  // leaves the page as expected.
+  var skipPop = false;
+  function ours(st) { return !!(st && st.wPlayer); }
+  function pushPlayerEntry() {
+    try { history.pushState({wPlayer: true}, ''); } catch (e) {}
+  }
+  function popPlayerEntry() {
+    if (!ours(history.state)) return;
+    skipPop = true;
+    history.back();
+  }
+  window.addEventListener('popstate', function (e) {
+    if (skipPop) { skipPop = false; return; }
+    if (ours(e.state)) {
+      // Forward onto a player entry once it's closed: there's nothing to
+      // reopen, so step over it rather than sit on a dead entry.
+      if (!isOpen()) { skipPop = true; history.back(); }
+      return;
+    }
+    if (isOpen()) close();   // Back: the entry's already gone
+  });
+  // A reload lands on the player's entry with the player shut; treat it as
+  // the page's own.
+  if (ours(history.state)) { try { history.replaceState(null, ''); } catch (e) {} }
 
   return {
     esc: esc, hue: hue, ago: ago, agoShort: agoShort, dur: dur,

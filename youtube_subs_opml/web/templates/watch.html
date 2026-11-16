@@ -67,6 +67,7 @@
 <div id="toast-host"></div>
 
 <script id="watch-data" type="application/json">{{ feed|tojson }}</script>
+<script id="watch-opened" type="application/json">{{ opened|tojson }}</script>
 <script src="/static/watch.js?v={{ asset_v }}"></script>
 <script>
 (function () {
@@ -166,8 +167,21 @@
   // own matches — older uploads, and matches in descriptions. Like Continue
   // watching, a section rather than a category: it sits after them all.
   var SEARCH = {id: 'search', name: 'More results', channels: []};
-  function allCats() { return [CONT].concat(CATS, [SEARCH]); }
-  function pinned(c) { return c.id === CONT.id || c.id === SEARCH.id; }
+  // A video clicked on a channel page opens here, with that channel's videos
+  // (the ones its page lists, older uploads included) as a section of their
+  // own under Continue watching, so Prev / Next walk its back catalogue.
+  // Only for this visit: the URL that brought it is dropped once it plays.
+  var OPENED = JSON.parse(document.getElementById('watch-opened').textContent);
+  var CHAN = OPENED ? {id: 'chan', name: OPENED.title, channels: []} : null;
+  var CHAN_VIDS = [];
+  // Shared with the feed's own copies, so watched state agrees between them.
+  function linkChanVids() {
+    if (OPENED) OPENED.videos = OPENED.videos.map(function (v) { return BY_KEY[v.key] || (BY_KEY[v.key] = v); });
+    CHAN_VIDS = OPENED ? OPENED.videos : [];
+  }
+  linkChanVids();
+  function allCats() { return [CONT].concat(CHAN ? [CHAN] : [], CATS, [SEARCH]); }
+  function pinned(c) { return c.id === CONT.id || c.id === SEARCH.id || (CHAN && c.id === CHAN.id); }
   function continuing() {
     return VIDEOS.filter(function (v) {
       if (v.progress && !CONT_AT[v.key]) CONT_AT[v.key] = v.progress.at;
@@ -198,8 +212,9 @@
         collapsed: !!S.collapsed[c.id]
       };
     }
-    var out = [CONT].concat(CATS).map(function (c) {
-      return section(c, c === CONT ? continuing() : VIDEOS.filter(function (v) { return v.cats.indexOf(c.id) >= 0; }));
+    var out = [CONT].concat(CHAN ? [CHAN] : [], CATS).map(function (c) {
+      return section(c, c === CONT ? continuing() : c === CHAN ? CHAN_VIDS
+        : VIDEOS.filter(function (v) { return v.cats.indexOf(c.id) >= 0; }));
     });
     // Only results for the search as it stands, less what's already shown.
     var shown = {};
@@ -264,12 +279,13 @@
   function bySize(cats) {
     return cats.slice().sort(function (a, b) { return b.vids.length - a.vids.length; });   // sort is stable
   }
-  // Continue watching first and More results last, full width, with the
-  // categories (packed or not) between.
+  // Continue watching (then the channel opened from, if any) first and More
+  // results last, full width, with the categories (packed or not) between.
   function placed(secs) {
     function only(id) { return secs.filter(function (c) { return c.id === id; }).map(function (c) { return {c: c, span: 0}; }); }
     var cats = secs.filter(function (c) { return !pinned(c); });
-    return only(CONT.id).concat(S.cols ? pack(bySize(cats), S.cols) : cats.map(function (c) { return {c: c, span: 0}; }), only(SEARCH.id));
+    return only(CONT.id).concat(CHAN ? only(CHAN.id) : [],
+      S.cols ? pack(bySize(cats), S.cols) : cats.map(function (c) { return {c: c, span: 0}; }), only(SEARCH.id));
   }
   // Sections in visual order, so [ ] and J/K follow the packed layout.
   function sections() {
@@ -365,7 +381,7 @@
     var shelfScroll = {};
     main.querySelectorAll('.w-shelf, .w-cont-row').forEach(function (el) { shelfScroll[el.dataset.sec] = el.scrollLeft; });
 
-    if (!VIDEOS.length) {
+    if (!VIDEOS.length && !CHAN_VIDS.length) {
       main.innerHTML = '<div class="w-empty"><div class="eyebrow">Nothing new in the last ' + FEED.windowDays +
         ' days</div><p class="w-empty-sub">Videos appear here as the poller picks them up from your subscriptions.</p></div>';
       return;
@@ -378,6 +394,10 @@
     var html = '', tail = '';
     if (secs[0].c.id === CONT.id) {
       html = contStrip(secs[0].c);
+      secs = secs.slice(1);
+    }
+    if (CHAN && secs.length && secs[0].c.id === CHAN.id) {
+      html += plainSec(secs[0].c);
       secs = secs.slice(1);
     }
     if (secs.length && secs[secs.length - 1].c.id === SEARCH.id) {
@@ -1082,6 +1102,7 @@
         BY_KEY = {}; CONT_AT = {};
         VIDEOS.forEach(function (v) { BY_KEY[v.key] = v; });
         S.results = S.results.map(function (v) { return BY_KEY[v.key] || (BY_KEY[v.key] = v); });
+        linkChanVids();
         render();
       })
       .catch(function () { lastRefresh = Date.now(); })
@@ -1093,6 +1114,15 @@
   document.addEventListener('visibilitychange', refreshIfStale);
 
   render();
+
+  // Opened from a channel page: play the video clicked there, then drop the
+  // query so a reload is the plain Watch tab again.
+  // (Dropped first: playing adds a history entry of its own on top.)
+  if (OPENED) {
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    var pv = OPENED.play && BY_KEY[OPENED.play];
+    if (pv && CHAN_VIDS.indexOf(pv) >= 0 && Watch.canPlayHere(pv)) play(cardKey(CHAN.id, pv));
+  }
 })();
 </script>
 {% endblock %}

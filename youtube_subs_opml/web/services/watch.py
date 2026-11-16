@@ -448,6 +448,28 @@ def channel_videos(user: User, db: Session, channel: Channel) -> list[dict]:
     return [_client_video(v, channel) for v in videos]
 
 
+def channel_section(user: User, db: Session, channel_id: str) -> dict | None:
+    """A followed channel's page videos, for the Watch page to show as a
+    section of their own when a video is opened from that channel's page.
+
+    The same videos as the channel page (see ``channel_videos``), so the one
+    clicked is among them even when it's older than the feed's window. None
+    when the user doesn't follow the channel.
+    """
+    channel = db.execute(
+        select(Channel)
+        .join(Subscription, Subscription.channel_id == Channel.channel_id)
+        .where(Subscription.user_id == user.id, Channel.channel_id == channel_id)
+    ).scalar_one_or_none()
+    if channel is None:
+        return None
+    return {
+        "id": channel.channel_id,
+        "title": channel.title or channel.channel_id,
+        "videos": channel_videos(user, db, channel),
+    }
+
+
 # Search reaches every stored video, not just the feed's window, but returns
 # only the best of them: the page shows these under the feed's own matches.
 SEARCH_LIMIT = 50

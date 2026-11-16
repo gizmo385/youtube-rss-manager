@@ -509,12 +509,16 @@
     b.addEventListener('click', function () {
       var tab = b.dataset.tab;
       show(tab);
-      // Keep the URL shareable/back-button friendly without a reload.
+      // Keep the URL shareable, and each tab a history entry so Back returns
+      // to the one before, without a reload.
       var url = new URL(window.location);
       if (tab === 'downloads') { url.searchParams.set('tab', 'downloads'); }
       else { url.searchParams.delete('tab'); }
-      history.replaceState(null, '', url);
+      if (url.href !== window.location.href) history.pushState(null, '', url);
     });
+  });
+  window.addEventListener('popstate', function () {
+    show(new URL(window.location).searchParams.get('tab') === 'downloads' ? 'downloads' : 'settings');
   });
 })();
 // The name autosaves without a reload, so show it in the header and the

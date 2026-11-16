@@ -195,6 +195,30 @@ def test_page_embeds_the_feed(client):
     assert data["videos"][0]["key"] == "a_new"
 
 
+def _opened(html: str):
+    match = re.search(r'<script id="watch-opened" type="application/json">(.*?)</script>', html, re.DOTALL)
+    assert match
+    return json.loads(match.group(1))
+
+
+def test_page_without_a_channel_opens_nothing(client):
+    assert _opened(client.get("/watch").text) is None
+
+
+def test_page_opened_from_a_channel_page_carries_its_videos(client):
+    html = client.get("/watch", params={"channel": "UCa", "play": "a_old"}).text
+    opened = _opened(html)
+    assert opened["id"] == "UCa"
+    assert opened["title"] == "Alpha"
+    assert opened["play"] == "a_old"
+    # The channel page's videos, so one older than the feed's window is there.
+    assert [v["key"] for v in opened["videos"]] == ["a_new", "a_short", "a_old"]
+
+
+def test_page_ignores_channels_the_user_does_not_follow(client):
+    assert _opened(client.get("/watch", params={"channel": "UCnope", "play": "x"}).text) is None
+
+
 def test_feed_endpoint_serves_the_page_feed(client, sessionmaker_):
     client.post("/watch/watched", json={"keys": ["a_new"], "watched": True})
     data = client.get("/watch/feed").json()
