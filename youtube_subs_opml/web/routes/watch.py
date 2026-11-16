@@ -31,7 +31,7 @@ from ..services.crypto import decrypt_token
 from ..services.jellyfin import JellyfinClient, JellyfinError
 from ..services.sources import followed_video_ids
 from ..services.stats import shell_stats
-from ..services.watch import build_watch_feed, save_progress, search_videos, set_watched
+from ..services.watch import build_watch_feed, channel_section, save_progress, search_videos, set_watched
 from ..templating import templates
 
 logger = logging.getLogger(__name__)
@@ -54,9 +54,18 @@ class ProgressUpdate(BaseModel):
 @router.get("")
 def watch_page(
     request: Request,
+    channel: str | None = Query(None, max_length=255),
+    play: str | None = Query(None, max_length=255),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
+    """The Watch tab. ``channel`` and ``play`` come from a video clicked on a
+    channel page: that channel's videos are shown as a section of their own
+    (the video may be older than the feed reaches) and ``play`` starts in
+    the player."""
+    opened = channel_section(user, db, channel) if channel else None
+    if opened is not None:
+        opened["play"] = play
     return templates.TemplateResponse(
         request,
         "watch.html",
@@ -65,6 +74,7 @@ def watch_page(
             "active_nav": "watch",
             "stats": shell_stats(user, db),
             "feed": build_watch_feed(user, db),
+            "opened": opened,
         },
     )
 

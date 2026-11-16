@@ -327,15 +327,16 @@ document.getElementById('channel-detail').addEventListener('click', function(e){
     setChannelVideoWatched(v, !v.watched);
     return;
   }
-  // A modified click opens the link in a new tab as usual; so do Nebula,
-  // which has no embeddable player, and phones (see Watch.canPlayHere).
+  // A plain click plays it on the Watch tab, as the feed does there, with
+  // this channel's videos alongside; the Watch tab marks it watched per the
+  // user's setting. A modified click opens the link in a new tab as usual;
+  // so do Nebula, which has no embeddable player, and phones (see
+  // Watch.canPlayHere) — those count as watched on opening.
   if (!(e.ctrlKey || e.metaKey || e.shiftKey) && Watch.canPlayHere(v)) {
     e.preventDefault();
-    Watch.play(v, {   // onClose shows where it got to
-      onClose: drawChannelVideos,
-      onFinished: function (fv) { setChannelVideoWatched(fv, true); }
-    });
-    if (Watch.markAtFinish) return;   // watched once most of it has played
+    window.location.href = '/watch?channel=' + encodeURIComponent(cv.channelId) +
+      '&play=' + encodeURIComponent(v.key);
+    return;
   }
   setChannelVideoWatched(v, true);
 });

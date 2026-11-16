@@ -220,6 +220,12 @@ window.Watch = (function () {
   function isOpen() { return !!overlay && !overlay.hidden; }
   function isTheater() { return !!overlay && overlay.classList.contains('theater'); }
 
+  // The channel's name, linking to its page here (its settings and videos).
+  function channelLink(v) {
+    if (!v.channelId) return esc(v.channel);
+    return '<a class="w-player-ch" href="/channels?selected=' + encodeURIComponent(v.channelId) +
+      '" title="Channel settings">' + esc(v.channel) + '</a>';
+  }
   function pbtn(act, label, key, extra) {
     return '<button type="button" class="w-pbtn' + (extra || '') + '" data-act="' + act + '">' + label +
       (key ? '<kbd>' + key + '</kbd>' : '') + '</button>';
@@ -258,7 +264,7 @@ window.Watch = (function () {
     info.innerHTML =
       '<div class="w-player-eyebrow">' + eyebrow + '</div>' +
       '<h2 class="w-player-title" id="w-player-title">' + esc(v.title) + '</h2>' +
-      '<div class="w-player-sub">' + esc(v.channel) + ' · ' + ago(v) + (d ? ' · ' + d : '') + '</div>' +
+      '<div class="w-player-sub">' + channelLink(v) + ' · ' + ago(v) + (d ? ' · ' + d : '') + '</div>' +
       notice +
       '<div class="w-player-actions">' + actions + '</div>' +
       chapterList();
