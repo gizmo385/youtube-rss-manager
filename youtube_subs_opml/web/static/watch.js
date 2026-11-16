@@ -669,7 +669,7 @@ window.Watch = (function () {
     resetSwipe();
     overlay.hidden = false;
     renderInfo();
-    if (opening) pushPlayerEntry();
+    playerEntry(opening, o.historyKey);
   }
   // ``opts`` with ``extra`` on top, to play the same video again differently.
   function withOpts(extra) {
@@ -697,38 +697,62 @@ window.Watch = (function () {
 
   // ---- history ---------------------------------------------------------
   // Opening the player adds a history entry (same URL), so Back closes it
-  // and goes no further, as it would leaving a video page. Prev / Next swap
-  // the video in place rather than stacking entries. Closing it any other way
-  // (Esc, Close, the backdrop) takes the entry back off, so the next Back
-  // leaves the page as expected.
-  var skipPop = false;
+  // and goes no further, as it would leaving a video page; Forward then
+  // opens it again. Prev / Next swap the video in place rather than
+  // stacking entries. Closing it any other way (Esc, Close, the backdrop)
+  // steps back off the entry too, so the next Back leaves the page and
+  // Forward reopens it the same way.
+  //
+  // Reopening needs the page: the entry holds the page's key for the video
+  // (``o.historyKey``), and ``Watch.onHistoryPlay(key)`` plays it again —
+  // through the page's own play, so its state follows. A page that doesn't
+  // set it can't reopen, and Forward steps over the entry instead.
+  var skipPop = false, restoring = false;
   function ours(st) { return !!(st && st.wPlayer); }
-  function pushPlayerEntry() {
-    try { history.pushState({wPlayer: true}, ''); } catch (e) {}
+  function playerEntry(opening, key) {
+    try {
+      if (restoring) history.replaceState({wPlayer: true, key: key || null}, '');
+      else if (opening) history.pushState({wPlayer: true, key: key || null}, '');
+      else if (ours(history.state)) history.replaceState({wPlayer: true, key: key || null}, '');
+    } catch (e) {}
   }
   function popPlayerEntry() {
     if (!ours(history.state)) return;
     skipPop = true;
     history.back();
   }
+  // Play the entry's video again, without adding another entry for it.
+  // False if there's nothing to play.
+  function reopen(st) {
+    if (!api.onHistoryPlay || !st.key) return false;
+    restoring = true;
+    try { api.onHistoryPlay(st.key); } finally { restoring = false; }
+    return isOpen();
+  }
   window.addEventListener('popstate', function (e) {
     if (skipPop) { skipPop = false; return; }
     if (ours(e.state)) {
-      // Forward onto a player entry once it's closed: there's nothing to
-      // reopen, so step over it rather than sit on a dead entry.
-      if (!isOpen()) { skipPop = true; history.back(); }
+      // Forward onto the player's entry: open it again, or step over it.
+      if (!isOpen() && !reopen(e.state)) { skipPop = true; history.back(); }
       return;
     }
     if (isOpen()) close();   // Back: the entry's already gone
   });
-  // A reload lands on the player's entry with the player shut; treat it as
-  // the page's own.
-  if (ours(history.state)) { try { history.replaceState(null, ''); } catch (e) {} }
+  // A reload (or a return that wasn't kept in memory) lands on the player's
+  // entry with the player shut: the page calls this once it's set up, to
+  // open it again — or, failing that, treat the entry as the page's own.
+  function restore() {
+    if (ours(history.state) && !isOpen() && !reopen(history.state)) {
+      try { history.replaceState(null, ''); } catch (e) {}
+    }
+  }
 
-  return {
+  var api = {
     esc: esc, hue: hue, ago: ago, agoShort: agoShort, dur: dur,
     badges: badges, watchBtn: watchBtn, thumb: thumb, card: card, progressBar: progressBar, setProgress: setProgress, saveWatched: saveWatched,
     canPlayHere: canPlayHere, play: play, close: close, isOpen: isOpen, refresh: refresh,
-    tracking: tracking, setTracking: setTracking, markAtFinish: markAtFinish
+    tracking: tracking, setTracking: setTracking, markAtFinish: markAtFinish,
+    restore: restore, onHistoryPlay: null
   };
+  return api;
 })();

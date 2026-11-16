@@ -170,7 +170,7 @@
   // A video clicked on a channel page opens here, with that channel's videos
   // (the ones its page lists, older uploads included) as a section of their
   // own under Continue watching, so Prev / Next walk its back catalogue.
-  // Only for this visit: the URL that brought it is dropped once it plays.
+  // It lasts as long as the URL names the channel (see the end).
   var OPENED = JSON.parse(document.getElementById('watch-opened').textContent);
   var CHAN = OPENED ? {id: 'chan', name: OPENED.title, channels: []} : null;
   var CHAN_VIDS = [];
@@ -798,7 +798,7 @@
     S.selKey = k;
     S.selCat = k.slice(0, k.indexOf('|'));
     Watch.play(v, {
-      info: playerInfo, onClose: closed,
+      info: playerInfo, onClose: closed, historyKey: k,
       onPrev: function () { playRel(-1); }, onNext: function () { playRel(1); },
       onWatch: playerWatched, onTheater: toggleTheater,
       onFinished: function (fv) { var fc = {}; fc[fv.key] = true; applyWatched(fc); }
@@ -813,6 +813,13 @@
     }
     if (theaterOn()) select(k);   // bring it into view in the rail
   }
+  // Forward onto a video Back closed (or a reload while one played): play it
+  // again — the same card if it's still shown, else the video wherever it is.
+  Watch.onHistoryPlay = function (k) {
+    var f = flat(), vk = k.slice(k.indexOf('|') + 1);
+    var hit = f.filter(function (x) { return x.k === k; })[0] || f.filter(function (x) { return x.v.key === vk; })[0];
+    if (hit && Watch.canPlayHere(hit.v)) play(hit.k);
+  };
   // The player's neighbours in feed order, skipping what can't play here.
   function playable(d) {
     var f = flat(), i = -1;
@@ -1115,13 +1122,17 @@
 
   render();
 
-  // Opened from a channel page: play the video clicked there, then drop the
-  // query so a reload is the plain Watch tab again.
+  // Opened from a channel page: play the video clicked there, and drop it
+  // from the URL so a reload doesn't start it again. The channel stays, so
+  // Back / Forward and reloads keep its section, and with it the video
+  // (which may be older than the feed reaches) to reopen.
   // (Dropped first: playing adds a history entry of its own on top.)
-  if (OPENED) {
-    try { history.replaceState(null, '', location.pathname); } catch (e) {}
-    var pv = OPENED.play && BY_KEY[OPENED.play];
+  if (OPENED && OPENED.play) {
+    try { history.replaceState(null, '', location.pathname + '?channel=' + encodeURIComponent(OPENED.id)); } catch (e) {}
+    var pv = BY_KEY[OPENED.play];
     if (pv && CHAN_VIDS.indexOf(pv) >= 0 && Watch.canPlayHere(pv)) play(cardKey(CHAN.id, pv));
+  } else {
+    Watch.restore();
   }
 })();
 </script>
