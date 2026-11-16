@@ -108,6 +108,13 @@ window.Watch = (function () {
       var b = e.target.closest('[data-start]');
       if (b) seekChapter(+b.dataset.start);
     });
+    // Our own tooltip rather than the browser's, which takes a second or so
+    // to appear: it shows the moment the pointer is over a chapter.
+    chBar.addEventListener('mouseover', function (e) {
+      var b = e.target.closest('.w-ch-seg');
+      if (b) chTip(b);
+    });
+    chBar.addEventListener('mouseleave', function () { chTip(null); });
     info = overlay.querySelector('.w-player-info');
     // <details> toggles don't bubble, hence the capture phase.
     info.addEventListener('toggle', function (e) {
@@ -483,17 +490,31 @@ window.Watch = (function () {
           '<span class="w-ch-title">' + esc(c.title || 'Chapter ' + (i + 1)) + '</span></button></li>';
       }).join('') + '</ol></details>';
   }
+  // Show the tooltip over chapter segment ``seg``, or hide it with null.
+  // Centred on the segment, but kept inside the strip at either end.
+  function chTip(seg) {
+    var tip = chBar.querySelector('.w-ch-tip');
+    if (!tip) return;
+    if (!seg) { tip.hidden = true; return; }
+    tip.textContent = seg.dataset.tip;
+    tip.hidden = false;
+    var bar = chBar.clientWidth, w = tip.offsetWidth;
+    var mid = seg.offsetLeft + seg.offsetWidth / 2;
+    tip.style.left = Math.max(0, Math.min(bar - w, mid - w / 2)) + 'px';
+  }
   function chTick() {
     var c = ch, t = c.t, pos, d;
     try { pos = t.pos(); d = t.dur() || t.v.duration; } catch (e) { return; }
     if (!c.drawn && d) {
       c.drawn = true;
       chBar.innerHTML = c.list.map(function (x, i) {
-        var end = Math.min(chapterEnd(i, d), d);
-        return '<button type="button" class="w-ch-seg" data-i="' + i + '" data-start="' + x.start + '" title="' +
-          esc(chTime(x.start) + ' · ' + (x.title || 'Chapter ' + (i + 1))) + '" style="left:' + (x.start / d * 100) +
-          '%;width:' + Math.max(0.4, (end - x.start) / d * 100) + '%"></button>';
-      }).join('');
+        var end = Math.min(chapterEnd(i, d), d), title = x.title || 'Chapter ' + (i + 1);
+        // Labelled, so the chapters can be scanned without hovering; the
+        // tooltip still has the whole title when CSS has had to cut it short.
+        return '<button type="button" class="w-ch-seg" data-i="' + i + '" data-start="' + x.start + '" data-tip="' +
+          esc(chTime(x.start) + ' · ' + title) + '" style="left:' + (x.start / d * 100) +
+          '%;width:' + Math.max(0.4, (end - x.start) / d * 100) + '%">' + esc(title) + '</button>';
+      }).join('') + '<div class="w-ch-tip" role="tooltip" hidden></div>';
     }
     if (pos == null) return;
     var at = -1;

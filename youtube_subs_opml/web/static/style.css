@@ -1905,16 +1905,25 @@ section.focused > * > .w-sec-hint { display: inline; }
 .w-player-stage { position: relative; aspect-ratio: 16 / 9; background: #000; }
 .w-player-stage video, .w-player-stage iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
 .w-player-info { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px 12px; }
-/* Chapters: a strip under the video to click through them, the one playing
-   picked out, and a list in the panel. */
-.w-player-ch { position: relative; height: 8px; background: var(--panel-2); }
+/* Chapters: a strip under the video to click through them, each segment
+   labelled with its title (cut short with an ellipsis where it doesn't fit),
+   the one playing picked out, and a list in the panel. */
+.w-player-ch { position: relative; height: 22px; background: var(--panel); }
 .w-player-ch:empty { display: none; }
 .w-ch-seg {
-  position: absolute; top: 0; bottom: 0; padding: 0; cursor: pointer;
-  background: var(--line); border: 0; border-right: 2px solid var(--panel);
+  position: absolute; top: 0; bottom: 0; padding: 0 6px; cursor: pointer; overflow: hidden;
+  font: inherit; font-size: 11px; line-height: 22px; text-align: left; white-space: nowrap; text-overflow: ellipsis;
+  color: var(--ink-2); background: var(--raised); border: 0; border-right: 2px solid var(--panel);
 }
-.w-ch-seg:hover { background: var(--muted); }
-.w-ch-seg.on { background: var(--accent); }
+.w-ch-seg:hover { color: var(--ink); background: var(--line-2); }
+.w-ch-tip {
+  position: absolute; bottom: calc(100% + 6px); z-index: 3; max-width: min(420px, 100%); pointer-events: none;
+  padding: 5px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--overlay-ink); background: var(--overlay-bg); border: 1px solid var(--overlay-line);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.w-ch-tip[hidden] { display: none; }
+.w-ch-seg.on { color: var(--ink); font-weight: 600; background: var(--accent-tint-strong); box-shadow: inset 0 -2px 0 var(--accent); }
 .w-chapters { font-size: 13px; border-top: 1px solid var(--line); padding-top: 8px; }
 .w-chapters summary {
   display: flex; align-items: baseline; gap: 8px; cursor: pointer; list-style-position: inside;
@@ -1934,7 +1943,8 @@ section.focused > * > .w-sec-hint { display: inline; }
 .w-ch-item.on { color: var(--ink); background: var(--accent-tint); box-shadow: inset 2px 0 0 var(--accent); }
 .w-ch-time { flex-shrink: 0; min-width: 4.5em; font-variant-numeric: tabular-nums; color: var(--muted); }
 @media (hover: none) and (pointer: coarse) {
-  .w-player-ch { height: 14px; }
+  .w-player-ch { height: 28px; }
+  .w-ch-seg { line-height: 28px; }
   .w-ch-item { padding: 10px 6px; }
 }
 /* SponsorBlock: where the segments are, as a strip under the video, and the
