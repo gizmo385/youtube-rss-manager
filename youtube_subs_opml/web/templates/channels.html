@@ -83,7 +83,13 @@
 <script>
 var currentFilter = {{ active_filter|tojson }};
 
-function selectRow(el) {
+function selectRow(el, fromHistory) {
+  // Each channel opened is a history entry, so Back returns to the one
+  // before (or the overview) and the URL names what's showing.
+  var id = el.getAttribute('data-channel-id') || '';
+  if (!fromHistory && id !== currentSelectedId()) {
+    try { history.pushState({chan: id}, '', id ? '/channels?selected=' + encodeURIComponent(id) : '/channels'); } catch (e) {}
+  }
   document.querySelectorAll('.chan-row.selected').forEach(function(r){
     r.classList.remove('selected'); r.removeAttribute('aria-current');
   });
@@ -365,5 +371,19 @@ document.body.addEventListener('htmx:afterSwap', function(evt){
   if (evt.detail.target.id === 'channel-groups') { reapplySearch(); updateBulk(); }
 });
 renderChannelVideos();
+
+// Back / Forward between channels: select the row and load its detail, as a
+// click would, without adding another entry.
+try { history.replaceState({chan: detailId()}, ''); } catch (e) {}
+window.addEventListener('popstate', function(e){
+  if (!e.state || !('chan' in e.state)) return;
+  var id = e.state.chan;
+  var row = id
+    ? document.querySelector('.chan-row[data-channel-id="' + CSS.escape(id) + '"]')
+    : document.querySelector('.chan-row[data-overview]');
+  if (row) selectRow(row, true);
+  htmx.ajax('GET', id ? '/channels/' + encodeURIComponent(id) + '/detail' : '/channels/overview',
+            {target: '#channel-detail', swap: 'innerHTML'});
+});
 </script>
 {% endblock %}

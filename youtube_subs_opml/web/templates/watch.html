@@ -1117,10 +1117,11 @@
 
   // Opened from a channel page: play the video clicked there, then drop the
   // query so a reload is the plain Watch tab again.
+  // (Dropped first: playing adds a history entry of its own on top.)
   if (OPENED) {
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
     var pv = OPENED.play && BY_KEY[OPENED.play];
     if (pv && CHAN_VIDS.indexOf(pv) >= 0 && Watch.canPlayHere(pv)) play(cardKey(CHAN.id, pv));
-    try { history.replaceState(null, '', location.pathname); } catch (e) {}
   }
 })();
 </script>
