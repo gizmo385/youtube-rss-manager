@@ -5,7 +5,8 @@ Built entirely from what the poller has already stored — ``videos`` for YouTub
 channels and playlists, and the cached RSS for Nebula (whose videos never land
 in ``videos``) — so rendering the page never reaches out to either service. Shorts and
 live/upcoming filtering likewise only consult the existing caches: a video
-nobody has classified yet is shown rather than probed.
+nobody has classified yet is shown rather than probed. Keeping the Shorts cache
+filled for the window is the poll job's part (see ``services.shorts.classify_recent``).
 """
 
 from __future__ import annotations

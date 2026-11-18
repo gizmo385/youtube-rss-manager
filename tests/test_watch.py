@@ -493,3 +493,48 @@ def test_shorts_preferences_apply_to_search_and_channel_pages(sessionmaker_):
         s.commit()
     assert _search(sessionmaker_, "alpha short") == ["a_short"]
     assert channel_page() == ["a_new", "a_short", "a_old"]
+
+
+def test_classify_recent_probes_only_what_the_watch_tab_would_hide(sessionmaker_, monkeypatch):
+    from youtube_subs_opml.web.services import shorts
+
+    with sessionmaker_() as s:
+        s.add_all(
+            [
+                # Bravo: uncategorized, so user 1's hide-Shorts default applies.
+                Video(video_id="b_short", channel_id="UCb", title="Sneaky", published_at=NOW - timedelta(hours=5)),
+                Video(video_id="b_long", channel_id="UCb", title="Long", published_at=NOW - timedelta(hours=6)),
+                Video(video_id="b_old", channel_id="UCb", title="Old", published_at=NOW - timedelta(days=45)),
+            ]
+        )
+        s.commit()
+
+    probed: list[str] = []
+
+    def probe(vid, client):
+        probed.append(vid)
+        return vid == "b_short"
+
+    monkeypatch.setattr(shorts, "_probe_is_short", probe)
+    with sessionmaker_() as s:
+        found = shorts.classify_recent(s, since=NOW - timedelta(days=30))
+
+    assert found == 1
+    # Alpha's a_new hides in Science (which inherits the user's hide), so it's
+    # probed; a_short is already known; the ignored channel and anything
+    # outside the window aren't touched.
+    assert sorted(probed) == ["a_new", "b_arch", "b_long", "b_short"]
+    keys = [v["key"] for v in _feed(sessionmaker_)["videos"]]
+    assert "b_short" not in keys
+    assert "b_long" in keys
+
+
+def test_classify_recent_skips_channels_nobody_hides_shorts_from(sessionmaker_, monkeypatch):
+    from youtube_subs_opml.web.services import shorts
+
+    with sessionmaker_() as s:
+        s.get_one(User, 1).include_shorts = True
+        s.commit()
+    monkeypatch.setattr(shorts, "_probe_is_short", lambda vid, client: pytest.fail(f"probed {vid}"))
+    with sessionmaker_() as s:
+        assert shorts.classify_recent(s, since=NOW - timedelta(days=30)) == 0

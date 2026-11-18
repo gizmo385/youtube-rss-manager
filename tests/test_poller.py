@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from youtube_subs_opml.opml import FEED_URL
 from youtube_subs_opml.web.db import Base
-from youtube_subs_opml.web.models import Channel, ChannelFeedCache, Subscription, Video
+from youtube_subs_opml.web.models import Channel, ChannelFeedCache, PlaylistVideo, Subscription, Video, VideoShort
 from youtube_subs_opml.web.services import poller, uploads_api
 
 FEED = (
@@ -46,7 +46,10 @@ def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(
         engine,
-        tables=[Base.metadata.tables[t.__tablename__] for t in (Channel, Video, Subscription, ChannelFeedCache)],
+        tables=[
+            Base.metadata.tables[t.__tablename__]
+            for t in (Channel, Video, Subscription, ChannelFeedCache, VideoShort, PlaylistVideo)
+        ],
     )
     session = sessionmaker(bind=engine)()
     try:
@@ -567,3 +570,45 @@ def test_feed_clears_the_backfill_flag(db, monkeypatch):
     db.commit()
     assert db.get_one(Video, "vidAAAA1111").backfilled is False
     assert db.get_one(Video, "vidOLD00001").backfilled is True  # not on the feed
+
+
+SHORTS_FEED = (
+    b'<?xml version="1.0"?>'
+    b'<feed xmlns="http://www.w3.org/2005/Atom" '
+    b'xmlns:yt="http://www.youtube.com/xml/schemas/2015">'
+    b"<entry><yt:videoId>shortAAA111</yt:videoId><yt:channelId>UCchannel00000000000001</yt:channelId>"
+    b'<title>A short</title><link rel="alternate" href="https://www.youtube.com/shorts/shortAAA111"/>'
+    b"<published>2026-08-20T09:00:00+00:00</published></entry>"
+    b"<entry><yt:videoId>regularB222</yt:videoId><yt:channelId>UCchannel00000000000001</yt:channelId>"
+    b'<title>A video</title><link rel="alternate" href="https://www.youtube.com/watch?v=regularB222"/>'
+    b"<published>2026-08-19T09:00:00+00:00</published></entry></feed>"
+)
+
+
+def test_poll_records_shorts_the_feed_links_as_shorts(db, monkeypatch):
+    cid = "UCchannel00000000000001"
+    url = FEED_URL.format(channel_id=cid)
+    monkeypatch.setattr(poller, "_new_client", lambda: FakeClient({url: [_resp(200, url, SHORTS_FEED)]}))
+
+    poller.poll_channel(cid, db)
+    db.commit()
+
+    # Only the Short is recorded: a /watch link is left for the probe to classify.
+    assert {(r.video_id, r.is_short) for r in db.execute(select(VideoShort)).scalars()} == {("shortAAA111", True)}
+
+
+def test_playlist_poll_records_shorts_too(db, monkeypatch):
+    from youtube_subs_opml import playlists
+
+    pid = "PLplaylist0000000000000000000000001"
+    db.add(Channel(channel_id=pid, title="P", platform=playlists.PLATFORM))
+    db.commit()
+    url = playlists.feed_url(pid)
+    monkeypatch.setattr(poller, "_new_client", lambda: FakeClient({url: [_resp(200, url, SHORTS_FEED)]}))
+
+    poller.poll_channel(pid, db)
+    db.commit()
+
+    assert db.execute(select(VideoShort.video_id).where(VideoShort.is_short.is_(True))).scalars().all() == [
+        "shortAAA111"
+    ]
