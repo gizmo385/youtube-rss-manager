@@ -49,6 +49,7 @@ from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from statistics import median
 from typing import NamedTuple
+from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -59,7 +60,7 @@ from youtube_subs_opml import metrics, nebula, playlists
 from youtube_subs_opml.opml import FEED_URL
 
 from ..config import get_settings
-from ..models import Channel, ChannelFeedCache, PlaylistVideo, Subscription, Video
+from ..models import Channel, ChannelFeedCache, PlaylistVideo, Subscription, Video, VideoShort
 from . import uploads_api
 from .archive import enqueue_pending
 from .feed_cache import store_feed
@@ -210,6 +211,37 @@ class _Entry(NamedTuple):
     author: str = ""
     # ``media:group/media:description``; None if the entry hasn't one.
     description: str | None = None
+    # The entry's ``link rel="alternate"``. YouTube links a Short as
+    # ``/shorts/{id}`` rather than ``/watch?v={id}``.
+    link: str = ""
+
+    @property
+    def is_short(self) -> bool:
+        return urlsplit(self.link).path.startswith("/shorts/")
+
+
+def _alternate_link(entry: ET.Element) -> str:
+    for link in entry.findall(f"{{{_ATOM}}}link"):
+        if link.get("rel", "alternate") == "alternate":
+            return link.get("href", "")
+    return ""
+
+
+def _mark_feed_shorts(db: Session, entries: list[_Entry]) -> None:
+    """Record the entries the feed links as Shorts, so the Watch tab and
+    channel pages can hide them without probing. Only ever marks a Short: a
+    ``/watch`` link isn't taken as proof of a regular video, which is left to
+    ``services.shorts`` to classify."""
+    ids = list(dict.fromkeys(e.video_id for e in entries if e.is_short))
+    if not ids:
+        return
+    known = {r.video_id: r for r in db.execute(select(VideoShort).where(VideoShort.video_id.in_(ids))).scalars()}
+    for video_id in ids:
+        row = known.get(video_id)
+        if row is None:
+            db.add(VideoShort(video_id=video_id, is_short=True))
+        else:
+            row.is_short = True
 
 
 def _parse_entries(xml_bytes: bytes) -> list[_Entry]:
@@ -236,6 +268,7 @@ def _parse_entries(xml_bytes: bytes) -> list[_Entry]:
                 entry.findtext(f"{{{_YT}}}channelId") or "",
                 entry.findtext(f"{{{_ATOM}}}author/{{{_ATOM}}}name") or "",
                 entry.findtext(f"{{{_MEDIA}}}group/{{{_MEDIA}}}description"),
+                _alternate_link(entry),
             )
         )
     return out
@@ -305,6 +338,7 @@ def poll_channel(channel_id: str, db: Session, client: httpx.Client | None = Non
     entries = _parse_entries(content)
     if not entries:
         return 0
+    _mark_feed_shorts(db, entries)
 
     ids = [e[0] for e in entries]
     known = dict(db.execute(select(Video.video_id, Video.description).where(Video.video_id.in_(ids))).tuples().all())
@@ -382,6 +416,7 @@ def _record_playlist(db: Session, playlist_id: str, content: bytes, channel_attr
             )
             known.add(e.video_id)
     db.flush()
+    _mark_feed_shorts(db, entries)
 
     new = 0
     for e in entries:

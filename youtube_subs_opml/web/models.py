@@ -212,7 +212,10 @@ class VideoShort(Base):
     """Permanent cache of whether a video id is a YouTube Short.
 
     A video's Short-ness never changes, so rows are written once and never
-    expire. Populated lazily by the feed proxy when filtering Shorts.
+    expire. Shorts the poller sees linked as ``/shorts/`` on a feed are
+    recorded straight away; the rest of the recent uploads of channels that
+    hide Shorts are probed after each poll (``services.shorts.classify_recent``),
+    and the feed proxy probes whatever it finds still missing.
     """
 
     __tablename__ = "video_shorts"

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, union
 from sqlalchemy.orm import Session
 
-from ..models import VideoShort
+from ..models import Category, ChannelCategory, PlaylistVideo, Subscription, User, Video, VideoShort
 
 logger = logging.getLogger(__name__)
 
@@ -80,3 +81,61 @@ def classify_videos(video_ids: list[str], db: Session) -> dict[str, bool]:
         db.commit()
 
     return result
+
+
+def channels_hiding_shorts(db: Session) -> set[str]:
+    """Ids of the channels and playlists some follower hides Shorts from.
+
+    Placement by placement, as the Watch tab applies the preferences: a
+    channel in two categories hides its Shorts for a follower if either
+    category does.
+    """
+    users = {u.id: u.include_shorts for u in db.execute(select(User)).scalars()}
+    cat_prefs: dict[tuple[int, str], list[bool | None]] = {}
+    for user_id, channel_id, pref in db.execute(
+        select(ChannelCategory.user_id, ChannelCategory.channel_id, Category.include_shorts).join(
+            Category, Category.id == ChannelCategory.category_id
+        )
+    ).tuples():
+        cat_prefs.setdefault((user_id, channel_id), []).append(pref)
+
+    hiding: set[str] = set()
+    for sub in db.execute(select(Subscription).where(Subscription.ignored.is_(False))).scalars():
+        if sub.channel_id in hiding or sub.user_id not in users:
+            continue
+        cats = cat_prefs.get((sub.user_id, sub.channel_id)) or [None]
+        if any(not resolve_include_shorts(sub.include_shorts, cat, users[sub.user_id]) for cat in cats):
+            hiding.add(sub.channel_id)
+    return hiding
+
+
+def classify_recent(db: Session, since: datetime, limit: int = 200) -> int:
+    """Probe the unclassified videos published since ``since`` on channels and
+    playlists that some follower hides Shorts from, newest first, at most
+    ``limit`` of them. Returns how many turned out to be Shorts.
+
+    The Watch tab, channel pages and search only consult ``video_shorts`` and
+    show what isn't in it, so this is what keeps Shorts the feed didn't link as
+    such off them. Runs after each poll; whatever is over ``limit`` waits for
+    the next one, and an inconclusive probe is retried then too.
+    """
+    sources = channels_hiding_shorts(db)
+    if not sources:
+        return 0
+    unclassified = Video.video_id.not_in(select(VideoShort.video_id))
+    recent = Video.published_at >= since
+    candidates = union(
+        select(Video.video_id, Video.published_at).where(Video.channel_id.in_(sources), recent, unclassified),
+        select(Video.video_id, Video.published_at)
+        .join(PlaylistVideo, PlaylistVideo.video_id == Video.video_id)
+        .where(PlaylistVideo.playlist_id.in_(sources), recent, unclassified),
+    ).subquery()
+    ids = list(
+        db.execute(select(candidates.c.video_id).order_by(candidates.c.published_at.desc()).limit(limit)).scalars()
+    )
+    if not ids:
+        return 0
+    verdicts = classify_videos(ids, db)
+    found = sum(1 for v in ids if verdicts.get(v))
+    logger.info("Classified %d recent videos, %d of them Shorts", len(verdicts), found)
+    return found

@@ -49,12 +49,22 @@ def poll_videos() -> None:
     not media. The actual downloading runs in a separate container.
     """
     from .poller import poll_all_channels
+    from .shorts import classify_recent
+    from .watch import WINDOW
 
     db = get_session_factory()()
     try:
         poll_all_channels(db)
     except Exception:
         logger.exception("Video poll failed")
+        db.rollback()
+    # Then classify what's new, so the Watch tab can hide Shorts the feed
+    # didn't mark as such. A separate step: a failed poll still leaves earlier
+    # uploads to classify.
+    try:
+        classify_recent(db, since=datetime.now(UTC) - WINDOW)
+    except Exception:
+        logger.exception("Shorts classification failed")
         db.rollback()
     finally:
         db.close()
