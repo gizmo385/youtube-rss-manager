@@ -3,7 +3,7 @@
 
    A video here is the JSON shape built by services/watch.py: {key, videoId,
    title, channel, published, duration, url, thumb, nebula, archived,
-   jellyfin, watched, progress}. */
+   jellyfin, short, watched, progress}. */
 window.Watch = (function () {
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -586,6 +586,17 @@ window.Watch = (function () {
   // one this browser won't play (see play).
   var LOAD_TIMEOUT_MS = 15000;
 
+  // Vertical videos get a stage of their own shape rather than a 16:9 box
+  // (style.css, .w-player.portrait). YouTube's embed can't say what shape its
+  // video is, so a Short is taken as 9:16; an archived file says once it loads.
+  function setShape(w, h) {
+    var p = overlay.querySelector('.w-player');
+    var portrait = !!(w && h && h > w);
+    p.classList.toggle('portrait', portrait);
+    p.style.setProperty('--arw', portrait ? w : 16);
+    p.style.setProperty('--arh', portrait ? h : 9);
+  }
+
   // Play ``v``, from its resume point unless ``o.fromStart``. ``o.source``
   // forces 'file' or 'youtube' (``o.fellBack`` saying why it's YouTube's);
   // ``o.onClose`` runs when the player is
@@ -604,6 +615,7 @@ window.Watch = (function () {
     curSource = source;
     fellBack = source === 'youtube' && !!o.fellBack;
     resumedAt = o.fromStart ? 0 : resumeAt(v);
+    if (v.short) setShape(9, 16); else setShape(0, 0);
     var t;
 
     if (source === 'file') {
@@ -624,6 +636,7 @@ window.Watch = (function () {
         // A container the browser opens but a video codec it can't decode
         // plays as sound over black, which is no better than an error.
         if (!video.videoWidth) { if (track === t) fallBack(v); return; }
+        if (track === t) setShape(video.videoWidth, video.videoHeight);
         if (resumedAt) video.currentTime = resumedAt;
       }, {once: true});
       t = startTracking(v, function () { return video.currentTime; }, function () { return video.duration; },

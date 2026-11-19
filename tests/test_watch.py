@@ -123,6 +123,14 @@ def test_known_shorts_follow_the_category_cascade(sessionmaker_):
     assert by_key["a_short"]["cats"] == ["c8"]
 
 
+def test_shorts_are_flagged_for_the_player(sessionmaker_):
+    # The player sizes a Short as a vertical video, since YouTube's embed can't say.
+    by_key = {v["key"]: v for v in _feed(sessionmaker_)["videos"]}
+    assert by_key["a_short"]["short"] is True
+    assert by_key["a_new"]["short"] is False
+    assert by_key["nebula:tomscott-recent"]["short"] is False
+
+
 def test_archived_video_links_to_jellyfin(sessionmaker_):
     by_key = {v["key"]: v for v in _feed(sessionmaker_)["videos"]}
     assert by_key["b_arch"]["jellyfin"] is True
