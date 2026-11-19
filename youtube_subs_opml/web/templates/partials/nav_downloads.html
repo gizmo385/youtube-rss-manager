@@ -1,0 +1,7 @@
+{# The Downloads nav link and its failure badge. Its own partial so the
+   retry / dismiss endpoints can swap it out-of-band (oob) and the badge
+   clears without a reload. #}
+{% set failed = stats.failed if stats is defined and stats else 0 %}
+<a href="/settings?tab=downloads{% if failed %}&amp;status=failed{% endif %}" id="nav-downloads"{% if oob_nav %} hx-swap-oob="true"{% endif %}
+   class="nav-link{% if active_nav == 'downloads' %} active{% endif %}"{% if failed %}
+   aria-label="Downloads, {{ failed }} failed" title="{{ failed }} download{{ '' if failed == 1 else 's' }} failed"{% endif %}><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><path d="M12 4v11"></path><path d="m7 11 5 5 5-5"></path><path d="M4 20h16"></path></svg>Downloads{% if failed %}<span class="nav-badge">{{ failed }}</span>{% endif %}</a>

@@ -450,7 +450,7 @@
   <section class="card span-all">
     <div class="card-head">
       <h2 class="card-title">Download history</h2>
-      <span class="card-note">Everything the archive has seen — filter, page, and retry failures</span>
+      <span class="card-note">Everything the archive has seen — filter, page, and retry or dismiss failures</span>
     </div>
     <div class="card-body">
       {% if dl == 'retried' %}
@@ -459,6 +459,12 @@
       <p class="status-inline" role="status" style="margin:0 0 10px"><span class="dot"></span>Nothing recoverable to retry.</p>
       {% elif dl == 'notfound' %}
       <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>That download couldn't be requeued.</p>
+      {% elif dl == 'dismissed' %}
+      <p class="status-inline ok" role="status" style="margin:0 0 10px"><span class="dot"></span>Dismissed {{ dl_n }} failed download{{ '' if dl_n == 1 else 's' }}.</p>
+      {% elif dl == 'nofailed' %}
+      <p class="status-inline" role="status" style="margin:0 0 10px"><span class="dot"></span>No failed downloads to dismiss.</p>
+      {% elif dl == 'notdismissed' %}
+      <p class="status-inline fail" role="alert" style="margin:0 0 10px"><span class="dot"></span>That download couldn't be dismissed.</p>
       {% endif %}
 
       {% include "partials/downloads_summary.html" %}

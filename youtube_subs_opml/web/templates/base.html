@@ -53,11 +53,8 @@
       <a href="/categories" class="nav-link{% if active_nav == 'categories' %} active{% endif %}"><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>Categories</a>
       <a href="/channels/board" class="nav-link nav-desktop{% if active_nav == 'board' %} active{% endif %}">Board</a>
       {# Failures surface here on every page; the badge lands on the list
-         already filtered to them, where each one can be retried. #}
-      {% set failed = stats.failed if stats is defined and stats else 0 %}
-      <a href="/settings?tab=downloads{% if failed %}&amp;status=failed{% endif %}" id="nav-downloads"
-         class="nav-link{% if active_nav == 'downloads' %} active{% endif %}"{% if failed %}
-         aria-label="Downloads, {{ failed }} failed" title="{{ failed }} download{{ '' if failed == 1 else 's' }} failed"{% endif %}><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><path d="M12 4v11"></path><path d="m7 11 5 5 5-5"></path><path d="M4 20h16"></path></svg>Downloads{% if failed %}<span class="nav-badge">{{ failed }}</span>{% endif %}</a>
+         already filtered to them, where each one can be retried or dismissed. #}
+      {% include "partials/nav_downloads.html" %}
       <a href="/settings" id="nav-settings" class="nav-link{% if active_nav == 'settings' %} active{% endif %}"><svg class="nav-ico" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="round"><path d="M4 7h10"></path><path d="M18 7h2"></path><rect x="14" y="5" width="4" height="4"></rect><path d="M4 17h2"></path><path d="M10 17h10"></path><rect x="6" y="15" width="4" height="4"></rect></svg>Settings</a>
       <button type="button" class="qs-trigger" onclick="qsOpen()" aria-label="Open quick switcher">
         <span>Jump to…</span><kbd class="qs-kbd">⌘K</kbd>

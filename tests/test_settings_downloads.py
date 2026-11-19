@@ -363,3 +363,118 @@ def test_htmx_retry_all_returns_refresh_partial(app_db):
     with Session() as db:
         assert db.get(Download, "vfailed00001").status == "pending"
         assert db.get(Download, "vunavail0001").status == "pending"
+
+
+# --- dismissing failures -------------------------------------------------
+
+
+def test_dismiss_one_parks_failure_as_dismissed_skip(app_db):
+    _client, Session = app_db
+    with Session() as db:
+        assert downloads.dismiss_one(db, USER_ID, "vfailed00001") is True
+        row = db.get(Download, "vfailed00001")
+        assert row.status == "skipped"
+        assert row.skip_reason == "dismissed"
+        # The history still says what went wrong.
+        assert row.last_error == "boom"
+        assert row.attempts == 5
+        # No longer a failure, and not swept up by "retry all recoverable".
+        assert downloads.status_counts(db, USER_ID).get("failed", 0) == 0
+        assert downloads.recoverable_count(db, USER_ID) == 1  # just vunavail
+
+
+def test_dismiss_one_only_takes_scoped_failures(app_db):
+    _client, Session = app_db
+    with Session() as db:
+        assert downloads.dismiss_one(db, USER_ID, "vother000001") is False
+        assert downloads.dismiss_one(db, USER_ID, "vignored0001") is False
+        assert downloads.dismiss_one(db, USER_ID, "vunavail0001") is False
+        assert downloads.dismiss_one(db, USER_ID, "vpending0001") is False
+        assert db.get(Download, "vother000001").status == "failed"
+        assert db.get(Download, "vunavail0001").skip_reason == "unavailable"
+        assert db.get(Download, "vpending0001").status == "pending"
+
+
+def test_dismissed_download_can_still_be_retried(app_db):
+    _client, Session = app_db
+    with Session() as db:
+        downloads.dismiss_one(db, USER_ID, "vfailed00001")
+        assert downloads.retry_one(db, USER_ID, "vfailed00001") is True
+        row = db.get(Download, "vfailed00001")
+        assert row.status == "pending" and row.skip_reason is None
+
+
+def test_dismiss_all_failed(app_db):
+    _client, Session = app_db
+    with Session() as db:
+        db.add(Video(video_id="vfailed00002", channel_id=SUB, title="Another"))
+        db.add(Download(video_id="vfailed00002", status="failed"))
+        db.commit()
+        assert downloads.dismiss_all_failed(db, USER_ID) == 2
+        assert db.get(Download, "vfailed00002").skip_reason == "dismissed"
+        # Out-of-scope failures are untouched.
+        assert db.get(Download, "vother000001").status == "failed"
+        assert db.get(Download, "vignored0001").status == "failed"
+        assert downloads.dismiss_all_failed(db, USER_ID) == 0
+
+
+def test_shell_stats_failed_ignores_ignored_channels(app_db):
+    from youtube_subs_opml.web.services.stats import shell_stats
+
+    _client, Session = app_db
+    with Session() as db:
+        user = db.get(User, USER_ID)
+        # vignored0001 failed in an ignored channel the Downloads tab can't
+        # show, so it mustn't badge the nav.
+        assert shell_stats(user, db)["failed"] == 1
+        downloads.dismiss_one(db, USER_ID, "vfailed00001")
+        assert shell_stats(user, db)["failed"] == 0
+
+
+def test_table_offers_dismiss_on_failures_only(app_db):
+    client, _Session = app_db
+    html = client.get("/settings/downloads/table").text
+    assert "/settings/downloads/vfailed00001/dismiss" in html
+    assert "/settings/downloads/vunavail0001/dismiss" not in html
+    page = client.get("/settings?tab=downloads").text
+    assert "Dismiss all failed (1)" in page
+
+
+def test_dismiss_route_redirects(app_db):
+    client, _Session = app_db
+    resp = client.post("/settings/downloads/vfailed00001/dismiss", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "dl=dismissed&dl_n=1" in resp.headers["location"]
+    resp = client.post("/settings/downloads/vother000001/dismiss", follow_redirects=False)
+    assert "dl=notdismissed" in resp.headers["location"]
+    resp = client.post("/settings/downloads/dismiss-all", follow_redirects=False)
+    assert "dl=nofailed" in resp.headers["location"]
+    page = client.get("/settings?tab=downloads&dl=dismissed&dl_n=1").text
+    assert "Dismissed 1 failed download." in page
+
+
+def test_htmx_dismiss_clears_nav_badge(app_db):
+    client, Session = app_db
+    assert 'class="nav-badge">1<' in client.get("/settings").text
+    resp = client.post(
+        "/settings/downloads/vfailed00001/dismiss",
+        headers={"HX-Request": "true"},
+        data={"page": "1"},
+    )
+    assert resp.status_code == 200
+    # The nav link comes back out-of-band, now without a badge.
+    assert 'id="nav-downloads" hx-swap-oob="true"' in resp.text
+    assert "nav-badge" not in resp.text
+    assert "Dismiss all failed" not in resp.text
+    assert "Dismissed" in resp.text  # the row's new label
+    with Session() as db:
+        assert db.get(Download, "vfailed00001").skip_reason == "dismissed"
+
+
+def test_htmx_dismiss_all(app_db):
+    client, Session = app_db
+    resp = client.post("/settings/downloads/dismiss-all", headers={"HX-Request": "true"}, data={"page": "1"})
+    assert resp.status_code == 200
+    assert "nav-badge" not in resp.text
+    with Session() as db:
+        assert db.get(Download, "vfailed00001").skip_reason == "dismissed"
