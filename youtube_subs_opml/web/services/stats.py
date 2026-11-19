@@ -36,20 +36,32 @@ def shell_stats(user: User, db: Session) -> dict:
 
     categories = db.execute(select(func.count()).select_from(Category).where(Category.user_id == user.id)).scalar_one()
 
-    # Downloads are global; scope disk + failures to this user's subscriptions.
-    status_rows = db.execute(
-        select(Download.status, func.count(), func.coalesce(func.sum(Download.file_size_bytes), 0))
-        .where(Download.video_id.in_(followed_video_ids(user.id, include_ignored=True)))
-        .group_by(Download.status)
-    ).all()
-
-    archived_bytes = sum(size for status, _, size in status_rows if status == "complete")
-    failed = sum(count for status, count, _ in status_rows if status == "failed")
+    # Downloads are global; scope disk to every subscription, ignored or not.
+    archived_bytes: int = (
+        db.execute(
+            select(func.sum(Download.file_size_bytes)).where(
+                Download.status == "complete",
+                Download.video_id.in_(followed_video_ids(user.id, include_ignored=True)),
+            )
+        ).scalar_one()
+        or 0
+    )
+    # Failures, though, only count where the Downloads tab can show them (and
+    # so retry or dismiss them): a failure in an ignored channel would otherwise
+    # badge the nav with nothing the user can act on.
+    failed = db.execute(
+        select(func.count())
+        .select_from(Download)
+        .where(
+            Download.status == "failed",
+            Download.video_id.in_(followed_video_ids(user.id)),
+        )
+    ).scalar_one()
 
     return {
         "channels": channels,
         "categories": categories,
-        "archived_bytes": int(archived_bytes),
-        "archived_human": format_bytes(int(archived_bytes)),
+        "archived_bytes": archived_bytes,
+        "archived_human": format_bytes(archived_bytes),
         "failed": failed,
     }
