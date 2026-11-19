@@ -200,14 +200,23 @@ def _resumable_elsewhere(
 
 def _annotate(user: User, db: Session, videos: list[dict]) -> None:
     """Add per-user state in place: ``archived``, ``watched``, ``progress``
-    (the resume point, or None), and — for archived copies in the user's
+    (the resume point, or None), ``short`` (classified as a Short, which the
+    player sizes as a vertical video), and — for archived copies in the user's
     Jellyfin library — ``jellyfin`` with ``url`` pointing there instead of
     YouTube."""
     yt_video_ids = [v["video_id"] for v in videos if v["video_id"]]
 
     archived: set[str] = set()
+    shorts: set[str] = set()
     items: dict[str, str] = {}
     if yt_video_ids:
+        shorts = set(
+            db.execute(
+                select(VideoShort.video_id).where(VideoShort.video_id.in_(yt_video_ids), VideoShort.is_short.is_(True))
+            )
+            .scalars()
+            .all()
+        )
         archived = set(
             db.execute(
                 select(Download.video_id).where(Download.video_id.in_(yt_video_ids), Download.status == "complete")
@@ -260,6 +269,7 @@ def _annotate(user: User, db: Session, videos: list[dict]) -> None:
         if item_id and account:
             v["url"] = jellyfin_deep_link(account.base_url, item_id)
         v["archived"] = v["video_id"] in archived
+        v["short"] = v["video_id"] in shorts
         v["watched"] = v["key"] in watched
         p = progress.get(v["key"])
         v["progress"] = (
@@ -279,6 +289,7 @@ def _client_video(v: dict, channel: Channel) -> dict:
         "nebula": channel.platform == nebula.PLATFORM,
         "jellyfin": v["jellyfin"],
         "archived": v["archived"],
+        "short": v["short"],
         "videoId": v["video_id"],
         "published": v["published"].isoformat(),
         "duration": v["duration"],

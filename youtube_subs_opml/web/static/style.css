@@ -2060,6 +2060,37 @@ section.focused > * > .w-sec-hint { display: inline; }
 .watch.theater.rail-hidden .w-player {
   width: min(100%, calc((100vh - var(--header-h) - var(--subbar-h) - 130px) * 16 / 9));
 }
+/* Vertical videos (.portrait, set by watch.js from the video's shape, or
+   9:16 for a Short): the stage takes the video's own shape instead of a 16:9
+   box. Where there's room the details move into a column beside it, so the
+   video can have the full height; where there isn't (phones) they stay
+   underneath, and the video fills the width and grows as tall as the screen
+   allows, leaving the title showing below it. Sizes come from the space the
+   player has, the overlay or the theater pane, as a container. */
+.w-player-overlay { container: player / size; }
+.w-player.portrait { --below: 0px; }
+.w-player.portrait:has(> .w-player-ch:not(:empty)) { --below: 22px; }
+.w-player.portrait:has(> .w-player-sb:not(:empty)) { --below: 4px; }
+.w-player.portrait:has(> .w-player-ch:not(:empty)):has(> .w-player-sb:not(:empty)) { --below: 26px; }
+.w-player.portrait .w-player-stage { aspect-ratio: var(--arw) / var(--arh); max-height: calc(100cqh - 150px); }
+@container player (min-width: 640px) {
+  .w-player.portrait {
+    width: auto; display: grid; grid-template-columns: auto minmax(280px, 420px);
+    align-items: start; justify-content: center;
+  }
+  .w-player.portrait > :not(.w-player-info) { grid-column: 1; }
+  .w-player.portrait .w-player-info { grid-column: 2; grid-row: 1 / span 3; padding: 20px 22px; }
+  /* As tall as the space allows, unless that would leave the details too
+     narrow a column. */
+  .w-player.portrait .w-player-stage {
+    max-height: none;
+    height: min(calc(100cqh - 2px - var(--below)), calc((100cqw - 302px) * var(--arh) / var(--arw)));
+  }
+  .w-player.portrait .w-pspacer { flex-basis: 100%; }
+}
+.watch.theater .w-player.portrait { width: 100%; min-width: 0; }
+.watch.theater .w-player.portrait .w-player-info { padding: 0 0 0 28px; }
+
 .w-rail-head {
   display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 6px; cursor: pointer;
   background: var(--panel-3); border-bottom: 1px solid var(--line-2); border-left: 2px solid transparent;
