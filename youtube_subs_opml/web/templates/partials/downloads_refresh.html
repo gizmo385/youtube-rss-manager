@@ -1,5 +1,8 @@
-{# Retry response: swap the table in place (hx-target) and update the summary
-   tiles + retry-all count out-of-band. #}
+{# Retry / dismiss response: swap the table in place (hx-target) and update
+   the summary tiles + retry-all / dismiss-all counts and the nav's failure
+   badge out-of-band. #}
 {% include "partials/downloads_table.html" %}
 {% set oob = true %}
 {% include "partials/downloads_summary.html" %}
+{% set oob_nav = true %}
+{% include "partials/nav_downloads.html" %}

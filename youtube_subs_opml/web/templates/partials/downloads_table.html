@@ -1,6 +1,6 @@
 {# Inner content of #downloads-table: results meta, the table, and the pager.
-   The hidden page field travels with retry requests (hx-include) so a retry
-   re-renders the same page the user was on. #}
+   The hidden page field travels with retry / dismiss requests (hx-include) so
+   they re-render the same page the user was on. #}
 <input type="hidden" id="dl-page" name="page" value="{{ page }}">
 {% if rows %}
 <div class="dtable-meta">Showing {{ start }}–{{ end }} of {{ total }}</div>
@@ -25,7 +25,7 @@
         </td>
         <td>
           {% if p.status == 'failed' %}
-          <span class="dl-pill fail" title="The download failed; retry to requeue it.">Failed</span>
+          <span class="dl-pill fail" title="The download failed; retry to requeue it, or dismiss it.">Failed</span>
           {% elif p.status == 'skipped' %}
           <span class="dl-pill" title="Skipped — {{ SKIP_REASON_HELP.get(p.skip_reason, 'not downloaded.') }}">{{ SKIP_REASON_LABELS.get(p.skip_reason, 'Skipped') }}</span>
           {% elif p.status == 'complete' %}
@@ -51,6 +51,13 @@
                   hx-post="/settings/downloads/{{ p.video_id }}/retry"
                   hx-target="#downloads-table" hx-swap="innerHTML" hx-include="#dl-filters, #dl-page">
               <button type="submit" class="btn btn-sm">Retry</button>
+            </form>
+            {% endif %}
+            {% if p.status == 'failed' %}
+            <form method="post" action="/settings/downloads/{{ p.video_id }}/dismiss"
+                  hx-post="/settings/downloads/{{ p.video_id }}/dismiss"
+                  hx-target="#downloads-table" hx-swap="innerHTML" hx-include="#dl-filters, #dl-page">
+              <button type="submit" class="btn btn-sm btn-ghost" title="Stop counting this as a failure. It stays in the history and can still be retried.">Dismiss</button>
             </form>
             {% endif %}
           </div>

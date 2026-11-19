@@ -27,6 +27,7 @@ from ..services.prefs import (
     parse_link_target,
     parse_required_int,
 )
+from ..services.stats import shell_stats
 from ..services.sync import sync_account
 from ..services.themes import AUTO_THEME, THEMES, parse_theme
 from ..templating import templates
@@ -117,8 +118,6 @@ def settings_page(
 
     jellyfin = db.execute(select(JellyfinAccount).where(JellyfinAccount.user_id == user.id)).scalar_one_or_none()
     freshrss = db.execute(select(FreshRssAccount).where(FreshRssAccount.user_id == user.id)).scalar_one_or_none()
-
-    from ..services.stats import shell_stats
 
     settings = get_settings()
     # The subtree an admin points this user's Jellyfin library at. The relative
@@ -470,15 +469,18 @@ def downloads_table(
 def _retry_response(request: Request, db: Session, user: User, form: FormData, *, dl: str, dl_n: int):
     """Refresh the table + summary in place for htmx; redirect otherwise.
 
-    Retry buttons send the current filters and page (via hx-include), so the
-    table re-renders on the same page the user was looking at, and the summary
-    (which drives the stat tiles and the 'retry all' count) is swapped
-    out-of-band so it stays in sync.
+    Retry and dismiss buttons send the current filters and page (via
+    hx-include), so the table re-renders on the same page the user was looking
+    at, and the summary (which drives the stat tiles and the 'retry all' /
+    'dismiss all' counts) and the nav's failure badge are swapped out-of-band
+    so they stay in sync.
     """
     if request.headers.get("HX-Request"):
         ctx = _table_context(db, user, form)
         ctx["download_counts"] = downloads_service.status_counts(db, user.id)
         ctx["recoverable"] = downloads_service.recoverable_count(db, user.id)
+        ctx["stats"] = shell_stats(user, db)
+        ctx["active_nav"] = "downloads"
         return templates.TemplateResponse(request, "partials/downloads_refresh.html", ctx)
     return RedirectResponse(f"/settings?tab=downloads&dl={dl}&dl_n={dl_n}", status_code=303)
 
@@ -513,6 +515,38 @@ async def retry_all_downloads(
     n = downloads_service.retry_all_recoverable(db, user.id)
     form = await request.form()
     return _retry_response(request, db, user, form, dl="retried" if n else "none", dl_n=n)
+
+
+@router.post("/settings/downloads/{video_id}/dismiss")
+async def dismiss_download(
+    video_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Dismiss a single failed download so it stops counting as a failure."""
+    ok = downloads_service.dismiss_one(db, user.id, video_id)
+    form = await request.form()
+    return _retry_response(
+        request,
+        db,
+        user,
+        form,
+        dl="dismissed" if ok else "notdismissed",
+        dl_n=1 if ok else 0,
+    )
+
+
+@router.post("/settings/downloads/dismiss-all")
+async def dismiss_all_downloads(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Dismiss every failed download for this user."""
+    n = downloads_service.dismiss_all_failed(db, user.id)
+    form = await request.form()
+    return _retry_response(request, db, user, form, dl="dismissed" if n else "nofailed", dl_n=n)
 
 
 @router.post("/settings/opml-token/rotate")

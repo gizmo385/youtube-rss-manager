@@ -7,6 +7,12 @@ ever sees, or can retry, a download in a channel or playlist they follow.
 "Retry" just resets a terminal row back to ``pending`` (clearing the attempt
 count, backoff, skip reason and last error); the downloader worker claims
 pending rows on its next pass, so nothing else needs poking.
+
+"Dismiss" is the opposite: the user has seen a failure and doesn't want it
+nagging any more. The row is parked as ``skipped`` with reason ``dismissed``,
+so it drops out of the failure counts (the nav badge, the channel list badge,
+the Failed tile) and the worker never picks it up again on its own. It stays
+in the history under that label and can still be retried later.
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ SKIP_REASON_LABELS: dict[str, str] = {
     "geo_blocked": "Region-blocked",
     "no_subscribers": "Not wanted",
     "short": "Short",
+    "dismissed": "Dismissed",
 }
 SKIP_REASON_HELP: dict[str, str] = {
     "too_long": "Longer than the max-duration cap set for this channel.",
@@ -51,7 +58,11 @@ SKIP_REASON_HELP: dict[str, str] = {
     "geo_blocked": "Not available in this server's region.",
     "no_subscribers": "No subscriber currently has archiving enabled for this channel.",
     "short": "A YouTube Short, excluded from the archive for this channel.",
+    "dismissed": "The download failed and was dismissed. Retry it to try again.",
 }
+
+# The skip reason a dismissed failure is parked under.
+DISMISSED = "dismissed"
 
 # Rows per page in the download-history table.
 PER_PAGE = 25
@@ -264,6 +275,38 @@ def retry_all_recoverable(db: Session, user_id: int) -> int:
     )
     for download in rows:
         _reset(download)
+    if rows:
+        db.commit()
+    return len(rows)
+
+
+def _dismiss(download: Download) -> None:
+    """Park a failed row as a dismissed skip. ``last_error`` and ``attempts``
+    are kept so the history still says what went wrong."""
+    download.status = "skipped"
+    download.skip_reason = DISMISSED
+    download.next_attempt_at = None
+
+
+def dismiss_one(db: Session, user_id: int, video_id: str) -> bool:
+    """Dismiss a single failed download. Returns False if not eligible.
+
+    Scoped like :func:`retry_one`, and only ``failed`` rows qualify: there's
+    nothing to dismiss about a skip, and a queued or running row isn't done.
+    """
+    download = db.execute(_visible(user_id).where(Download.video_id == video_id)).scalar_one_or_none()
+    if download is None or download.status != "failed":
+        return False
+    _dismiss(download)
+    db.commit()
+    return True
+
+
+def dismiss_all_failed(db: Session, user_id: int) -> int:
+    """Dismiss every failed download in the user's scope. Returns how many."""
+    rows = db.execute(_visible(user_id).where(Download.status == "failed")).scalars().all()
+    for download in rows:
+        _dismiss(download)
     if rows:
         db.commit()
     return len(rows)
