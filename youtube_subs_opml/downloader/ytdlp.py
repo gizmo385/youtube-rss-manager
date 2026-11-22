@@ -5,8 +5,9 @@ is fetched. ``--dump-json --skip-download`` hits the same extraction path the
 real download would, so a successful probe is also a decent signal the download
 will work.
 
-The YouTube Data API is deliberately not used for duration: it costs quota, and
-the RSS feed doesn't carry it. yt-dlp is already a dependency here.
+The probe's duration is the one the length limits are checked against, even
+where the web app already filled one in from the Data API (services.durations):
+it's what yt-dlp will actually download.
 
 Note that the app's existing YouTube OAuth tokens are useless to yt-dlp — a
 completely different auth mechanism. Don't try to reuse them. If cookies become

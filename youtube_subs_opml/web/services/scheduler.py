@@ -66,6 +66,18 @@ def poll_videos() -> None:
     except Exception:
         logger.exception("Shorts classification failed")
         db.rollback()
+    # And look up the length of what's new (and some of the backlog), which
+    # the feed doesn't carry.
+    try:
+        import httpx
+
+        from .durations import fill_durations
+
+        with httpx.Client(timeout=30.0) as client:
+            fill_durations(db, get_settings(), client)
+    except Exception:
+        logger.exception("Video length lookup failed")
+        db.rollback()
     finally:
         db.close()
 

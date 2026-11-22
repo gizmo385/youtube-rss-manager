@@ -264,8 +264,9 @@ class Video(Base):
     )
     title: Mapped[str] = mapped_column(String(512), server_default="")
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    # Filled in by the downloader's metadata probe, not by the poller: the RSS
-    # feed doesn't carry duration. NULL means "not probed yet".
+    # The RSS feed doesn't carry duration: filled in from the Data API after
+    # each poll (services.durations, when an API key is set), and overwritten
+    # by the downloader's metadata probe. NULL means "not known yet".
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # From the feed's media:description (kept up to date while the video is
     # on it), the history backfill or the probe; surfaced as podcast episode
