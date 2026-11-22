@@ -56,13 +56,21 @@ window.Watch = (function () {
           (v.watched ? '<span class="w-watched-tag">Watched</span>' : '') + '</div>' +
         progressBar(v) +
       '</div>' +
-      '<div class="w-card-body"><div class="w-card-text">' +
+      '<div class="w-card-foot">' + body(watchBtn(v)) +
+        // An invisible copy, clamped, that holds the foot at its usual height
+        // while the real body grows up over the thumbnail to show the whole
+        // title (on hover or J/K selection). No button in it, so lookups and
+        // clicks only ever find the real one.
+        body('<span class="w-check-ph"></span>', true) + '</div></a>';
+    function body(btn, ghost) {
+      return '<div class="w-card-body' + (ghost ? ' w-card-ghost" aria-hidden="true' : '') + '"><div class="w-card-text">' +
         '<div class="w-title">' + esc(v.title) + '</div>' +
         '<div class="w-meta">' + (v.watched ? '' : '<span class="dot"></span>') +
           (showChannel ? '<span class="w-meta-ch">' + esc(v.channel) + '</span><span>·</span>' : '') +
           '<span class="nowrap">' + ago(v) + '</span>' +
           (!v.watched && v.progress ? '<span>·</span><span class="nowrap w-meta-prog">In progress</span>' : '') + '</div>' +
-      '</div>' + watchBtn(v) + '</div></a>';
+      '</div>' + btn + '</div>';
+    }
   }
 
   // Save watched state; resolves on success, rejects on failure.

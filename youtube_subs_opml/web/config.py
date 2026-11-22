@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     # so the default covers ~100,000 videos a day and leaves most of the
     # 10,000/day quota for the fallback above. Needs youtube_api_key; 0 disables.
     youtube_backfill_daily_units: int = Field(2000)
+    # Quota units a day spent looking up the length of videos the downloader
+    # hasn't probed (the RSS feed doesn't carry it): 1 unit per 50 videos, so new
+    # uploads cost a unit or two a day and the default drains a large backlog
+    # (backfilled history included) at ~25,000 videos a day. Needs
+    # youtube_api_key; 0 disables.
+    youtube_duration_daily_units: int = Field(500)
     # Keep this at 1. Concurrent downloads from one IP are the fastest route to
     # "Sign in to confirm you're not a bot".
     download_concurrency: int = Field(1)

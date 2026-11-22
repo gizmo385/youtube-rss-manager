@@ -69,7 +69,7 @@ Authentication can either be managed via:
 2. Set the authorized redirect URI to `<BASE_URL>/auth/youtube/callback`.
 3. Enable the **YouTube Data API v3** on the same project.
 4. Set the OAuth consent screen's publishing status to **In production**. In Testing mode, Google expires refresh tokens after 7 days, so connected accounts stop syncing weekly until reconnected. The `youtube.readonly` scope is "sensitive", so an unverified app shows a "Google hasn't verified this app" warning when connecting and is capped at 100 users. Neither matters for household use, and no verification review is needed.
-5. Optionally, create an **API key** restricted to the YouTube Data API v3 and set it as `YOUTUBE_API_KEY`. When YouTube's RSS feeds fail (they sometimes 404 every request from a server for hours), the poller reads a channel's recent uploads from the API instead, at most once per channel per `YOUTUBE_API_FALLBACK_INTERVAL_MINUTES`. While most feeds are failing, the poller stops retrying them and falls back after one request, until feeds work again.
+5. Optionally, create an **API key** restricted to the YouTube Data API v3 and set it as `YOUTUBE_API_KEY`. When YouTube's RSS feeds fail (they sometimes 404 every request from a server for hours), the poller reads a channel's recent uploads from the API instead, at most once per channel per `YOUTUBE_API_FALLBACK_INTERVAL_MINUTES`. While most feeds are failing, the poller stops retrying them and falls back after one request, until feeds work again. The key is also used to look up the length of videos that haven't been archived (the RSS feed doesn't include it), for the Watch tab: 1 quota unit per 50 videos, within `YOUTUBE_DURATION_DAILY_UNITS`.
 
 ### 2. Configure environment
 
@@ -92,6 +92,7 @@ If you're using auth via an OIDC provider, fill in the values:
 | `YOUTUBE_CLIENT_SECRET` | Google OAuth client secret |
 | `YOUTUBE_API_KEY` | Optional. Data API key used when a channel's RSS feed fails |
 | `YOUTUBE_API_FALLBACK_INTERVAL_MINUTES` | Optional. Minimum minutes between API fallbacks per channel (default 30; each costs 1 of the 10,000/day quota units) |
+| `YOUTUBE_DURATION_DAILY_UNITS` | Optional. Quota units a day for looking up video lengths (default 500, each covering 50 videos; 0 disables) |
 
 
 If you're only planning on using the local setup and don't require OIDC or YouTube client support,

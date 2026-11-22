@@ -1763,6 +1763,21 @@ section.focused > * > .w-sec-hint { display: inline; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .w-card.watched .w-title { color: var(--muted-2); }
+/* Full titles: the foot stacks the real body on an invisible, clamped copy of
+   it (see Watch.card), so the copy sets the height. On hover or selection the
+   real body lifts out of flow, anchored to the bottom, and grows up over the
+   thumbnail to show the whole title, so neighbouring cards never move and
+   nothing spills into a scrolling shelf's overflow. */
+.w-card-foot { display: grid; position: relative; }
+.w-card-foot > .w-card-body { grid-area: 1 / 1; }
+.w-card-ghost { visibility: hidden; pointer-events: none; }
+.w-check-ph { flex-shrink: 0; width: 24px; height: 24px; }
+.w-card.sel .w-card-foot > .w-card-body:not(.w-card-ghost) { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; background: var(--panel); }
+.w-card.sel .w-card-body:not(.w-card-ghost) .w-title { display: block; overflow: visible; }
+@media (hover: hover) {
+  .w-card:hover .w-card-foot > .w-card-body:not(.w-card-ghost) { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; background: var(--panel); }
+  .w-card:hover .w-card-body:not(.w-card-ghost) .w-title { display: block; overflow: visible; }
+}
 .w-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11px; color: var(--muted-2); min-width: 0; }
 .w-meta-ch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nowrap { white-space: nowrap; }
@@ -1881,7 +1896,7 @@ section.focused > * > .w-sec-hint { display: inline; }
 
 /* Touch: the watched check is the one small target on a card. */
 @media (pointer: coarse) {
-  .w-check, .w-row .w-check { width: 32px; height: 32px; }
+  .w-check, .w-row .w-check, .w-check-ph { width: 32px; height: 32px; }
 }
 /* Touch screens wider than the phone layout (an iPad, or the installed app
    on a phone held sideways): no keyboard, so no shortcut hints, and no
