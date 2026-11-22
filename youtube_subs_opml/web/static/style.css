@@ -1768,7 +1768,7 @@ section.focused > * > .w-sec-hint { display: inline; }
    real body lifts out of flow, anchored to the bottom, and grows up over the
    thumbnail to show the whole title, so neighbouring cards never move and
    nothing spills into a scrolling shelf's overflow. */
-.w-card-foot { display: grid; position: relative; }
+.w-card-foot { display: grid; grid-template-columns: minmax(0, 1fr); position: relative; }
 .w-card-foot > .w-card-body { grid-area: 1 / 1; }
 .w-card-ghost { visibility: hidden; pointer-events: none; }
 .w-check-ph { flex-shrink: 0; width: 24px; height: 24px; }
