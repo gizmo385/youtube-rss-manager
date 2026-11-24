@@ -279,6 +279,11 @@ class Video(Base):
     # probed"; the player then parses them out of the description (see
     # services.chapters).
     chapters: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    # When the probe last read ``chapters``. A video probed straight after
+    # upload often has none yet (YouTube adds its auto-generated ones later),
+    # so the downloader looks again a few hours on (see
+    # downloader.worker.recheck_chapters). NULL means not known.
+    chapters_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Found other than on its channel's feed — by the history backfill, or on a
     # followed playlist's feed, which can turn up a channel's old uploads: there
     # for search and channel pages, but never archived (see services.archive).

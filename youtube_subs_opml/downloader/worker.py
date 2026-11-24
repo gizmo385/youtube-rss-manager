@@ -47,6 +47,7 @@ from ..web.services.archive import (
     user_retained_video_sources,
     video_intent,
 )
+from ..web.services.chapters import parse_description
 from ..web.services.prefs import is_within_duration_limit, meets_duration_floor
 from ..web.services.shorts import classify_videos
 from ..web.services.sources import sources_of, video_sources
@@ -58,6 +59,11 @@ _IDLE_SLEEP = 30.0
 # Rows stuck in 'downloading' longer than this are assumed orphaned by a crash.
 _STALE_CLAIM = timedelta(hours=6)
 _MAX_ATTEMPTS = 5
+# A video archived before it was this old is probed once more for chapters
+# when it gets there, if it hadn't any (see recheck_chapters)...
+_CHAPTER_RECHECK_AFTER = timedelta(hours=6)
+# ...unless it's older than this by the time the worker gets to it.
+_CHAPTER_RECHECK_UNTIL = timedelta(days=2)
 
 _shutdown = False
 
@@ -172,6 +178,81 @@ def reap_stale(db: Session) -> int:
     return len(stale)
 
 
+def _stored_chapters(meta: ytdlp.VideoMetadata) -> list[dict]:
+    """The probe's chapters, as ``Video.chapters`` keeps them."""
+    return [
+        {"start": c.get("start_time"), "end": c.get("end_time"), "title": c.get("title") or ""}
+        for c in meta.chapters
+        if isinstance(c.get("start_time"), int | float)
+    ]
+
+
+def _aware(dt: datetime) -> datetime:
+    # SQLite hands timestamps back without their zone; they're stored in UTC.
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def recheck_chapters(db: Session, *, now: datetime | None = None, limit: int = 5) -> int:
+    """Probe again for chapters a video didn't have when it was archived.
+
+    New uploads are archived within minutes, often before YouTube has
+    generated its chapters, and the probe was the only time we asked. So once
+    a video is ``_CHAPTER_RECHECK_AFTER`` old, one probed before then with no
+    chapters is probed once more. Ones whose description already has a
+    chapter list are left alone (the player reads those; see
+    services.chapters), and so are ones older than ``_CHAPTER_RECHECK_UNTIL``,
+    so a worker that was down for a while doesn't re-probe its whole archive.
+
+    One probe each at most, whatever it finds: a failed one isn't retried.
+    Returns the number that turned out to have chapters.
+    """
+    now = now or datetime.now(UTC)
+    rows = (
+        db.execute(
+            select(Video)
+            .where(
+                Video.chapters.is_not(None),
+                Video.published_at <= now - _CHAPTER_RECHECK_AFTER,
+                Video.published_at >= now - _CHAPTER_RECHECK_UNTIL,
+            )
+            .order_by(Video.published_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    todo = [
+        v
+        for v in rows
+        # [] is probed and found none; None (which the JSON type may store
+        # as a JSON null, so the query lets it through) is never probed.
+        if v.chapters == []
+        and v.published_at is not None
+        and (
+            v.chapters_checked_at is None
+            or _aware(v.chapters_checked_at) < _aware(v.published_at) + _CHAPTER_RECHECK_AFTER
+        )
+        and not parse_description(v.description)
+    ][:limit]
+
+    found = 0
+    for video in todo:
+        try:
+            meta = ytdlp.probe(video.video_id)
+        except ytdlp.ProbeError as exc:
+            logger.info("Chapter re-check failed for %s: %s", video.video_id, exc)
+        else:
+            video.chapters = _stored_chapters(meta)
+            if meta.description:
+                video.description = meta.description
+            if video.chapters or parse_description(video.description):
+                found += 1
+        video.chapters_checked_at = now
+        db.commit()
+    if found:
+        logger.info("Found chapters for %d videos on a second look", found)
+    return found
+
+
 def process(row: Download, db: Session) -> None:
     """Probe, duration-check, download, write NFO, record result."""
     settings = get_settings()
@@ -216,11 +297,8 @@ def process(row: Download, db: Session) -> None:
     video.description = meta.description
     # The in-page player shows these (services.chapters); they include the
     # auto-generated chapters a description can't give us.
-    video.chapters = [
-        {"start": c.get("start_time"), "end": c.get("end_time"), "title": c.get("title") or ""}
-        for c in meta.chapters
-        if isinstance(c.get("start_time"), int | float)
-    ]
+    video.chapters = _stored_chapters(meta)
+    video.chapters_checked_at = datetime.now(UTC)
 
     # Merged across its channel and any playlists it's in.
     intent = video_intent(db, row.video_id)
@@ -1072,6 +1150,8 @@ def run_forever() -> None:
                     # anything no user retains (including those
                     # freshly-identified Shorts).
                     backfill_shorts(db)
+                    # Pick up chapters YouTube added after a video was archived.
+                    recheck_chapters(db)
                     reconcile_links(db, media_root)
                     backfill_audio(db, settings)
                     sponsor_cuts.refresh_audio_cuts(db, media_root)
