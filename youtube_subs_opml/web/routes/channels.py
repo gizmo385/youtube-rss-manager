@@ -674,7 +674,7 @@ def _overview_context(user: User, db: Session) -> dict:
         .group_by(Download.status)
     ).all()
     counts = {status: count for status, count, _ in status_rows}
-    disk = sum(size for status, _, size in status_rows if status == "complete")
+    disk = sum(size or 0 for status, _, size in status_rows if status == "complete")
     pending = sum(count for status, count, _ in status_rows if status not in ("complete", "failed", "skipped"))
 
     # Category breakdown, biggest first, with a bar width relative to the

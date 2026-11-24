@@ -205,8 +205,8 @@ def collect(db: Session, now: datetime | None = None) -> dict[str, Observations]
         .group_by(Channel.channel_id, Channel.title, Channel.platform)
     ):
         attrs = _channel_attrs(channel_id, title, platform)
-        out["yt_rss_archive_bytes"].append((int(video_bytes), {**attrs, "kind": "video"}))
-        out["yt_rss_archive_bytes"].append((int(audio_bytes), {**attrs, "kind": "audio"}))
+        out["yt_rss_archive_bytes"].append((int(video_bytes or 0), {**attrs, "kind": "video"}))
+        out["yt_rss_archive_bytes"].append((int(audio_bytes or 0), {**attrs, "kind": "audio"}))
     return out
 
 
