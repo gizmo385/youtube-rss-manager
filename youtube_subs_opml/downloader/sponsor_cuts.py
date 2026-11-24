@@ -217,8 +217,11 @@ def refresh_audio_cuts(
         .order_by(Video.published_at.desc().nullslast())
     ).all()
 
-    lookups = cuts = 0
+    lookups: int = 0
+    cuts: int = 0
     for audio_path, video in episodes:
+        if audio_path is None:
+            continue  # excluded by the query; this tells the type checker
         due = [k for k in sorted(wanted[video.video_id]) if _due(existing.get((video.video_id, k)), video, now)]
         if not due:
             continue

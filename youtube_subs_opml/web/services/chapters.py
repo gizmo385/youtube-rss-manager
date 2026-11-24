@@ -5,7 +5,9 @@ Two sources, best first:
 
 - What yt-dlp found when the downloader probed the video (``Video.chapters``).
   That's YouTube's own list, so it includes the auto-generated chapters too,
-  but only archived videos get probed.
+  but only archived videos get probed: once when archived, and once more a
+  few hours after upload if that first look came too soon to find any
+  (downloader.worker.recheck_chapters).
 - Timestamps in the description, read the way YouTube reads them: a list that
   starts at 0:00, has at least three entries in order, each at least ten
   seconds long. That's free and covers every video whose description we have,

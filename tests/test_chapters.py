@@ -228,3 +228,93 @@ def test_poller_saves_and_updates_the_description(monkeypatch):
     finally:
         db.close()
         config.get_settings.cache_clear()
+
+
+# --- the downloader's second look -------------------------------------------------
+
+
+def test_recheck_probes_videos_archived_before_youtube_had_chapters(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from youtube_subs_opml.downloader import worker
+
+    now = datetime(2026, 11, 24, 12, tzinfo=UTC)
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session_ = sessionmaker(bind=engine)
+
+    def video(vid, age, checked_after=timedelta(minutes=5), **kw):
+        published = now - age
+        kw.setdefault("chapters", [])
+        return Video(
+            video_id=vid,
+            channel_id="UCa",
+            title=vid,
+            published_at=published,
+            chapters_checked_at=published + checked_after if checked_after is not None else None,
+            description="Nothing here",
+            **kw,
+        )
+
+    with Session_() as s:
+        s.add(Channel(channel_id="UCa", title="Alpha"))
+        s.commit()
+        s.add_all(
+            [
+                # Probed minutes after upload, now 7h old: looked at again.
+                video("early", timedelta(hours=7)),
+                # Probed before the timestamp was kept: looked at again too.
+                video("unknown", timedelta(hours=8), checked_after=None),
+                # Not old enough yet.
+                video("young", timedelta(hours=2)),
+                # Too old to bother with.
+                video("old", timedelta(days=5)),
+                # Already looked at once it was old enough.
+                video("rechecked", timedelta(hours=9), checked_after=timedelta(hours=7)),
+                # Already has chapters, from the probe or the description.
+                video("probed", timedelta(hours=7), chapters=[{"start": 0, "end": 5, "title": "a"}]),
+                video("described", timedelta(hours=7), checked_after=timedelta(minutes=5)),
+                # Never probed (not archived).
+                video("unarchived", timedelta(hours=7), chapters=None),
+            ]
+        )
+        s.commit()
+        described = s.get(Video, "described")
+        assert described is not None
+        described.description = DESCRIPTION
+        s.commit()
+
+    probed = []
+
+    def probe(vid):
+        probed.append(vid)
+        if vid == "unknown":
+            raise ytdlp.ProbeError("gone")
+        return ytdlp.VideoMetadata(
+            duration_seconds=600,
+            title=vid,
+            description="Still nothing",
+            uploader="",
+            thumbnail_url=None,
+            chapters=[{"start_time": 0.0, "end_time": 42.0, "title": "Key moment"}],
+        )
+
+    monkeypatch.setattr(worker.ytdlp, "probe", probe)
+    with Session_() as s:
+        found = worker.recheck_chapters(s, now=now)
+    assert sorted(probed) == ["early", "unknown"]
+    assert found == 1
+
+    with Session_() as s:
+        early, unknown = s.get(Video, "early"), s.get(Video, "unknown")
+        assert early is not None and unknown is not None
+        assert early.chapters == [{"start": 0.0, "end": 42.0, "title": "Key moment"}]
+        assert early.description == "Still nothing"
+        # A failed probe isn't retried, and neither is one that worked.
+        assert unknown.chapters == []
+        assert unknown.chapters_checked_at is not None
+
+    probed.clear()
+    with Session_() as s:
+        assert worker.recheck_chapters(s, now=now + timedelta(hours=1)) == 0
+    assert probed == []
